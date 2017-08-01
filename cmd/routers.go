@@ -17,7 +17,14 @@
 package cmd
 
 import (
+	"io"
+	stdlog "log"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"os"
+	"path/filepath"
+	"time"
 
 	router "github.com/gorilla/mux"
 )
@@ -51,6 +58,67 @@ func registerDistXLRouters(mux *router.Router, endpoints EndpointList) error {
 
 	// Register RPC router for web related calls.
 	return registerBrowserPeerRPCRouter(mux)
+}
+
+type loggingHandler struct {
+	writer  io.Writer
+	handler http.Handler
+}
+
+func (h loggingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+
+	timeBanner := "<<" + time.Now().String() + ">>\n\n"
+	h.writer.Write([]byte(timeBanner))
+
+	logMaxLen := 1024 * 2
+
+	// Save a copy of this request for debugging.
+	requestDump, err := httputil.DumpRequest(r, true)
+	if err != nil {
+		log.Println(err)
+	}
+
+	if len(requestDump) > logMaxLen {
+		requestDump = append(requestDump[:logMaxLen], []byte("...")...)
+	}
+	h.writer.Write(requestDump)
+	h.writer.Write([]byte("\n\n"))
+
+	rec := httptest.NewRecorder()
+	h.handler.ServeHTTP(rec, r)
+
+	respDump, err := httputil.DumpResponse(rec.Result(), true)
+	if err != nil {
+		stdlog.Fatal(err)
+	}
+
+	if len(respDump) > logMaxLen {
+		respDump = append(respDump[:logMaxLen], []byte("...")...)
+	}
+	h.writer.Write(respDump)
+	h.writer.Write([]byte("\n\n"))
+
+	// we copy the captured response headers to our new response
+	for k, v := range rec.Header() {
+		w.Header()[k] = v
+	}
+
+	// grab the captured response body
+	w.WriteHeader(rec.Code)
+	w.Write(rec.Body.Bytes())
+}
+
+// Enables logging handler..
+func setLoggingHandler(h http.Handler) http.Handler {
+	logDir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		stdlog.Fatal(err)
+	}
+	logFile, err := os.Create(filepath.Join(logDir, os.Args[0]+"-ws-log-"+time.Now().Format("2006-01-02T15:04:05")))
+	if err != nil {
+		stdlog.Fatal(err)
+	}
+	return loggingHandler{writer: logFile, handler: h}
 }
 
 // configureServer handler returns final handler for the http server.
@@ -110,6 +178,8 @@ func configureServerHandler(endpoints EndpointList) (http.Handler, error) {
 		// routes them accordingly. Client receives a HTTP error for
 		// invalid/unsupported signatures.
 		setAuthHandler,
+		// Add logging handler.
+		setLoggingHandler,
 		// Add new handlers here.
 	}
 
