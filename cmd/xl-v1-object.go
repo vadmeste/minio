@@ -107,9 +107,6 @@ func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 	// Reorder online disks based on erasure distribution order.
 	onlineDisks = shuffleDisks(onlineDisks, xlMeta.Erasure.Distribution)
 
-	// Length of the file to read.
-	length := xlMeta.Stat.Size
-
 	// Check if this request is only metadata update.
 	if cpSrcDstSame {
 		xlMeta.Meta = srcInfo.UserDefined
@@ -129,34 +126,22 @@ func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 		if _, err = renameXLMetadata(onlineDisks, minioMetaTmpBucket, tempObj, srcBucket, srcObject, writeQuorum); err != nil {
 			return oi, toObjectErr(err, srcBucket, srcObject)
 		}
+
 		return xlMeta.ToObjectInfo(srcBucket, srcObject), nil
 	}
 
-	// Initialize pipe.
-	pipeReader, pipeWriter := io.Pipe()
-
 	go func() {
-		var startOffset int64 // Read the whole file.
-		if gerr := xl.getObject(srcBucket, srcObject, startOffset, length, pipeWriter, srcInfo.ETag); gerr != nil {
+		if gerr := xl.getObject(srcBucket, srcObject, 0, srcInfo.Size, srcInfo.Writer, srcInfo.ETag); gerr != nil {
 			errorIf(gerr, "Unable to read %s of the object `%s/%s`.", srcBucket, srcObject)
-			pipeWriter.CloseWithError(toObjectErr(gerr, srcBucket, srcObject))
 			return
 		}
-		pipeWriter.Close() // Close writer explicitly signalling we wrote all data.
+		srcInfo.Writer.Close() // Close writer explicitly signalling we wrote all data.
 	}()
 
-	hashReader, err := hash.NewReader(pipeReader, length, "", "")
-	if err != nil {
-		return oi, toObjectErr(errors.Trace(err), dstBucket, dstObject)
-	}
-
-	objInfo, err := xl.putObject(dstBucket, dstObject, hashReader, srcInfo.UserDefined)
+	objInfo, err := xl.putObject(dstBucket, dstObject, srcInfo.Reader, srcInfo.UserDefined)
 	if err != nil {
 		return oi, toObjectErr(err, dstBucket, dstObject)
 	}
-
-	// Explicitly close the reader.
-	pipeReader.Close()
 
 	return objInfo, nil
 }
