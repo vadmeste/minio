@@ -42,6 +42,8 @@ type ObjectLayer interface {
 	// Object operations.
 	GetObject(bucket, object string, startOffset int64, length int64, writer io.Writer, etag string) (err error)
 	GetObjectInfo(bucket, object string) (objInfo ObjectInfo, err error)
+	GetObjectPartsInfo(bucket, object string) (parts []PartInfo, err error)
+
 	PutObject(bucket, object string, data *hash.Reader, metadata map[string]string) (objInfo ObjectInfo, err error)
 	CopyObject(srcBucket, srcObject, destBucket, destObject string, srcInfo ObjectInfo) (objInfo ObjectInfo, err error)
 	DeleteObject(bucket, object string) error
@@ -55,6 +57,7 @@ type ObjectLayer interface {
 	ListObjectParts(bucket, object, uploadID string, partNumberMarker int, maxParts int) (result ListPartsInfo, err error)
 	AbortMultipartUpload(bucket, object, uploadID string) error
 	CompleteMultipartUpload(bucket, object, uploadID string, uploadedParts []CompletePart) (objInfo ObjectInfo, err error)
+	GetMultipartUploadInfo(bucket, object, uploadID string) (objInfo ObjectInfo, err error)
 
 	// Healing operations.
 	HealFormat(dryRun bool) (madmin.HealResultItem, error)

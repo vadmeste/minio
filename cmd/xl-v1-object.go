@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/minio/minio/pkg/errors"
 	"github.com/minio/minio/pkg/hash"
@@ -144,6 +145,43 @@ func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 	}
 
 	return objInfo, nil
+}
+
+func (xl xlObjects) GetObjectPartsInfo(bucket, object string) ([]PartInfo, error) {
+	// Read metadata associated with the object from all disks.
+	metaArr, errs := readAllXLMetadata(xl.getDisks(), bucket, object)
+
+	// Get Quorum for this object
+	readQuorum, _, err := objectQuorumFromMeta(xl, metaArr, errs)
+	if err != nil {
+		return nil, toObjectErr(err, bucket, object)
+	}
+
+	if reducedErr := reduceReadQuorumErrs(errs, objectOpIgnoredErrs, readQuorum); reducedErr != nil {
+		return nil, toObjectErr(reducedErr, bucket, object)
+	}
+
+	// List all online disks.
+	_, modTime := listOnlineDisks(xl.getDisks(), metaArr, errs)
+
+	// Pick latest valid metadata.
+	xlMeta, err := pickValidXLMeta(metaArr, modTime)
+	if err != nil {
+		return nil, toObjectErr(err, bucket, object)
+	}
+
+	var partsInfo []PartInfo
+
+	for _, meta := range xlMeta.Parts {
+		partsInfo = append(partsInfo, PartInfo{
+			PartNumber:   meta.Number,
+			LastModified: time.Time{},
+			ETag:         meta.ETag,
+			Size:         meta.Size,
+		})
+	}
+
+	return partsInfo, nil
 }
 
 // GetObject - reads an object erasured coded across multiple

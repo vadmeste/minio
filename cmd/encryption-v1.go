@@ -286,7 +286,7 @@ func rotateKey(oldKey []byte, newKey []byte, metadata map[string]string) error {
 	return nil
 }
 
-func newEncryptReader(content io.Reader, key []byte, metadata map[string]string) (io.Reader, error) {
+func newEncryptMetadata(key []byte, metadata map[string]string) ([]byte, error) {
 	delete(metadata, SSECustomerKey) // make sure we do not save the key by accident
 
 	// security notice:
@@ -320,14 +320,24 @@ func newEncryptReader(content io.Reader, key []byte, metadata map[string]string)
 		return nil, errors.New("failed to seal object encryption key") // if this happens there's a bug in the code (may panic ?)
 	}
 
+	metadata[ServerSideEncryptionIV] = base64.StdEncoding.EncodeToString(iv[:])
+	metadata[ServerSideEncryptionSealAlgorithm] = SSESealAlgorithmDareSha256
+	metadata[ServerSideEncryptionSealedKey] = base64.StdEncoding.EncodeToString(sealedKey.Bytes())
+
+	return objectEncryptionKey, nil
+}
+
+func newEncryptReader(content io.Reader, key []byte, metadata map[string]string) (io.Reader, error) {
+	objectEncryptionKey, err := newEncryptMetadata(key, metadata)
+	if err != nil {
+		return nil, err
+	}
+
 	reader, err := sio.EncryptReader(content, sio.Config{Key: objectEncryptionKey})
 	if err != nil {
 		return nil, errInvalidSSEKey
 	}
 
-	metadata[ServerSideEncryptionIV] = base64.StdEncoding.EncodeToString(iv[:])
-	metadata[ServerSideEncryptionSealAlgorithm] = SSESealAlgorithmDareSha256
-	metadata[ServerSideEncryptionSealedKey] = base64.StdEncoding.EncodeToString(sealedKey.Bytes())
 	return reader, nil
 }
 
@@ -353,7 +363,7 @@ func DecryptCopyRequest(client io.Writer, r *http.Request, metadata map[string]s
 	return newDecryptWriter(client, key, 0, metadata)
 }
 
-func newDecryptWriter(client io.Writer, key []byte, seqNumber uint32, metadata map[string]string) (io.WriteCloser, error) {
+func decryptObjectInfo(key []byte, metadata map[string]string) ([]byte, error) {
 	if metadata[ServerSideEncryptionSealAlgorithm] != SSESealAlgorithmDareSha256 { // currently DARE-SHA256 is the only option
 		return nil, errObjectTampered
 	}
@@ -380,9 +390,18 @@ func newDecryptWriter(client io.Writer, key []byte, seqNumber uint32, metadata m
 		// To provide strict AWS S3 compatibility we return: access denied.
 		return nil, errSSEKeyMismatch
 	}
+	return objectEncryptionKey.Bytes(), nil
+}
+
+func newDecryptWriter(client io.Writer, key []byte, seqNumber uint32, metadata map[string]string) (io.WriteCloser, error) {
+	objectEncryptionKey, err := decryptObjectInfo(key, metadata)
+	if err != nil {
+		return nil, err
+
+	}
 
 	writer, err := sio.DecryptWriter(client, sio.Config{
-		Key:            objectEncryptionKey.Bytes(),
+		Key:            objectEncryptionKey,
 		SequenceNumber: seqNumber,
 	})
 	if err != nil {
@@ -410,6 +429,76 @@ func DecryptRequestWithSequenceNumber(client io.Writer, r *http.Request, seqNumb
 // the client-side-encryption metadata from the object and sets the correct headers.
 func DecryptRequest(client io.Writer, r *http.Request, metadata map[string]string) (io.WriteCloser, error) {
 	return DecryptRequestWithSequenceNumber(client, r, 0, metadata)
+}
+
+type DecryptBlocksWriter struct {
+	// Original writer where the plain data will be written
+	writer io.Writer
+	// Current decrypter for the current encrypted data block
+	decrypter io.WriteCloser
+	// Current part index
+	partIndex int
+	// Parts information
+	parts    []PartInfo
+	req      *http.Request
+	metadata map[string]string
+
+	// Amount of written data in the current block
+	writtenData int64
+
+	// Customer Key
+	customerKeyHeader string
+}
+
+func (w *DecryptBlocksWriter) Write(p []byte) (n int, err error) {
+
+	// writtenData is nil means this is a new data block
+	// that we need to decrypt
+	if w.writtenData == 0 {
+		m := make(map[string]string)
+		for k, v := range w.metadata {
+			m[k] = v
+		}
+		w.req.Header.Set(SSECustomerKey, w.customerKeyHeader)
+		w.decrypter, err = DecryptRequest(w.writer, w.req, m)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	if int64(len(p)) < w.parts[w.partIndex].Size-w.writtenData {
+		n, err = w.decrypter.Write(p)
+	} else {
+		n, err = w.decrypter.Write(p[:w.parts[w.partIndex].Size-w.writtenData])
+	}
+
+	w.writtenData += int64(n)
+	if w.writtenData == w.parts[w.partIndex].Size {
+		w.writtenData = 0
+		w.partIndex++
+	}
+
+	return n, err
+}
+
+// Close closes the LimitWriter. It behaves like io.Closer.
+func (w *DecryptBlocksWriter) Close() error {
+	if closer, ok := w.writer.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+// DecryptBlocksRequest - setup a struct which can decrypt many concatenated encrypted data
+// parts information helps to know the boundaries of each encrypted data block.
+func DecryptBlocksRequest(client io.Writer, parts []PartInfo, r *http.Request, metadata map[string]string) (io.WriteCloser, error) {
+	return &DecryptBlocksWriter{
+		writer:            client,
+		parts:             parts,
+		req:               r,
+		customerKeyHeader: r.Header.Get(SSECustomerKey),
+		metadata:          metadata,
+	}, nil
 }
 
 // getStartOffset - get sequence number, start offset and rlength.

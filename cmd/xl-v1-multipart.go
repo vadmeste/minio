@@ -874,6 +874,43 @@ func (xl xlObjects) listObjectParts(bucket, object, uploadID string, partNumberM
 	return result, nil
 }
 
+func (xl xlObjects) GetMultipartUploadInfo(bucket, object, uploadID string) (objInfo ObjectInfo, err error) {
+
+	uploadIDPath := pathJoin(bucket, object, uploadID)
+
+	// Read metadata associated with the object from all disks.
+	partsMetadata, errs := readAllXLMetadata(xl.getDisks(), minioMetaMultipartBucket, uploadIDPath)
+
+	// get Quorum for this object
+	_, writeQuorum, err := objectQuorumFromMeta(xl, partsMetadata, errs)
+	if err != nil {
+		return objInfo, toObjectErr(err, bucket, object)
+	}
+
+	reducedErr := reduceWriteQuorumErrs(errs, objectOpIgnoredErrs, writeQuorum)
+	if errors.Cause(reducedErr) == errXLWriteQuorum {
+		return objInfo, toObjectErr(reducedErr, bucket, object)
+	}
+
+	_, modTime := listOnlineDisks(xl.getDisks(), partsMetadata, errs)
+
+	// Pick one from the first valid metadata.
+	xlMeta, err := pickValidXLMeta(partsMetadata, modTime)
+	if err != nil {
+		return objInfo, err
+	}
+
+	objInfo = ObjectInfo{
+		IsDir:       false,
+		Bucket:      bucket,
+		Name:        object,
+		UserDefined: xlMeta.Meta,
+	}
+
+	// Success, return object info.
+	return objInfo, nil
+}
+
 // ListObjectParts - lists all previously uploaded parts for a given
 // object and uploadID.  Takes additional input of part-number-marker
 // to indicate where the listing should begin from.
