@@ -119,6 +119,10 @@ func (fs *FSObjects) backgroundAppend(bucket, object, uploadID string) {
 	}
 }
 
+func (fs *FSObjects) GetMultipartUploadInfo(bucket, object, uploadID string) (objInfo ObjectInfo, err error) {
+	return ObjectInfo{}, nil
+}
+
 // ListMultipartUploads - lists all the uploadIDs for the specified object.
 // We do not support prefix based listing.
 func (fs *FSObjects) ListMultipartUploads(bucket, object, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result ListMultipartsInfo, e error) {
