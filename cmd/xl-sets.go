@@ -525,10 +525,6 @@ func (s *xlSets) ListBuckets() (buckets []BucketInfo, err error) {
 
 // --- Object Operations ---
 
-func (s *xlSets) GetObjectPartsInfo(bucket, object string) ([]PartInfo, error) {
-	return s.getHashedSet(object).GetObjectPartsInfo(bucket, object)
-}
-
 // GetObject - reads an object from the hashedSet based on the object name.
 func (s *xlSets) GetObject(bucket, object string, startOffset int64, length int64, writer io.Writer, etag string) error {
 	return s.getHashedSet(object).GetObject(bucket, object, startOffset, length, writer, etag)
@@ -767,10 +763,6 @@ func (s *xlSets) ListObjects(bucket, prefix, marker, delimiter string, maxKeys i
 		result.Objects = append(result.Objects, objInfo)
 	}
 	return result, nil
-}
-
-func (s *xlSets) GetMultipartUploadInfo(bucket, prefix, uploadID string) (objInfo ObjectInfo, err error) {
-	return s.getHashedSet(prefix).GetMultipartUploadInfo(bucket, prefix, uploadID)
 }
 
 func (s *xlSets) ListMultipartUploads(bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result ListMultipartsInfo, err error) {
