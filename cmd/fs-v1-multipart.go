@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	pathutil "path"
@@ -247,29 +246,25 @@ func (fs *FSObjects) CopyObjectPart(srcBucket, srcObject, dstBucket, dstObject, 
 	}
 
 	// Initialize pipe.
-	pipeReader, pipeWriter := io.Pipe()
-
 	go func() {
-		if gerr := fs.GetObject(srcBucket, srcObject, startOffset, length, pipeWriter, srcInfo.ETag); gerr != nil {
-			errorIf(gerr, "Unable to read %s/%s.", srcBucket, srcObject)
-			pipeWriter.CloseWithError(gerr)
+		if gerr := fs.GetObject(srcBucket, srcObject, startOffset, length, srcInfo.Writer, srcInfo.ETag); gerr != nil {
+			if gerr = srcInfo.Writer.Close(); gerr != nil {
+				errorIf(gerr, "Unable to read %s/%s.", srcBucket, srcObject)
+				return
+			}
 			return
 		}
-		pipeWriter.Close() // Close writer explicitly signalling we wrote all data.
+		// Close writer explicitly signalling we wrote all data.
+		if gerr := srcInfo.Writer.Close(); gerr != nil {
+			errorIf(gerr, "Unable to read %s/%s.", srcBucket, srcObject)
+			return
+		}
 	}()
 
-	hashReader, err := hash.NewReader(pipeReader, length, "", "")
+	partInfo, err := fs.PutObjectPart(dstBucket, dstObject, uploadID, partID, srcInfo.Reader)
 	if err != nil {
 		return pi, toObjectErr(err, dstBucket, dstObject)
 	}
-
-	partInfo, err := fs.PutObjectPart(dstBucket, dstObject, uploadID, partID, hashReader)
-	if err != nil {
-		return pi, toObjectErr(err, dstBucket, dstObject)
-	}
-
-	// Explicitly close the reader.
-	pipeReader.Close()
 
 	return partInfo, nil
 }
