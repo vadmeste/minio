@@ -19,7 +19,6 @@ package cmd
 import (
 	"encoding/hex"
 	"fmt"
-	"io"
 	"path"
 	"strings"
 	"sync"
@@ -600,30 +599,24 @@ func (xl xlObjects) CopyObjectPart(srcBucket, srcObject, dstBucket, dstObject, u
 		return pi, err
 	}
 
-	// Initialize pipe.
-	pipeReader, pipeWriter := io.Pipe()
-
 	go func() {
-		if gerr := xl.getObject(srcBucket, srcObject, startOffset, length, pipeWriter, srcInfo.ETag); gerr != nil {
-			errorIf(gerr, "Unable to read %s of the object `%s/%s`.", srcBucket, srcObject)
-			pipeWriter.CloseWithError(toObjectErr(gerr, srcBucket, srcObject))
+		if gerr := xl.getObject(srcBucket, srcObject, startOffset, length, srcInfo.Writer, srcInfo.ETag); gerr != nil {
+			if gerr = srcInfo.Writer.Close(); gerr != nil {
+				errorIf(gerr, "Unable to read %s of the object `%s/%s`.", srcBucket, srcObject)
+			}
 			return
 		}
-		pipeWriter.Close() // Close writer explicitly signalling we wrote all data.
+		// Close writer explicitly signalling we wrote all data.
+		if gerr := srcInfo.Writer.Close(); gerr != nil {
+			errorIf(gerr, "Unable to read %s of the object `%s/%s`.", srcBucket, srcObject)
+			return
+		}
 	}()
 
-	hashReader, err := hash.NewReader(pipeReader, length, "", "")
+	partInfo, err := xl.PutObjectPart(dstBucket, dstObject, uploadID, partID, srcInfo.Reader)
 	if err != nil {
 		return pi, toObjectErr(err, dstBucket, dstObject)
 	}
-
-	partInfo, err := xl.PutObjectPart(dstBucket, dstObject, uploadID, partID, hashReader)
-	if err != nil {
-		return pi, toObjectErr(err, dstBucket, dstObject)
-	}
-
-	// Explicitly close the reader.
-	pipeReader.Close()
 
 	// Success.
 	return partInfo, nil
