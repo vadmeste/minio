@@ -802,12 +802,6 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if IsSSECustomerRequest(r.Header) { // handle SSE-C requests
-		// SSE-C is not implemented for multipart operations yet
-		writeErrorResponse(w, ErrNotImplemented, r.URL)
-		return
-	}
-
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
 	if err != nil {
@@ -843,6 +837,13 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
+	if objectAPI.IsEncryptionSupported() {
+		if apiErr, _ := DecryptCopyObjectInfo(&srcInfo, r.Header); apiErr != ErrNone {
+			writeErrorResponse(w, apiErr, r.URL)
+			return
+		}
+	}
+
 	// Get request range.
 	var hrange *httpRange
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
@@ -875,8 +876,71 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Make sure to remove all metadata from source for for multipart operations.
-	srcInfo.UserDefined = nil
+	// TODO: remove this - range is not supported at the moment.
+	if hrange != nil && srcInfo.IsEncrypted() {
+		writeErrorResponse(w, ErrNotImplemented, r.URL)
+		return
+	}
+
+	// Initialize pipe.
+	pipeReader, pipeWriter := io.Pipe()
+
+	var writer io.WriteCloser = pipeWriter
+	var reader io.Reader = pipeReader
+	if objectAPI.IsEncryptionSupported() {
+		if IsSSECustomerRequest(r.Header) {
+			key, err := ParseSSECustomerRequest(r)
+			if err != nil {
+				pipeWriter.CloseWithError(err)
+				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+				return
+			}
+
+			// Calculating object encryption key
+			li, err := objectAPI.ListObjectParts(dstBucket, dstObject, uploadID, 0, 1)
+			if err != nil {
+				pipeWriter.CloseWithError(err)
+				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+				return
+			}
+
+			objectEncryptionKey, err := decryptObjectInfo(key, li.UserDefined)
+			if err != nil {
+				pipeWriter.CloseWithError(err)
+				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+				return
+			}
+
+			reader, err = sio.EncryptReader(reader, sio.Config{Key: objectEncryptionKey})
+			if err != nil {
+				pipeWriter.CloseWithError(err)
+				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+				return
+			}
+		}
+		if IsSSECopyCustomerRequest(r.Header) {
+			writer, err = DecryptBlocksRequest(pipeWriter, srcInfo.Parts, r, srcInfo.UserDefined)
+			if err != nil {
+				pipeWriter.CloseWithError(err)
+				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+				return
+			}
+		}
+	}
+
+	// Source is encrypted make sure to save the encrypted size.
+	if srcInfo.IsEncrypted() {
+		srcInfo.Size = srcInfo.EncryptedSize()
+	}
+
+	hashReader, err := hash.NewReader(reader, srcInfo.Size, "", "") // do not try to verify encrypted content
+	if err != nil {
+		pipeWriter.CloseWithError(err)
+		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+		return
+	}
+	srcInfo.Reader = hashReader
+	srcInfo.Writer = writer
 
 	// Copy source object to destination, if source and destination
 	// object is same then only metadata is updated.
