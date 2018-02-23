@@ -160,17 +160,19 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 	writer = w
 	if objectAPI.IsEncryptionSupported() {
 		if IsSSECustomerRequest(r.Header) {
-			length = objInfo.EncryptedSize()
 
-			writer, err = DecryptBlocksRequest(writer, objInfo.Parts, r, objInfo.UserDefined)
+			writer, startOffset, length, err = DecryptBlocksRequest(writer, startOffset, length, objInfo.Parts, r, objInfo.UserDefined)
 			if err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
 
+			if length > objInfo.EncryptedSize() {
+				length = objInfo.EncryptedSize()
+			}
+
 			w.Header().Set(SSECustomerAlgorithm, r.Header.Get(SSECustomerAlgorithm))
 			w.Header().Set(SSECustomerKeyMD5, r.Header.Get(SSECustomerKeyMD5))
-
 		}
 	}
 
@@ -876,12 +878,6 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// TODO: remove this - range is not supported at the moment.
-	if hrange != nil && srcInfo.IsEncrypted() {
-		writeErrorResponse(w, ErrNotImplemented, r.URL)
-		return
-	}
-
 	// Initialize pipe.
 	pipeReader, pipeWriter := io.Pipe()
 
@@ -919,7 +915,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 			}
 		}
 		if IsSSECopyCustomerRequest(r.Header) {
-			writer, err = DecryptBlocksRequest(pipeWriter, srcInfo.Parts, r, srcInfo.UserDefined)
+			writer, startOffset, length, err = DecryptBlocksRequest(pipeWriter, startOffset, length, srcInfo.Parts, r, srcInfo.UserDefined)
 			if err != nil {
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)

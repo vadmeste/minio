@@ -26,6 +26,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/minio/minio/pkg/ioutil"
+
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/minio/sio"
 )
@@ -436,6 +438,8 @@ type DecryptBlocksWriter struct {
 	writer io.Writer
 	// Current decrypter for the current encrypted data block
 	decrypter io.WriteCloser
+	// Start sequence number
+	startSeqNum uint32
 	// Current part index
 	partIndex int
 	// Parts information
@@ -443,39 +447,43 @@ type DecryptBlocksWriter struct {
 	req      *http.Request
 	metadata map[string]string
 
-	// Amount of written data in the current block
-	writtenData int64
+	partRelOffset int64
+
+	avoidRegen bool
 
 	// Customer Key
 	customerKeyHeader string
 }
 
 func (w *DecryptBlocksWriter) Write(p []byte) (n int, err error) {
-
 	// writtenData is nil means this is a new data block
 	// that we need to decrypt
-	if w.writtenData == 0 {
+	if !w.avoidRegen {
 		m := make(map[string]string)
 		for k, v := range w.metadata {
 			m[k] = v
 		}
 		w.req.Header.Set(SSECustomerKey, w.customerKeyHeader)
-		w.decrypter, err = DecryptRequest(w.writer, w.req, m)
+		w.decrypter, err = DecryptRequestWithSequenceNumber(w.writer, w.req, w.startSeqNum, m)
 		if err != nil {
 			return 0, err
 		}
+		w.avoidRegen = true
 	}
 
-	if int64(len(p)) < w.parts[w.partIndex].Size-w.writtenData {
+	if int64(len(p)) < w.parts[w.partIndex].Size-w.partRelOffset {
 		n, err = w.decrypter.Write(p)
 	} else {
-		n, err = w.decrypter.Write(p[:w.parts[w.partIndex].Size-w.writtenData])
+		n, err = w.decrypter.Write(p[:w.parts[w.partIndex].Size-w.partRelOffset])
 	}
 
-	w.writtenData += int64(n)
-	if w.writtenData == w.parts[w.partIndex].Size {
-		w.writtenData = 0
+	w.partRelOffset += int64(n)
+
+	if w.partRelOffset == w.parts[w.partIndex].Size {
+		w.partRelOffset = 0
 		w.partIndex++
+		w.startSeqNum = 0
+		w.avoidRegen = false
 	}
 
 	return n, err
@@ -491,14 +499,41 @@ func (w *DecryptBlocksWriter) Close() error {
 
 // DecryptBlocksRequest - setup a struct which can decrypt many concatenated encrypted data
 // parts information helps to know the boundaries of each encrypted data block.
-func DecryptBlocksRequest(client io.Writer, parts []objectPartInfo, r *http.Request, metadata map[string]string) (io.WriteCloser, error) {
+func DecryptBlocksRequest(client io.Writer, startOffset, length int64, parts []objectPartInfo, r *http.Request, metadata map[string]string) (io.WriteCloser, int64, int64, error) {
+	// Response writer should be limited early on for decryption upto required length,
+	// additionally also skipping mod(offset)64KiB boundaries.
+	client = ioutil.LimitedWriter(client, startOffset%(64*1024), length)
+
+	_, encStartOffset, encLength := getStartOffset(startOffset, length)
+
+	var partStartIndex int
+	var partStartOffset int64
+	var partEndOffset int64
+
+	for i, part := range parts {
+		decryptedSize, err := decryptedSize(part.Size)
+		if err != nil {
+			return nil, -1, -1, err
+		}
+		partEndOffset += decryptedSize
+		if startOffset < partEndOffset {
+			partStartIndex = i
+			break
+		}
+		partStartOffset = partEndOffset
+	}
+
+	startSeqNum := (startOffset - partStartOffset) / (64 * 1024)
+
 	return &DecryptBlocksWriter{
 		writer:            client,
-		parts:             parts,
+		startSeqNum:       uint32(startSeqNum),
+		partRelOffset:     encStartOffset - partStartOffset,
+		parts:             parts[partStartIndex:],
 		req:               r,
 		customerKeyHeader: r.Header.Get(SSECustomerKey),
 		metadata:          metadata,
-	}, nil
+	}, encStartOffset, encLength, nil
 }
 
 // getStartOffset - get sequence number, start offset and rlength.
@@ -527,6 +562,20 @@ func (o *ObjectInfo) IsEncrypted() bool {
 	return false
 }
 
+func decryptedSize(encryptedSize int64) (int64, error) {
+	if encryptedSize == 0 {
+		return encryptedSize, nil
+	}
+	size := (encryptedSize / (32 + 64*1024)) * (64 * 1024)
+	if mod := encryptedSize % (32 + 64*1024); mod > 0 {
+		if mod < 33 {
+			return -1, errObjectTampered // object is not 0 size but smaller than the smallest valid encrypted object
+		}
+		size += mod - 32
+	}
+	return size, nil
+}
+
 // DecryptedSize returns the size of the object after decryption in bytes.
 // It returns an error if the object is not encrypted or marked as encrypted
 // but has an invalid size.
@@ -535,17 +584,8 @@ func (o *ObjectInfo) DecryptedSize() (int64, error) {
 	if !o.IsEncrypted() {
 		panic("cannot compute decrypted size of an object which is not encrypted")
 	}
-	if o.Size == 0 {
-		return o.Size, nil
-	}
-	size := (o.Size / (32 + 64*1024)) * (64 * 1024)
-	if mod := o.Size % (32 + 64*1024); mod > 0 {
-		if mod < 33 {
-			return -1, errObjectTampered // object is not 0 size but smaller than the smallest valid encrypted object
-		}
-		size += mod - 32
-	}
-	return size, nil
+
+	return decryptedSize(o.Size)
 }
 
 // EncryptedSize returns the size of the object after encryption.
