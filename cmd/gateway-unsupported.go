@@ -48,10 +48,6 @@ func (a GatewayUnsupported) PutObjectPart(bucket string, object string, uploadID
 	return pi, errors.Trace(NotImplemented{})
 }
 
-func (a GatewayUnsupported) GetObjectPartsInfo(bucket string, object string) (pi []PartInfo, err error) {
-	return pi, errors.Trace(NotImplemented{})
-}
-
 // ListObjectParts returns all object parts for specified object in specified bucket
 func (a GatewayUnsupported) ListObjectParts(bucket string, object string, uploadID string, partNumberMarker int, maxParts int) (lpi ListPartsInfo, err error) {
 	return lpi, errors.Trace(NotImplemented{})
@@ -65,10 +61,6 @@ func (a GatewayUnsupported) AbortMultipartUpload(bucket string, object string, u
 // CompleteMultipartUpload completes ongoing multipart upload and finalizes object
 func (a GatewayUnsupported) CompleteMultipartUpload(bucket string, object string, uploadID string, uploadedParts []CompletePart) (oi ObjectInfo, err error) {
 	return oi, errors.Trace(NotImplemented{})
-}
-
-func (a GatewayUnsupported) GetMultipartUploadInfo(bucket string, object string, uploadID string) (oi ObjectInfo, err error) {
-	return ObjectInfo{}, errors.Trace(NotImplemented{})
 }
 
 // SetBucketPolicy sets policy on bucket

@@ -23,7 +23,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/minio/minio/pkg/errors"
 	"github.com/minio/minio/pkg/hash"
@@ -160,43 +159,6 @@ func (xl xlObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject string
 	pipeReader.Close()
 
 	return objInfo, nil
-}
-
-func (xl xlObjects) GetObjectPartsInfo(bucket, object string) ([]PartInfo, error) {
-	// Read metadata associated with the object from all disks.
-	metaArr, errs := readAllXLMetadata(xl.getDisks(), bucket, object)
-
-	// Get Quorum for this object
-	readQuorum, _, err := objectQuorumFromMeta(xl, metaArr, errs)
-	if err != nil {
-		return nil, toObjectErr(err, bucket, object)
-	}
-
-	if reducedErr := reduceReadQuorumErrs(errs, objectOpIgnoredErrs, readQuorum); reducedErr != nil {
-		return nil, toObjectErr(reducedErr, bucket, object)
-	}
-
-	// List all online disks.
-	_, modTime := listOnlineDisks(xl.getDisks(), metaArr, errs)
-
-	// Pick latest valid metadata.
-	xlMeta, err := pickValidXLMeta(metaArr, modTime)
-	if err != nil {
-		return nil, toObjectErr(err, bucket, object)
-	}
-
-	var partsInfo []PartInfo
-
-	for _, meta := range xlMeta.Parts {
-		partsInfo = append(partsInfo, PartInfo{
-			PartNumber:   meta.Number,
-			LastModified: time.Time{},
-			ETag:         meta.ETag,
-			Size:         meta.Size,
-		})
-	}
-
-	return partsInfo, nil
 }
 
 // GetObject - reads an object erasured coded across multiple
@@ -433,26 +395,7 @@ func (xl xlObjects) getObjectInfo(bucket, object string) (objInfo ObjectInfo, er
 		return objInfo, err
 	}
 
-	objInfo = ObjectInfo{
-		IsDir:           false,
-		Bucket:          bucket,
-		Name:            object,
-		Size:            xlMeta.Stat.Size,
-		ModTime:         xlMeta.Stat.ModTime,
-		ContentType:     xlMeta.Meta["content-type"],
-		ContentEncoding: xlMeta.Meta["content-encoding"],
-	}
-
-	// Extract etag.
-	objInfo.ETag = extractETag(xlMeta.Meta)
-
-	// etag/md5Sum has already been extracted. We need to
-	// remove to avoid it from appearing as part of
-	// response headers. e.g, X-Minio-* or X-Amz-*.
-	objInfo.UserDefined = cleanMetadata(xlMeta.Meta)
-
-	// Success.
-	return objInfo, nil
+	return xlMeta.ToObjectInfo(bucket, object), nil
 }
 
 func undoRename(disks []StorageAPI, srcBucket, srcEntry, dstBucket, dstEntry string, isDir bool, errs []error) {
