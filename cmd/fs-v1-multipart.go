@@ -119,10 +119,6 @@ func (fs *FSObjects) backgroundAppend(bucket, object, uploadID string) {
 	}
 }
 
-func (fs *FSObjects) GetMultipartUploadInfo(bucket, object, uploadID string) (objInfo ObjectInfo, err error) {
-	return ObjectInfo{}, nil
-}
-
 // ListMultipartUploads - lists all the uploadIDs for the specified object.
 // We do not support prefix based listing.
 func (fs *FSObjects) ListMultipartUploads(bucket, object, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result ListMultipartsInfo, e error) {
@@ -236,6 +232,7 @@ func (fs *FSObjects) NewMultipartUpload(bucket, object string, meta map[string]s
 	if err = ioutil.WriteFile(pathJoin(uploadIDDir, fsMetaJSONFile), fsMetaBytes, 0644); err != nil {
 		return "", errors.Trace(err)
 	}
+
 	return uploadID, nil
 }
 
@@ -417,11 +414,12 @@ func (fs *FSObjects) ListObjectParts(bucket, object, uploadID string, partNumber
 			partsMap[partNumber] = etag1
 		}
 	}
+
 	var parts []PartInfo
 	for partNumber, etag := range partsMap {
 		parts = append(parts, PartInfo{PartNumber: partNumber, ETag: etag})
 	}
-	sort.SliceStable(parts, func(i int, j int) bool {
+	sort.Slice(parts, func(i int, j int) bool {
 		return parts[i].PartNumber < parts[j].PartNumber
 	})
 	i := 0
@@ -455,6 +453,13 @@ func (fs *FSObjects) ListObjectParts(bucket, object, uploadID string, partNumber
 		result.Parts[i].LastModified = stat.ModTime()
 		result.Parts[i].Size = stat.Size()
 	}
+
+	fsMetaBytes, err := ioutil.ReadFile(pathJoin(uploadIDDir, fsMetaJSONFile))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+
+	result.UserDefined = parseFSMetaMap(fsMetaBytes)
 	return result, nil
 }
 
@@ -496,6 +501,11 @@ func (fs *FSObjects) CompleteMultipartUpload(bucket string, object string, uploa
 
 	partSize := int64(-1) // Used later to ensure that all parts sizes are same.
 
+	fsMeta := fsMetaV1{}
+
+	// Allocate parts similar to incoming slice.
+	fsMeta.Parts = make([]objectPartInfo, len(parts))
+
 	// Validate all parts and then commit to disk.
 	for i, part := range parts {
 		partPath := pathJoin(uploadIDDir, fs.encodePartFile(part.PartNumber, part.ETag))
@@ -510,6 +520,13 @@ func (fs *FSObjects) CompleteMultipartUpload(bucket string, object string, uploa
 		if partSize == -1 {
 			partSize = fi.Size()
 		}
+
+		fsMeta.Parts[i] = objectPartInfo{
+			Number: part.PartNumber,
+			ETag:   part.ETag,
+			Size:   fi.Size(),
+		}
+
 		if i == len(parts)-1 {
 			break
 		}
@@ -594,7 +611,6 @@ func (fs *FSObjects) CompleteMultipartUpload(bucket string, object string, uploa
 	}
 	defer metaFile.Close()
 
-	fsMeta := fsMetaV1{}
 	// Read saved fs metadata for ongoing multipart.
 	fsMetaBuf, err := ioutil.ReadFile(pathJoin(uploadIDDir, fsMetaJSONFile))
 	if err != nil {

@@ -439,7 +439,7 @@ type DecryptBlocksWriter struct {
 	// Current part index
 	partIndex int
 	// Parts information
-	parts    []PartInfo
+	parts    []objectPartInfo
 	req      *http.Request
 	metadata map[string]string
 
@@ -491,7 +491,7 @@ func (w *DecryptBlocksWriter) Close() error {
 
 // DecryptBlocksRequest - setup a struct which can decrypt many concatenated encrypted data
 // parts information helps to know the boundaries of each encrypted data block.
-func DecryptBlocksRequest(client io.Writer, parts []PartInfo, r *http.Request, metadata map[string]string) (io.WriteCloser, error) {
+func DecryptBlocksRequest(client io.Writer, parts []objectPartInfo, r *http.Request, metadata map[string]string) (io.WriteCloser, error) {
 	return &DecryptBlocksWriter{
 		writer:            client,
 		parts:             parts,

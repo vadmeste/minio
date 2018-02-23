@@ -162,13 +162,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 		if IsSSECustomerRequest(r.Header) {
 			length = objInfo.EncryptedSize()
 
-			partsInfo, err := objectAPI.GetObjectPartsInfo(bucket, object)
-			if err != nil {
-				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
-				return
-			}
-
-			writer, err = DecryptBlocksRequest(writer, partsInfo, r, objInfo.UserDefined)
+			writer, err = DecryptBlocksRequest(writer, objInfo.Parts, r, objInfo.UserDefined)
 			if err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -1027,13 +1021,13 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 			}
 
 			// Calculating object encryption key
-			objInfo, err := objectAPI.GetMultipartUploadInfo(bucket, object, uploadID)
+			li, err := objectAPI.ListObjectParts(bucket, object, uploadID, 0, 1)
 			if err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
 
-			objectEncryptionKey, err := decryptObjectInfo(key, objInfo.UserDefined)
+			objectEncryptionKey, err := decryptObjectInfo(key, li.UserDefined)
 			if err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return

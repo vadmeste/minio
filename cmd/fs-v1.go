@@ -435,10 +435,6 @@ func (fs *FSObjects) CopyObject(srcBucket, srcObject, dstBucket, dstObject strin
 	return objInfo, nil
 }
 
-func (fs *FSObjects) GetObjectPartsInfo(bucket, object string) ([]PartInfo, error) {
-	return nil, nil
-}
-
 // GetObject - reads an object from the disk.
 // Supports additional parameters like offset and length
 // which are synonymous with HTTP Range requests.
