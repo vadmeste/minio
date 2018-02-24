@@ -1104,7 +1104,6 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 				return
 			}
 
-			var reader io.Reader
 			reader, err = sio.EncryptReader(reader, sio.Config{Key: objectEncryptionKey})
 			if err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
