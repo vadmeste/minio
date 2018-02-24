@@ -499,9 +499,6 @@ func (fs *FSObjects) CompleteMultipartUpload(bucket string, object string, uploa
 
 	fsMeta := fsMetaV1{}
 
-	// Allocate parts similar to incoming slice.
-	fsMeta.Parts = make([]objectPartInfo, len(parts))
-
 	// Validate all parts and then commit to disk.
 	for i, part := range parts {
 		partPath := pathJoin(uploadIDDir, fs.encodePartFile(part.PartNumber, part.ETag))
@@ -515,12 +512,6 @@ func (fs *FSObjects) CompleteMultipartUpload(bucket string, object string, uploa
 		}
 		if partSize == -1 {
 			partSize = fi.Size()
-		}
-
-		fsMeta.Parts[i] = objectPartInfo{
-			Number: part.PartNumber,
-			ETag:   part.ETag,
-			Size:   fi.Size(),
 		}
 
 		if i == len(parts)-1 {
