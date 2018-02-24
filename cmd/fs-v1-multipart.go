@@ -388,22 +388,22 @@ func (fs *FSObjects) ListObjectParts(bucket, object, uploadID string, partNumber
 		if entry == fsMetaJSONFile {
 			continue
 		}
-		partNumber, etag1, err := fs.decodePartFile(entry)
-		if err != nil {
-			return result, toObjectErr(errors.Trace(err))
+		partNumber, etag1, derr := fs.decodePartFile(entry)
+		if derr != nil {
+			return result, toObjectErr(errors.Trace(derr))
 		}
 		etag2, ok := partsMap[partNumber]
 		if !ok {
 			partsMap[partNumber] = etag1
 			continue
 		}
-		stat1, err := fsStatFile(pathJoin(uploadIDDir, fs.encodePartFile(partNumber, etag1)))
-		if err != nil {
-			return result, toObjectErr(errors.Trace(err))
+		stat1, serr := fsStatFile(pathJoin(uploadIDDir, fs.encodePartFile(partNumber, etag1)))
+		if serr != nil {
+			return result, toObjectErr(errors.Trace(serr))
 		}
-		stat2, err := fsStatFile(pathJoin(uploadIDDir, fs.encodePartFile(partNumber, etag2)))
-		if err != nil {
-			return result, toObjectErr(errors.Trace(err))
+		stat2, serr := fsStatFile(pathJoin(uploadIDDir, fs.encodePartFile(partNumber, etag2)))
+		if serr != nil {
+			return result, toObjectErr(errors.Trace(serr))
 		}
 		if stat1.ModTime().After(stat2.ModTime()) {
 			partsMap[partNumber] = etag1
@@ -441,7 +441,8 @@ func (fs *FSObjects) ListObjectParts(bucket, object, uploadID string, partNumber
 		}
 	}
 	for i, part := range result.Parts {
-		stat, err := fsStatFile(pathJoin(uploadIDDir, fs.encodePartFile(part.PartNumber, part.ETag)))
+		var stat os.FileInfo
+		stat, err = fsStatFile(pathJoin(uploadIDDir, fs.encodePartFile(part.PartNumber, part.ETag)))
 		if err != nil {
 			return result, toObjectErr(errors.Trace(err))
 		}

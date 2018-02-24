@@ -167,11 +167,11 @@ func parseFSPartsArray(fsMetaBuf []byte) []objectPartInfo {
 
 	partsArrayResult := gjson.GetBytes(fsMetaBuf, "parts")
 	partsArrayResult.ForEach(func(key, part gjson.Result) bool {
-		partJson := part.String()
-		number := gjson.Get(partJson, "number").Int()
-		name := gjson.Get(partJson, "name").String()
-		etag := gjson.Get(partJson, "etag").String()
-		size := gjson.Get(partJson, "size").Int()
+		partJSON := part.String()
+		number := gjson.Get(partJSON, "number").Int()
+		name := gjson.Get(partJSON, "name").String()
+		etag := gjson.Get(partJSON, "etag").String()
+		size := gjson.Get(partJSON, "size").Int()
 		partsArray = append(partsArray, objectPartInfo{
 			Number: int(number),
 			Name:   name,

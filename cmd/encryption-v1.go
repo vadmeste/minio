@@ -26,8 +26,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/minio/minio/pkg/ioutil"
-
 	sha256 "github.com/minio/sha256-simd"
 	"github.com/minio/sio"
 )
@@ -433,6 +431,7 @@ func DecryptRequest(client io.Writer, r *http.Request, metadata map[string]strin
 	return DecryptRequestWithSequenceNumber(client, r, 0, metadata)
 }
 
+// DecryptBlocksWriter - decrypts multipart parts, while implementing a io.Writer compatible interface.
 type DecryptBlocksWriter struct {
 	// Original writer where the plain data will be written
 	writer io.Writer
@@ -499,18 +498,14 @@ func (w *DecryptBlocksWriter) Close() error {
 
 // DecryptBlocksRequest - setup a struct which can decrypt many concatenated encrypted data
 // parts information helps to know the boundaries of each encrypted data block.
-func DecryptBlocksRequest(client io.Writer, startOffset, length int64, parts []objectPartInfo, r *http.Request, metadata map[string]string) (io.WriteCloser, int64, int64, error) {
-	// Response writer should be limited early on for decryption upto required length,
-	// additionally also skipping mod(offset)64KiB boundaries.
-	client = ioutil.LimitedWriter(client, startOffset%(64*1024), length)
-
+func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length int64, srcInfo ObjectInfo) (io.WriteCloser, int64, int64, error) {
 	_, encStartOffset, encLength := getStartOffset(startOffset, length)
 
 	var partStartIndex int
 	var partStartOffset int64
 	var partEndOffset int64
 
-	for i, part := range parts {
+	for i, part := range srcInfo.Parts {
 		decryptedSize, err := decryptedSize(part.Size)
 		if err != nil {
 			return nil, -1, -1, err
@@ -529,10 +524,10 @@ func DecryptBlocksRequest(client io.Writer, startOffset, length int64, parts []o
 		writer:            client,
 		startSeqNum:       uint32(startSeqNum),
 		partRelOffset:     encStartOffset - partStartOffset,
-		parts:             parts[partStartIndex:],
+		parts:             srcInfo.Parts[partStartIndex:],
 		req:               r,
 		customerKeyHeader: r.Header.Get(SSECustomerKey),
-		metadata:          metadata,
+		metadata:          srcInfo.UserDefined,
 	}, encStartOffset, encLength, nil
 }
 
