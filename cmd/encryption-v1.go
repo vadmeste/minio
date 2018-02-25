@@ -446,46 +446,55 @@ type DecryptBlocksWriter struct {
 	req      *http.Request
 	metadata map[string]string
 
-	partRelOffset int64
-
-	avoidRegen bool
+	partEncRelOffset int64
 
 	// Customer Key
 	customerKeyHeader string
 }
 
-func (w *DecryptBlocksWriter) Write(p []byte) (n int, err error) {
-	// writtenData is nil means this is a new data block
-	// that we need to decrypt
-	if !w.avoidRegen {
+func (w *DecryptBlocksWriter) Write(p []byte) (int, error) {
+	var err error
+	var n1 int
+	if int64(len(p)) < w.parts[w.partIndex].Size-w.partEncRelOffset {
+		n1, err = w.decrypter.Write(p)
+		if err != nil {
+			return 0, err
+		}
+		w.partEncRelOffset += int64(n1)
+
+	} else {
+		n1, err = w.decrypter.Write(p[:w.parts[w.partIndex].Size-w.partEncRelOffset])
+		if err != nil {
+			return 0, err
+		}
+
+		// We should now proceed to next part, reset all values appropriately.
+		w.partEncRelOffset = 0
+		w.startSeqNum = 0
+
+		w.partIndex++
+
+		// Re-initialize a new decrypter starting from sequence 0 for the remaining parts.
 		m := make(map[string]string)
 		for k, v := range w.metadata {
 			m[k] = v
 		}
+
 		w.req.Header.Set(SSECustomerKey, w.customerKeyHeader)
 		w.decrypter, err = DecryptRequestWithSequenceNumber(w.writer, w.req, w.startSeqNum, m)
 		if err != nil {
 			return 0, err
 		}
-		w.avoidRegen = true
+
+		n1, err = w.decrypter.Write(p[n1:])
+		if err != nil {
+			return 0, err
+		}
+
+		w.partEncRelOffset += int64(n1)
 	}
 
-	if int64(len(p)) < w.parts[w.partIndex].Size-w.partRelOffset {
-		n, err = w.decrypter.Write(p)
-	} else {
-		n, err = w.decrypter.Write(p[:w.parts[w.partIndex].Size-w.partRelOffset])
-	}
-
-	w.partRelOffset += int64(n)
-
-	if w.partRelOffset == w.parts[w.partIndex].Size {
-		w.partRelOffset = 0
-		w.partIndex++
-		w.startSeqNum = 0
-		w.avoidRegen = false
-	}
-
-	return n, err
+	return len(p), nil
 }
 
 // Close closes the LimitWriter. It behaves like io.Closer.
@@ -526,16 +535,32 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length
 	}
 
 	startSeqNum := (startOffset - partStartOffset) / (64 * 1024)
+	partEncRelOffset := encStartOffset - (int64(startSeqNum) * (64*1024 + 32))
 
-	return &DecryptBlocksWriter{
+	w := &DecryptBlocksWriter{
 		writer:            client,
 		startSeqNum:       uint32(startSeqNum),
-		partRelOffset:     encStartOffset - partStartOffset,
+		partEncRelOffset:  partEncRelOffset,
 		parts:             srcInfo.Parts[partStartIndex:],
 		req:               r,
 		customerKeyHeader: r.Header.Get(SSECustomerKey),
 		metadata:          srcInfo.UserDefined,
-	}, encStartOffset, encLength, nil
+	}
+
+	m := make(map[string]string)
+	for k, v := range w.metadata {
+		m[k] = v
+	}
+
+	// Initialize the first decrypter, new decrypters will be initialized in Write() operation as needed.
+	w.req.Header.Set(SSECustomerKey, w.customerKeyHeader)
+	var err error
+	w.decrypter, err = DecryptRequestWithSequenceNumber(w.writer, w.req, w.startSeqNum, m)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	return w, encStartOffset, encLength, nil
 }
 
 // getStartOffset - get sequence number, start offset and rlength.
