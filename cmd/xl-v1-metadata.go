@@ -240,6 +240,8 @@ type xlMetaV1 struct {
 	Meta map[string]string `json:"meta,omitempty"`
 	// Captures all the individual object `xl.json`.
 	Parts []objectPartInfo `json:"parts,omitempty"`
+	// Indicate if this is a multipart upload
+	MultipartUpload bool `json:"multipartUpload,omitempty"`
 }
 
 // XL metadata constants.
@@ -314,6 +316,8 @@ func (m xlMetaV1) ToObjectInfo(bucket, object string) ObjectInfo {
 
 	// All the parts per object.
 	objInfo.Parts = m.Parts
+
+	objInfo.MultipartUpload = m.MultipartUpload
 
 	// Success.
 	return objInfo

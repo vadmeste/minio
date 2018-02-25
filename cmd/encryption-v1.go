@@ -509,7 +509,8 @@ func (w *DecryptBlocksWriter) Close() error {
 // parts information helps to know the boundaries of each encrypted data block.
 func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length int64, srcInfo ObjectInfo) (io.WriteCloser, int64, int64, error) {
 	seqNumber, encStartOffset, encLength := getStartOffset(startOffset, length)
-	if len(srcInfo.Parts) == 0 {
+
+	if len(srcInfo.Parts) == 0 || !srcInfo.MultipartUpload {
 		writer, err := DecryptRequestWithSequenceNumber(client, r, seqNumber, srcInfo.UserDefined)
 		if err != nil {
 			return nil, 0, 0, err

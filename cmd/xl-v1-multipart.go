@@ -526,6 +526,7 @@ func (xl xlObjects) newMultipartUpload(bucket string, object string, meta map[st
 	}
 	xlMeta.Stat.ModTime = UTCNow()
 	xlMeta.Meta = meta
+	xlMeta.MultipartUpload = true
 
 	// This lock needs to be held for any changes to the directory
 	// contents of ".minio.sys/multipart/object/"
@@ -986,6 +987,8 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 	// Allocate parts similar to incoming slice.
 	xlMeta.Parts = make([]objectPartInfo, len(parts))
 
+	xlMeta.MultipartUpload = true
+
 	// Validate each part and then commit to disk.
 	for i, part := range parts {
 		partIdx := objectPartIndex(currentXLMeta.Parts, part.PartNumber)
@@ -1043,6 +1046,7 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 		partsMetadata[index].Stat = xlMeta.Stat
 		partsMetadata[index].Meta = xlMeta.Meta
 		partsMetadata[index].Parts = xlMeta.Parts
+		partsMetadata[index].MultipartUpload = xlMeta.MultipartUpload
 	}
 
 	// Write unique `xl.json` for each disk.
@@ -1105,20 +1109,8 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 		return oi, toObjectErr(err, minioMetaMultipartBucket, path.Join(bucket, object))
 	}
 
-	objInfo := ObjectInfo{
-		IsDir:           false,
-		Bucket:          bucket,
-		Name:            object,
-		Size:            xlMeta.Stat.Size,
-		ModTime:         xlMeta.Stat.ModTime,
-		ETag:            xlMeta.Meta["etag"],
-		ContentType:     xlMeta.Meta["content-type"],
-		ContentEncoding: xlMeta.Meta["content-encoding"],
-		UserDefined:     xlMeta.Meta,
-	}
-
 	// Success, return object info.
-	return objInfo, nil
+	return xlMeta.ToObjectInfo(bucket, object), nil
 }
 
 // Wrapper which removes all the uploaded parts.
