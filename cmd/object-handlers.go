@@ -32,6 +32,7 @@ import (
 	"github.com/minio/minio/pkg/errors"
 	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/ioutil"
+	sha256 "github.com/minio/sha256-simd"
 	"github.com/minio/sio"
 )
 
@@ -1104,7 +1105,12 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 				return
 			}
 
-			reader, err = sio.EncryptReader(reader, sio.Config{Key: objectEncryptionKey})
+			sha := sha256.New() // derive part  encryption key
+			sha.Write(objectEncryptionKey)
+			sha.Write([]byte("-" + partIDString))
+			partEncryptionKey := sha.Sum(nil)
+
+			reader, err = sio.EncryptReader(reader, sio.Config{Key: partEncryptionKey})
 			if err != nil {
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return

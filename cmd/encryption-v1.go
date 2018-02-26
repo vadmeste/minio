@@ -23,6 +23,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -399,7 +400,10 @@ func newDecryptWriter(client io.Writer, key []byte, seqNumber uint32, metadata m
 		return nil, err
 
 	}
+	return newDecryptWriterWithObjectKey(client, objectEncryptionKey, seqNumber, metadata)
+}
 
+func newDecryptWriterWithObjectKey(client io.Writer, objectEncryptionKey []byte, seqNumber uint32, metadata map[string]string) (io.WriteCloser, error) {
 	writer, err := sio.DecryptWriter(client, sio.Config{
 		Key:            objectEncryptionKey,
 		SequenceNumber: seqNumber,
@@ -452,6 +456,38 @@ type DecryptBlocksWriter struct {
 	customerKeyHeader string
 }
 
+func (w *DecryptBlocksWriter) buildDecrypter(partID int) error {
+	m := make(map[string]string)
+	for k, v := range w.metadata {
+		m[k] = v
+	}
+	// Initialize the first decrypter, new decrypters will be initialized in Write() operation as needed.
+	w.req.Header.Set(SSECustomerKey, w.customerKeyHeader)
+	key, err := ParseSSECustomerRequest(w.req)
+	if err != nil {
+		return err
+	}
+
+	objectEncryptionKey, err := decryptObjectInfo(key, m)
+	if err != nil {
+		return err
+	}
+
+	sha := sha256.New() // derive part  encryption key
+	sha.Write(objectEncryptionKey)
+	sha.Write([]byte("-" + fmt.Sprintf("%d", partID)))
+	partEncryptionKey := sha.Sum(nil)
+
+	delete(m, SSECustomerKey) // make sure we do not save the key by accident
+
+	decrypter, err := newDecryptWriterWithObjectKey(w.writer, partEncryptionKey, w.startSeqNum, m)
+	if err != nil {
+		return err
+	}
+	w.decrypter = decrypter
+	return nil
+}
+
 func (w *DecryptBlocksWriter) Write(p []byte) (int, error) {
 	var err error
 	var n1 int
@@ -474,14 +510,7 @@ func (w *DecryptBlocksWriter) Write(p []byte) (int, error) {
 
 		w.partIndex++
 
-		// Re-initialize a new decrypter starting from sequence 0 for the remaining parts.
-		m := make(map[string]string)
-		for k, v := range w.metadata {
-			m[k] = v
-		}
-
-		w.req.Header.Set(SSECustomerKey, w.customerKeyHeader)
-		w.decrypter, err = DecryptRequestWithSequenceNumber(w.writer, w.req, w.startSeqNum, m)
+		err = w.buildDecrypter(w.partIndex + 1)
 		if err != nil {
 			return 0, err
 		}
@@ -548,18 +577,7 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length
 		metadata:          srcInfo.UserDefined,
 	}
 
-	m := make(map[string]string)
-	for k, v := range w.metadata {
-		m[k] = v
-	}
-
-	// Initialize the first decrypter, new decrypters will be initialized in Write() operation as needed.
-	w.req.Header.Set(SSECustomerKey, w.customerKeyHeader)
-	var err error
-	w.decrypter, err = DecryptRequestWithSequenceNumber(w.writer, w.req, w.startSeqNum, m)
-	if err != nil {
-		return nil, 0, 0, err
-	}
+	w.buildDecrypter(partStartIndex + 1)
 
 	return w, encStartOffset, encLength, nil
 }
