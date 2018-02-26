@@ -69,6 +69,9 @@ const (
 
 	// SSECustomerAlgorithmAES256 the only valid S3 SSE-C encryption algorithm identifier.
 	SSECustomerAlgorithmAES256 = "AES256"
+
+	// SSE date payload block size
+	sseDAREPayloadBlockSize = 64 * 1024
 )
 
 // SSE-C key derivation, key verification and key update:
@@ -239,7 +242,7 @@ func rotateKey(oldKey []byte, newKey []byte, metadata map[string]string) error {
 		return errObjectTampered
 	}
 	iv, err := base64.StdEncoding.DecodeString(metadata[ServerSideEncryptionIV])
-	if err != nil || len(iv) != 32 {
+	if err != nil || len(iv) != SSECustomerKeySize {
 		return errObjectTampered
 	}
 	sealedKey, err := base64.StdEncoding.DecodeString(metadata[ServerSideEncryptionSealedKey])
@@ -369,7 +372,7 @@ func decryptObjectInfo(key []byte, metadata map[string]string) ([]byte, error) {
 		return nil, errObjectTampered
 	}
 	iv, err := base64.StdEncoding.DecodeString(metadata[ServerSideEncryptionIV])
-	if err != nil || len(iv) != 32 {
+	if err != nil || len(iv) != SSECustomerKeySize {
 		return nil, errObjectTampered
 	}
 	sealedKey, err := base64.StdEncoding.DecodeString(metadata[ServerSideEncryptionSealedKey])
@@ -564,8 +567,8 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length
 		partStartOffset = partEndOffset
 	}
 
-	startSeqNum := (startOffset - partStartOffset) / (64 * 1024)
-	partEncRelOffset := encStartOffset - (int64(startSeqNum) * (64*1024 + 32))
+	startSeqNum := (startOffset - partStartOffset) / sseDAREPayloadBlockSize
+	partEncRelOffset := encStartOffset - (int64(startSeqNum) * (sseDAREPayloadBlockSize + SSECustomerKeySize))
 
 	w := &DecryptBlocksWriter{
 		writer:            client,
@@ -584,12 +587,12 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length
 
 // getStartOffset - get sequence number, start offset and rlength.
 func getStartOffset(offset, length int64) (seqNumber uint32, startOffset int64, rlength int64) {
-	seqNumber = uint32(offset / (64 * 1024))
-	startOffset = int64(seqNumber) * (64*1024 + 32)
+	seqNumber = uint32(offset / sseDAREPayloadBlockSize)
+	startOffset = int64(seqNumber) * (sseDAREPayloadBlockSize + SSECustomerKeySize)
 
-	rlength = (length / (64 * 1024)) * (64*1024 + 32)
-	if length%(64*1024) > 0 {
-		rlength += 64*1024 + 32
+	rlength = (length / sseDAREPayloadBlockSize) * (sseDAREPayloadBlockSize + SSECustomerKeySize)
+	if length%(sseDAREPayloadBlockSize) > 0 {
+		rlength += sseDAREPayloadBlockSize + SSECustomerKeySize
 	}
 	return seqNumber, startOffset, rlength
 }
@@ -612,12 +615,12 @@ func decryptedSize(encryptedSize int64) (int64, error) {
 	if encryptedSize == 0 {
 		return encryptedSize, nil
 	}
-	size := (encryptedSize / (32 + 64*1024)) * (64 * 1024)
-	if mod := encryptedSize % (32 + 64*1024); mod > 0 {
+	size := (encryptedSize / (sseDAREPayloadBlockSize + SSECustomerKeySize)) * sseDAREPayloadBlockSize
+	if mod := encryptedSize % (sseDAREPayloadBlockSize + SSECustomerKeySize); mod > 0 {
 		if mod < 33 {
 			return -1, errObjectTampered // object is not 0 size but smaller than the smallest valid encrypted object
 		}
-		size += mod - 32
+		size += mod - SSECustomerKeySize
 	}
 	return size, nil
 }
@@ -638,9 +641,9 @@ func (o *ObjectInfo) DecryptedSize() (int64, error) {
 // An encrypted object is always larger than a plain object
 // except for zero size objects.
 func (o *ObjectInfo) EncryptedSize() int64 {
-	size := (o.Size / (64 * 1024)) * (32 + 64*1024)
-	if mod := o.Size % (64 * 1024); mod > 0 {
-		size += mod + 32
+	size := (o.Size / sseDAREPayloadBlockSize) * (sseDAREPayloadBlockSize + SSECustomerKeySize)
+	if mod := o.Size % (sseDAREPayloadBlockSize); mod > 0 {
+		size += mod + SSECustomerKeySize
 	}
 	return size
 }
