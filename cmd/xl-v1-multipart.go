@@ -526,7 +526,6 @@ func (xl xlObjects) newMultipartUpload(bucket string, object string, meta map[st
 	}
 	xlMeta.Stat.ModTime = UTCNow()
 	xlMeta.Meta = meta
-	xlMeta.MultipartUpload = true
 
 	// This lock needs to be held for any changes to the directory
 	// contents of ".minio.sys/multipart/object/"
@@ -987,8 +986,6 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 	// Allocate parts similar to incoming slice.
 	xlMeta.Parts = make([]objectPartInfo, len(parts))
 
-	xlMeta.MultipartUpload = true
-
 	// Validate each part and then commit to disk.
 	for i, part := range parts {
 		partIdx := objectPartIndex(currentXLMeta.Parts, part.PartNumber)
@@ -1046,7 +1043,6 @@ func (xl xlObjects) CompleteMultipartUpload(bucket string, object string, upload
 		partsMetadata[index].Stat = xlMeta.Stat
 		partsMetadata[index].Meta = xlMeta.Meta
 		partsMetadata[index].Parts = xlMeta.Parts
-		partsMetadata[index].MultipartUpload = xlMeta.MultipartUpload
 	}
 
 	// Write unique `xl.json` for each disk.

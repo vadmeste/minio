@@ -222,7 +222,6 @@ func (fs *FSObjects) NewMultipartUpload(bucket, object string, meta map[string]s
 	// Initialize fs.json values.
 	fsMeta := newFSMetaV1()
 	fsMeta.Meta = meta
-	fsMeta.MultipartUpload = true
 
 	fsMetaBytes, err := json.Marshal(fsMeta)
 	if err != nil {
