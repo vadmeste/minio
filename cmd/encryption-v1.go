@@ -611,6 +611,20 @@ func (o *ObjectInfo) IsEncrypted() bool {
 	return false
 }
 
+// IsEncrypted returns true if the object is marked as encrypted.
+func (li *ListPartsInfo) IsEncrypted() bool {
+	if _, ok := li.UserDefined[ServerSideEncryptionIV]; ok {
+		return true
+	}
+	if _, ok := li.UserDefined[ServerSideEncryptionSealAlgorithm]; ok {
+		return true
+	}
+	if _, ok := li.UserDefined[ServerSideEncryptionSealedKey]; ok {
+		return true
+	}
+	return false
+}
+
 func decryptedSize(encryptedSize int64) (int64, error) {
 	if encryptedSize == 0 {
 		return encryptedSize, nil

@@ -888,7 +888,18 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	var writer io.WriteCloser = pipeWriter
 	var reader io.Reader = pipeReader
 	if objectAPI.IsEncryptionSupported() {
-		if IsSSECustomerRequest(r.Header) {
+		var li ListPartsInfo
+		li, err = objectAPI.ListObjectParts(dstBucket, dstObject, uploadID, 0, 1)
+		if err != nil {
+			pipeWriter.CloseWithError(err)
+			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+			return
+		}
+		if li.IsEncrypted() {
+			if !IsSSECustomerRequest(r.Header) {
+				writeErrorResponse(w, ErrSSEMultipartEncrypted, r.URL)
+				return
+			}
 			var key []byte
 			key, err = ParseSSECustomerRequest(r)
 			if err != nil {
@@ -898,14 +909,6 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 			}
 
 			// Calculating object encryption key
-			var li ListPartsInfo
-			li, err = objectAPI.ListObjectParts(dstBucket, dstObject, uploadID, 0, 1)
-			if err != nil {
-				pipeWriter.CloseWithError(err)
-				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
-				return
-			}
-
 			var objectEncryptionKey []byte
 			objectEncryptionKey, err = decryptObjectInfo(key, li.UserDefined)
 			if err != nil {
@@ -1082,7 +1085,17 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	}
 
 	if objectAPI.IsEncryptionSupported() {
-		if IsSSECustomerRequest(r.Header) && !hasSuffix(object, slashSeparator) { // handle SSE-C requests
+		var li ListPartsInfo
+		li, err = objectAPI.ListObjectParts(bucket, object, uploadID, 0, 1)
+		if err != nil {
+			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+			return
+		}
+		if li.IsEncrypted() {
+			if !IsSSECustomerRequest(r.Header) {
+				writeErrorResponse(w, ErrSSEMultipartEncrypted, r.URL)
+				return
+			}
 			var key []byte
 			key, err = ParseSSECustomerRequest(r)
 			if err != nil {
@@ -1091,13 +1104,6 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 			}
 
 			// Calculating object encryption key
-			var li ListPartsInfo
-			li, err = objectAPI.ListObjectParts(bucket, object, uploadID, 0, 1)
-			if err != nil {
-				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
-				return
-			}
-
 			var objectEncryptionKey []byte
 			objectEncryptionKey, err = decryptObjectInfo(key, li.UserDefined)
 			if err != nil {
