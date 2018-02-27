@@ -500,7 +500,6 @@ func (w *DecryptBlocksWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 		w.partEncRelOffset += int64(n1)
-
 	} else {
 		n1, err = w.decrypter.Write(p[:w.parts[w.partIndex].Size-w.partEncRelOffset])
 		if err != nil {
@@ -539,45 +538,58 @@ func (w *DecryptBlocksWriter) Close() error {
 
 // DecryptBlocksRequest - setup a struct which can decrypt many concatenated encrypted data
 // parts information helps to know the boundaries of each encrypted data block.
-func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length int64, srcInfo ObjectInfo) (io.WriteCloser, int64, int64, error) {
-	seqNumber, encStartOffset, encLength := getStartOffset(startOffset, length)
+func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length int64, objInfo ObjectInfo) (io.WriteCloser, int64, int64, error) {
+	seqNumber, encStartOffset, encLength := getEncryptedStartOffset(startOffset, length)
 
-	if len(srcInfo.Parts) == 0 || !srcInfo.IsEncryptedMultipart() {
-		writer, err := DecryptRequestWithSequenceNumber(client, r, seqNumber, srcInfo.UserDefined)
+	// Encryption length cannot be bigger than the file size, if it is
+	// which is allowed in AWS S3, we simply default to EncryptedSize().
+	if encLength+encStartOffset > objInfo.EncryptedSize() {
+		encLength = objInfo.EncryptedSize() - encStartOffset
+	}
+
+	if len(objInfo.Parts) == 0 || !objInfo.IsEncryptedMultipart() {
+		writer, err := DecryptRequestWithSequenceNumber(client, r, seqNumber, objInfo.UserDefined)
 		if err != nil {
 			return nil, 0, 0, err
 		}
+
 		return writer, encStartOffset, encLength, nil
 	}
 
 	var partStartIndex int
-	var partStartOffset int64
-	var partEndOffset int64
-
-	for i, part := range srcInfo.Parts {
+	var partStartOffset = startOffset
+	// Skip parts until final offset maps to a particular part offset.
+	for i, part := range objInfo.Parts {
 		decryptedSize, err := decryptedSize(part.Size)
 		if err != nil {
 			return nil, -1, -1, err
 		}
-		partEndOffset += decryptedSize
-		if startOffset < partEndOffset {
-			partStartIndex = i
+
+		partStartIndex = i
+
+		// Offset is smaller than size we have reached the
+		// proper part offset, break out we start from
+		// this part index.
+		if partStartOffset < decryptedSize {
 			break
 		}
-		partStartOffset = partEndOffset
+
+		// Continue to look for next part.
+		partStartOffset -= decryptedSize
 	}
 
-	startSeqNum := (startOffset - partStartOffset) / sseDAREPayloadBlockSize
-	partEncRelOffset := encStartOffset - (int64(startSeqNum) * (sseDAREPayloadBlockSize + SSECustomerKeySize))
+	startSeqNum := partStartOffset / sseDAREPayloadBlockSize
+	partEncRelOffset := int64(startSeqNum) * (sseDAREPayloadBlockSize + SSECustomerKeySize)
 
 	w := &DecryptBlocksWriter{
 		writer:            client,
 		startSeqNum:       uint32(startSeqNum),
 		partEncRelOffset:  partEncRelOffset,
-		parts:             srcInfo.Parts[partStartIndex:],
+		parts:             objInfo.Parts,
+		partIndex:         partStartIndex,
 		req:               r,
 		customerKeyHeader: r.Header.Get(SSECustomerKey),
-		metadata:          srcInfo.UserDefined,
+		metadata:          objInfo.UserDefined,
 	}
 
 	w.buildDecrypter(partStartIndex + 1)
@@ -585,16 +597,26 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length
 	return w, encStartOffset, encLength, nil
 }
 
-// getStartOffset - get sequence number, start offset and rlength.
-func getStartOffset(offset, length int64) (seqNumber uint32, startOffset int64, rlength int64) {
-	seqNumber = uint32(offset / sseDAREPayloadBlockSize)
-	startOffset = int64(seqNumber) * (sseDAREPayloadBlockSize + SSECustomerKeySize)
+// getEncryptedStartOffset - fetch sequence number, encrypted start offset and encrypted length.
+func getEncryptedStartOffset(offset, length int64) (seqNumber uint32, encOffset int64, encLength int64) {
+	onePkgSize := int64(sseDAREPayloadBlockSize + SSECustomerKeySize)
 
-	rlength = (length / sseDAREPayloadBlockSize) * (sseDAREPayloadBlockSize + SSECustomerKeySize)
-	if length%(sseDAREPayloadBlockSize) > 0 {
-		rlength += sseDAREPayloadBlockSize + SSECustomerKeySize
+	seqNumber = uint32(offset / sseDAREPayloadBlockSize)
+	encOffset = int64(seqNumber) * onePkgSize
+	// The math to compute the encrypted length is always
+	// originalLength i.e (offset+length-1) to be divided under
+	// 64KiB blocks which is the payload size for each encrypted
+	// block. This is then multiplied by final package size which
+	// is basically 64KiB + 32. Finally negate the encrypted offset
+	// to get the final encrypted length on disk.
+	encLength = ((offset+length)/sseDAREPayloadBlockSize)*onePkgSize - encOffset
+
+	// Check for the remainder, to figure if we need one extract package to read from.
+	if (offset+length)%sseDAREPayloadBlockSize > 0 {
+		encLength += onePkgSize
 	}
-	return seqNumber, startOffset, rlength
+
+	return seqNumber, encOffset, encLength
 }
 
 // IsEncryptedMultipart - is the encrypted content multiparted?

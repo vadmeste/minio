@@ -171,10 +171,6 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 				return
 			}
 
-			if length > objInfo.EncryptedSize() {
-				length = objInfo.EncryptedSize()
-			}
-
 			w.Header().Set(SSECustomerAlgorithm, r.Header.Get(SSECustomerAlgorithm))
 			w.Header().Set(SSECustomerKeyMD5, r.Header.Get(SSECustomerKeyMD5))
 		}
