@@ -761,6 +761,10 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
+
+			// Set this for multipart only operations, we need to differentiate during
+			// decryption if the file was actually multipart or not.
+			encMetadata[ReservedMetadataPrefix+"Encrypted-Multipart"] = ""
 		}
 	}
 

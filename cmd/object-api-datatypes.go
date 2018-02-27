@@ -104,9 +104,6 @@ type ObjectInfo struct {
 	// List of individual parts, maximum size of upto 10,000
 	Parts []objectPartInfo `json:"-"`
 
-	// Indicate whether this is uploaded by multipart mechanism
-	MultipartUpload bool
-
 	// Implements writer and reader used by CopyObject API
 	Writer       io.WriteCloser `json:"-"`
 	Reader       *hash.Reader   `json:"-"`

@@ -204,11 +204,6 @@ func parseXLParts(xlMetaBuf []byte) []objectPartInfo {
 	return partInfo
 }
 
-func parseXLMultipartUpload(xlMetaBuf []byte) bool {
-	// Parse the Multipart Upload field.
-	return gjson.GetBytes(xlMetaBuf, "multipartUpload").Bool()
-}
-
 func parseXLMetaMap(xlMetaBuf []byte) map[string]string {
 	// Get xlMetaV1.Meta map.
 	metaMapResult := gjson.GetBytes(xlMetaBuf, "meta").Map()
@@ -240,8 +235,6 @@ func xlMetaV1UnmarshalJSON(xlMetaBuf []byte) (xlMeta xlMetaV1, e error) {
 
 	// Parse the XL Parts.
 	xlMeta.Parts = parseXLParts(xlMetaBuf)
-	// Parse multipardUpload field
-	xlMeta.MultipartUpload = parseXLMultipartUpload(xlMetaBuf)
 	// Get the xlMetaV1.Realse field.
 	xlMeta.Minio.Release = parseXLRelease(xlMetaBuf)
 	// parse xlMetaV1.

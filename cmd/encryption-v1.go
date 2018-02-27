@@ -542,7 +542,7 @@ func (w *DecryptBlocksWriter) Close() error {
 func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length int64, srcInfo ObjectInfo) (io.WriteCloser, int64, int64, error) {
 	seqNumber, encStartOffset, encLength := getStartOffset(startOffset, length)
 
-	if len(srcInfo.Parts) == 0 || !srcInfo.MultipartUpload {
+	if len(srcInfo.Parts) == 0 || !srcInfo.IsEncryptedMultipart() {
 		writer, err := DecryptRequestWithSequenceNumber(client, r, seqNumber, srcInfo.UserDefined)
 		if err != nil {
 			return nil, 0, 0, err
@@ -595,6 +595,12 @@ func getStartOffset(offset, length int64) (seqNumber uint32, startOffset int64, 
 		rlength += sseDAREPayloadBlockSize + SSECustomerKeySize
 	}
 	return seqNumber, startOffset, rlength
+}
+
+// IsEncryptedMultipart - is the encrypted content multiparted?
+func (o *ObjectInfo) IsEncryptedMultipart() bool {
+	_, ok := o.UserDefined[ReservedMetadataPrefix+"Encrypted-Multipart"]
+	return ok
 }
 
 // IsEncrypted returns true if the object is marked as encrypted.

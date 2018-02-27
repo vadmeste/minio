@@ -59,8 +59,6 @@ type fsMetaV1 struct {
 	// Metadata map for current object `fs.json`.
 	Meta  map[string]string `json:"meta,omitempty"`
 	Parts []objectPartInfo  `json:"parts,omitempty"`
-
-	MultipartUpload bool `json:"multipartUpload,omitempty"`
 }
 
 // IsValid - tells if the format is sane by validating the version
@@ -126,8 +124,6 @@ func (m fsMetaV1) ToObjectInfo(bucket, object string, fi os.FileInfo) ObjectInfo
 	// All the parts per object.
 	objInfo.Parts = m.Parts
 
-	objInfo.MultipartUpload = m.MultipartUpload
-
 	// Success..
 	return objInfo
 }
@@ -153,10 +149,6 @@ func parseFSFormat(fsMetaBuf []byte) string {
 
 func parseFSRelease(fsMetaBuf []byte) string {
 	return gjson.GetBytes(fsMetaBuf, "minio.release").String()
-}
-
-func parseFSMultipartUpload(fsMetaBuf []byte) bool {
-	return gjson.GetBytes(fsMetaBuf, "multipartUpload").Bool()
 }
 
 func parseFSMetaMap(fsMetaBuf []byte) map[string]string {
@@ -218,8 +210,6 @@ func (m *fsMetaV1) ReadFrom(lk *lock.LockedFile) (n int64, err error) {
 	if !isFSMetaValid(m.Version, m.Format) {
 		return 0, errors.Trace(errCorruptedFormat)
 	}
-
-	m.MultipartUpload = parseFSMultipartUpload(fsMetaBuf)
 
 	// obtain parts information
 	m.Parts = parseFSPartsArray(fsMetaBuf)
