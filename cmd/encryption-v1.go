@@ -18,12 +18,13 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 
@@ -447,51 +448,28 @@ type DecryptBlocksWriter struct {
 	writer io.Writer
 	// Current decrypter for the current encrypted data block
 	decrypter io.WriteCloser
-	// Start sequence number
-	startSeqNum uint32
 	// Current part index
 	partIndex int
 	// Parts information
-	parts    []objectPartInfo
-	req      *http.Request
-	metadata map[string]string
-
+	parts            []objectPartInfo
 	partEncRelOffset int64
 
-	// Customer Key
-	customerKeyHeader string
+	objectEncryptionKey []byte // used to derive unique part keys
 }
 
-func (w *DecryptBlocksWriter) buildDecrypter(partID int) error {
-	m := make(map[string]string)
-	for k, v := range w.metadata {
-		m[k] = v
-	}
-	// Initialize the first decrypter, new decrypters will be initialized in Write() operation as needed.
-	w.req.Header.Set(SSECustomerKey, w.customerKeyHeader)
-	key, err := ParseSSECustomerRequest(w.req)
-	if err != nil {
-		return err
-	}
+func (w *DecryptBlocksWriter) initDecrypter(seqNum uint32, partID int) (err error) {
+	var partIDbin [4]byte
+	binary.LittleEndian.PutUint32(partIDbin[:], uint32(partID)) // marshal part ID
 
-	objectEncryptionKey, err := decryptObjectInfo(key, m)
-	if err != nil {
-		return err
-	}
+	mac := hmac.New(sha256.New, w.objectEncryptionKey) // derive part encryption key from part ID and object key
+	mac.Write(partIDbin[:])
+	partEncryptionKey := mac.Sum(nil)
 
-	sha := sha256.New() // derive part  encryption key
-	sha.Write(objectEncryptionKey)
-	sha.Write([]byte("-" + fmt.Sprintf("%d", partID)))
-	partEncryptionKey := sha.Sum(nil)
-
-	delete(m, SSECustomerKey) // make sure we do not save the key by accident
-
-	decrypter, err := newDecryptWriterWithObjectKey(w.writer, partEncryptionKey, w.startSeqNum, m)
-	if err != nil {
-		return err
-	}
-	w.decrypter = decrypter
-	return nil
+	w.decrypter, err = sio.DecryptWriter(w.writer, sio.Config{
+		Key:            partEncryptionKey,
+		SequenceNumber: seqNum,
+	})
+	return
 }
 
 func (w *DecryptBlocksWriter) Write(p []byte) (int, error) {
@@ -509,13 +487,10 @@ func (w *DecryptBlocksWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 
-		// We should now proceed to next part, reset all values appropriately.
-		w.partEncRelOffset = 0
-		w.startSeqNum = 0
-
+		w.partEncRelOffset = 0 // proceed to next part -> we start reading from 0
 		w.partIndex++
 
-		err = w.buildDecrypter(w.partIndex + 1)
+		err = w.initDecrypter(0, w.partIndex)
 		if err != nil {
 			return 0, err
 		}
@@ -542,6 +517,15 @@ func (w *DecryptBlocksWriter) Close() error {
 // DecryptBlocksRequest - setup a struct which can decrypt many concatenated encrypted data
 // parts information helps to know the boundaries of each encrypted data block.
 func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length int64, objInfo ObjectInfo) (io.WriteCloser, int64, int64, error) {
+	key, err := ParseSSECustomerRequest(r)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	objectEncryptionKey, err := decryptObjectInfo(key, objInfo.UserDefined)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
 	seqNumber, encStartOffset, encLength := getEncryptedStartOffset(startOffset, length)
 
 	// Encryption length cannot be bigger than the file size, if it is
@@ -585,17 +569,13 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length
 	partEncRelOffset := int64(startSeqNum) * (sseDAREPackageBlockSize + sseDAREPackageMetaSize)
 
 	w := &DecryptBlocksWriter{
-		writer:            client,
-		startSeqNum:       uint32(startSeqNum),
-		partEncRelOffset:  partEncRelOffset,
-		parts:             objInfo.Parts,
-		partIndex:         partStartIndex,
-		req:               r,
-		customerKeyHeader: r.Header.Get(SSECustomerKey),
-		metadata:          objInfo.UserDefined,
+		writer:              client,
+		partEncRelOffset:    partEncRelOffset,
+		parts:               objInfo.Parts,
+		partIndex:           partStartIndex,
+		objectEncryptionKey: objectEncryptionKey,
 	}
-
-	w.buildDecrypter(partStartIndex + 1)
+	w.initDecrypter(uint32(startSeqNum), partStartIndex)
 
 	return w, encStartOffset, encLength, nil
 }
