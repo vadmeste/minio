@@ -70,8 +70,11 @@ const (
 	// SSECustomerAlgorithmAES256 the only valid S3 SSE-C encryption algorithm identifier.
 	SSECustomerAlgorithmAES256 = "AES256"
 
-	// SSE date payload block size
-	sseDAREPayloadBlockSize = 64 * 1024
+	// SSE dare package block size.
+	sseDAREPackageBlockSize = 64 * 1024 // 64KiB bytes
+
+	// SSE dare package meta padding bytes.
+	sseDAREPackageMetaSize = 32 // 32 bytes
 )
 
 // SSE-C key derivation, key verification and key update:
@@ -578,8 +581,8 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length
 		partStartOffset -= decryptedSize
 	}
 
-	startSeqNum := partStartOffset / sseDAREPayloadBlockSize
-	partEncRelOffset := int64(startSeqNum) * (sseDAREPayloadBlockSize + SSECustomerKeySize)
+	startSeqNum := partStartOffset / sseDAREPackageBlockSize
+	partEncRelOffset := int64(startSeqNum) * (sseDAREPackageBlockSize + sseDAREPackageMetaSize)
 
 	w := &DecryptBlocksWriter{
 		writer:            client,
@@ -599,9 +602,9 @@ func DecryptBlocksRequest(client io.Writer, r *http.Request, startOffset, length
 
 // getEncryptedStartOffset - fetch sequence number, encrypted start offset and encrypted length.
 func getEncryptedStartOffset(offset, length int64) (seqNumber uint32, encOffset int64, encLength int64) {
-	onePkgSize := int64(sseDAREPayloadBlockSize + SSECustomerKeySize)
+	onePkgSize := int64(sseDAREPackageBlockSize + sseDAREPackageMetaSize)
 
-	seqNumber = uint32(offset / sseDAREPayloadBlockSize)
+	seqNumber = uint32(offset / sseDAREPackageBlockSize)
 	encOffset = int64(seqNumber) * onePkgSize
 	// The math to compute the encrypted length is always
 	// originalLength i.e (offset+length-1) to be divided under
@@ -609,10 +612,10 @@ func getEncryptedStartOffset(offset, length int64) (seqNumber uint32, encOffset 
 	// block. This is then multiplied by final package size which
 	// is basically 64KiB + 32. Finally negate the encrypted offset
 	// to get the final encrypted length on disk.
-	encLength = ((offset+length)/sseDAREPayloadBlockSize)*onePkgSize - encOffset
+	encLength = ((offset+length)/sseDAREPackageBlockSize)*onePkgSize - encOffset
 
 	// Check for the remainder, to figure if we need one extract package to read from.
-	if (offset+length)%sseDAREPayloadBlockSize > 0 {
+	if (offset+length)%sseDAREPackageBlockSize > 0 {
 		encLength += onePkgSize
 	}
 
@@ -657,12 +660,12 @@ func decryptedSize(encryptedSize int64) (int64, error) {
 	if encryptedSize == 0 {
 		return encryptedSize, nil
 	}
-	size := (encryptedSize / (sseDAREPayloadBlockSize + SSECustomerKeySize)) * sseDAREPayloadBlockSize
-	if mod := encryptedSize % (sseDAREPayloadBlockSize + SSECustomerKeySize); mod > 0 {
-		if mod < 33 {
+	size := (encryptedSize / (sseDAREPackageBlockSize + sseDAREPackageMetaSize)) * sseDAREPackageBlockSize
+	if mod := encryptedSize % (sseDAREPackageBlockSize + sseDAREPackageMetaSize); mod > 0 {
+		if mod < sseDAREPackageMetaSize+1 {
 			return -1, errObjectTampered // object is not 0 size but smaller than the smallest valid encrypted object
 		}
-		size += mod - SSECustomerKeySize
+		size += mod - sseDAREPackageMetaSize
 	}
 	return size, nil
 }
@@ -683,9 +686,9 @@ func (o *ObjectInfo) DecryptedSize() (int64, error) {
 // An encrypted object is always larger than a plain object
 // except for zero size objects.
 func (o *ObjectInfo) EncryptedSize() int64 {
-	size := (o.Size / sseDAREPayloadBlockSize) * (sseDAREPayloadBlockSize + SSECustomerKeySize)
-	if mod := o.Size % (sseDAREPayloadBlockSize); mod > 0 {
-		size += mod + SSECustomerKeySize
+	size := (o.Size / sseDAREPackageBlockSize) * (sseDAREPackageBlockSize + sseDAREPackageMetaSize)
+	if mod := o.Size % (sseDAREPackageBlockSize); mod > 0 {
+		size += mod + sseDAREPackageMetaSize
 	}
 	return size
 }
