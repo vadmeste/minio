@@ -25,6 +25,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -583,19 +585,7 @@ func (a adminAPIHandlers) getConfigDotJSON() ([]byte, error) {
 
 	// Get config.json - in distributed mode, the configuration
 	// occurring on a quorum of the servers is returned.
-	configBytes, err := getPeerConfig(globalAdminPeers)
-	if err != nil {
-		return nil, err
-	}
-
-	// Pretty-print config received as json.
-	var buf bytes.Buffer
-	err = json.Indent(&buf, configBytes, "", "\t")
-	if err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
+	return getPeerConfig(globalAdminPeers)
 }
 
 // GetConfigHandler - GET /minio/admin/v1/config
@@ -617,12 +607,10 @@ func (a adminAPIHandlers) GetConfigHandler(w http.ResponseWriter, r *http.Reques
 	writeSuccessResponseJSON(w, configBytes)
 }
 
-// Disable tidwall json array notation in JSON key path so
-// users can set json with a key as a number.
-//    In tidwall json, notify.webhook.0 = val means { "notify" : { "webhook" : [val] }}
-//    In Minio, notify.webhook.0 = val means { "notify" : { "webhook" : {"0" : val}}}
-func normalizeJSONKey(input string) (key string) {
+func normKey(input string) (key string) {
+	// Split
 	subKeys := strings.Split(input, ".")
+
 	for i, k := range subKeys {
 		if i > 0 {
 			key += "."
@@ -668,8 +656,9 @@ func (a adminAPIHandlers) GetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 		if key == "" {
 			continue
 		}
+
 		val := gjson.Get(configStr, key)
-		if j, err := sjson.Set(jsonResult, normalizeJSONKey(key), val.Value()); err == nil {
+		if j, err := sjson.Set(jsonResult, normKey(key), val.Value()); err == nil {
 			jsonResult = j
 		}
 	}
@@ -759,13 +748,6 @@ func (a adminAPIHandlers) setConfigDotJSON(ctx context.Context, configBytes []by
 	}
 	defer configLock.Unlock()
 
-	// Save a backup of the current config
-	errs = backupConfigPeers(globalAdminPeers)
-	rErr = reduceWriteQuorumErrs(ctx, errs, nil, len(globalAdminPeers)/2+1)
-	if rErr != nil {
-		return errs, rErr
-	}
-
 	// Rename the temporary config file to config.json
 	errs = commitConfigPeers(globalAdminPeers, tmpFileName)
 	rErr = reduceWriteQuorumErrs(ctx, errs, nil, len(globalAdminPeers)/2+1)
@@ -837,11 +819,6 @@ func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err = config.TestNotificationTargets(); err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
-		return
-	}
-
 	// If credentials for the server are provided via environment,
 	// then credentials in the provided configuration must match.
 	if globalIsEnvCreds {
@@ -851,12 +828,6 @@ func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Reques
 			writeErrorResponseJSON(w, ErrAdminCredentialsMismatch, r.URL)
 			return
 		}
-	}
-
-	configBytes, err = json.MarshalIndent(config, "", "\t")
-	if err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
-		return
 	}
 
 	peersErrs, err := a.setConfigDotJSON(ctx, configBytes)
@@ -880,7 +851,7 @@ func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Reques
 	sendServiceCmd(globalAdminPeers, serviceRestart)
 }
 
-func convertValueType(str string, jsonType gjson.Type) (interface{}, error) {
+func convertType(str string, jsonType gjson.Type) (interface{}, error) {
 	switch jsonType {
 	case gjson.False, gjson.True:
 		return strconv.ParseBool(str)
@@ -893,6 +864,115 @@ func convertValueType(str string, jsonType gjson.Type) (interface{}, error) {
 	default:
 		return nil, nil
 	}
+}
+
+func isInvalidJSONField(expectedKeys gjson.Result, keys string) (string, string) {
+	fmt.Println("Inside isInvalidJSONField")
+	fmt.Println("expectedKeys.Type: ", expectedKeys.Type)
+	fmt.Println("expectedKeys.Raw: ", expectedKeys.Raw)
+	fmt.Println("expectedKeys.Str: ", expectedKeys.Str)
+	fmt.Println("expectedKeys.Num: ", expectedKeys.Num)
+	fmt.Println("expectedKeys.Index: ", expectedKeys.Index)
+	fmt.Printf("keys: //%s//\n\n", keys)
+
+	var found bool
+	// var jsonLevel int
+	var fullKeyName string
+	// Validation for a single key
+	if expectedKeys.Type == gjson.Null &&
+		expectedKeys.Raw == "" &&
+		expectedKeys.Str == "" &&
+		expectedKeys.Num == 0 &&
+		expectedKeys.Index == 0 {
+		fmt.Println("First Check: INVALID JSON !!!!")
+		return "Invalid key", ""
+	}
+	fmt.Println("First Check: VALID JSON !!!!")
+	// Validation for multiple key names in JSON format
+	var skipChrsFront int
+	var skipChrsEnd int
+	if expectedKeys.Type == gjson.JSON {
+		fmt.Println("string len(keys): ", len(keys))
+		if len(keys) == 2 {
+			fmt.Println("2nd Check: INVALID JSON !!!!")
+			return "Invalid/Empty JSON data", ""
+		}
+		raw := expectedKeys.Raw
+		if keys[:1] == "{" {
+			fmt.Println("1 - Entered inside {}")
+			skipChrsFront = 1
+		} else {
+			skipChrsFront = 0
+		}
+		if keys[len(keys)-1:] == "}" {
+			skipChrsEnd = 1
+		} else {
+			skipChrsEnd = 0
+		}
+		keys := regexp.MustCompile(`[,:]`).Split(keys[skipChrsFront:len(keys)-skipChrsEnd], -1)
+		fmt.Println("slice len(keys): ", len(keys))
+		rawKeys := regexp.MustCompile(`[,:]`).Split(raw[1:len(raw)-1], -1)
+
+		fmt.Println("JSOOON Check >>> keys: ", keys)
+		fmt.Println("rawKeys: ", rawKeys)
+		for i := 0; i < len(keys); i++ {
+			if keys[i][:1] == "{" {
+				fmt.Println("2 - Entered inside {}, index:", i)
+				if keys[i][1:2] == "\"" {
+					skipChrsFront = 2
+				} else {
+					if keys[i][len(keys[i])-1:] == "\"" {
+						skipChrsEnd = 1
+					} else {
+						skipChrsEnd = 0
+					}
+					fmt.Println("Invalid JSON format -1- keys[i]: ", keys[i])
+					fmt.Println("Invalid JSON format -1-: fullKeyName", fullKeyName)
+					return "Invalid JSON format", fullKeyName + "." + keys[i][1:len(keys[i])-skipChrsEnd]
+				}
+				if keys[i][len(keys[i])-1:] == "\"" {
+					skipChrsEnd = 1
+				} else {
+					skipChrsEnd = 0
+				}
+				fullKeyName += "." + keys[i][skipChrsFront:len(keys[i])-skipChrsEnd]
+			} else {
+				fmt.Println("Not {}, before index:", i)
+				if keys[i][:1] == "\"" {
+					skipChrsFront = 1
+				} else {
+					return "Invalid JSON format", keys[i]
+				}
+				if keys[i][len(keys[i])-1:] == "\"" {
+					skipChrsEnd = 1
+				} else {
+					return "Invalid JSON format", keys[i]
+				}
+				fullKeyName = keys[i][skipChrsFront : len(keys[i])-skipChrsEnd]
+			}
+			fmt.Println("Initial fullKeyName, i: ", fullKeyName, i)
+			fmt.Printf("keys[i]: '%v'\n", keys[i])
+			found = false
+			for j := 0; j < len(rawKeys); j++ {
+				fmt.Println("rawKeys[j]: ", rawKeys[j])
+				fmt.Println("       ==> ", keys[i], "==", rawKeys[j])
+				if keys[i] == rawKeys[j] {
+					found = true
+					break
+				}
+				j++
+			}
+			fmt.Println("found: ", found)
+			if !found {
+				return "Invalid key", fullKeyName
+			}
+			if i+1 < len(keys) && keys[i+1][:1] != "{" {
+				i++
+			}
+			fmt.Println("Index at loop end: ", i)
+		}
+	}
+	return "", ""
 }
 
 // SetConfigKeysHandler - PUT /minio/admin/v1/config-keys
@@ -925,42 +1005,54 @@ func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	origConfig := string(configBytes)
-	configStr := origConfig
+	configStr := string(configBytes)
+	var config = newServerConfig()
+	structConfigJSON, err := json.Marshal(config)
+	if err != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		return
+	}
+	structConfig := string(structConfigJSON)
+	fmt.Println("Typr of structConfig =", reflect.TypeOf(structConfig))
+	fmt.Println("structConfig =", structConfig)
 
 	queries := r.URL.Query()
+	fmt.Println("queries =", queries)
 
 	for k, v := range queries {
 		var elem string
 		if len(v) > 0 {
 			elem = v[0]
 		}
-		jsonFieldType := gjson.Get(origConfig, k).Type
-		val, cerr := convertValueType(elem, jsonFieldType)
+
+		// Compare key against struct config
+		jsonField := gjson.Get(structConfig, k)
+		if err, k2 := isInvalidJSONField(jsonField, elem); err != "" {
+			fmt.Println("err: ", err)
+			fmt.Println("k2: ", k2)
+			fmt.Println("k: ", k)
+			if k2 != "" && k2[:1] != "=" {
+				k2 = "." + k2
+			}
+			writeCustomErrorResponseJSON(w, ErrNoSuchKey, err+": "+k+k2, r.URL)
+			return
+		}
+		jsonFieldType := jsonField.Type
+
+		val, cerr := convertType(elem, jsonFieldType)
 		if cerr != nil {
 			writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, cerr.Error(), r.URL)
 			return
 		}
-		if s, serr := sjson.Set(configStr, normalizeJSONKey(k), val); serr == nil {
+
+		if s, serr := sjson.Set(configStr, normKey(k), val); serr == nil {
 			configStr = s
 		}
 	}
-
 	configBytes = []byte(configStr)
 
 	// Validate config
-	var config serverConfig
-	if err = json.Unmarshal(configBytes, &config); err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
-		return
-	}
-
-	if err = config.Validate(); err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
-		return
-	}
-
-	if err = config.TestNotificationTargets(); err != nil {
+	if err := json.Unmarshal(configBytes, &config); err != nil {
 		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
 		return
 	}
@@ -976,6 +1068,12 @@ func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	// FIXME: merge validation PR first before we can use
+	// this snipped
+	// if err := sc.Validate(); err != nil {
+	//	writeErrorResponseJSON(w, toAPIErrorCode(err), r.URL)
+	//	return
+	// }
 	configBytes, err = json.MarshalIndent(config, "", "\t")
 	if err != nil {
 		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
