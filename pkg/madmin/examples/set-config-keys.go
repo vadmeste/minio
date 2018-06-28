@@ -20,8 +20,7 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"fmt"
 	"log"
 
 	"github.com/minio/minio/pkg/madmin"
@@ -31,24 +30,20 @@ func main() {
 	// Note: YOUR-ACCESSKEYID, YOUR-SECRETACCESSKEY are
 	// dummy values, please replace them with original values.
 
+	// Note: YOUR-ACCESSKEYID, YOUR-SECRETACCESSKEY are
+	// dummy values, please replace them with original values.
+
 	// API requests are secure (HTTPS) if secure=true and insecure (HTTPS) otherwise.
 	// New returns an Minio Admin client object.
-	madmClnt, err := madmin.New("your-minio.example.com:9000", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
+	madmClnt, err := madmin.New("localhost:9000", "minio", "minio123", false)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	configBytes, err := madmClnt.GetConfig()
+	err = madmClnt.SetConfigKeys(map[string]string{"version": "31", "notify.webhook.1": "{\"enable\": false, \"endpoint\": \"http://example.com/api/object-notifications\"}"})
 	if err != nil {
-		log.Fatalf("failed due to: %v", err)
+		log.Fatalln(err)
 	}
 
-	// Pretty-print config received as json.
-	var buf bytes.Buffer
-	err = json.Indent(&buf, configBytes, "", "\t")
-	if err != nil {
-		log.Fatalf("failed due to: %v", err)
-	}
-
-	log.Println("config received successfully: ", string(buf.Bytes()))
+	fmt.Println("Setting new configuration successfully executed.")
 }

@@ -33,12 +33,13 @@ func main() {
 
 	// API requests are secure (HTTPS) if secure=true and insecure (HTTPS) otherwise.
 	// New returns an Minio Admin client object.
-	madmClnt, err := madmin.New("your-minio.example.com:9000", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
+	// madmClnt, err := madmin.New("your-minio.example.com:9000", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
+	madmClnt, err := madmin.New("localhost:9000", "minio", "minio123", false)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	configBytes, err := madmClnt.GetConfig()
+	configBytes, err := madmClnt.GetConfigKeys([]string{"notify.amqp.1", "version"})
 	if err != nil {
 		log.Fatalf("failed due to: %v", err)
 	}
