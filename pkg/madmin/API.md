@@ -352,19 +352,36 @@ __Example__
 
 
 <a name="SetConfigKeys"></a>
-### SetConfigKeys(params map[string]string) error
-Set a set of keys and values for Minio server or distributed setup and restart the Minio
-server for the new configuration changes to take effect.
+### SetConfigKeys(params map[string]string) (SetConfigResult, error)
+Set a set of keys and values to the Minio server or distributed setup and restart for configuration
+change to take effect.
+
+
+| Param  | Type  | Description  |
+|---|---|---|
+|`st.Status`            | _bool_  | true if set-config succeeded, false otherwise. |
+|`st.NodeSummary.Name`  | _string_  | Network address of the node. |
+|`st.NodeSummary.ErrSet`   | _bool_ | Bool representation indicating if an error is encountered with the node.|
+|`st.NodeSummary.ErrMsg`   | _string_ | String representation of the error (if any) on the node.|
+
 
 __Example__
 
 ``` go
-    err := madmClnt.SetConfigKeys(map[string]string{"notify.webhook.1": "{\"enable\": true, \"endpoint\": \"http://example.com/api\"}"})
+    result, err := madmClnt.SetConfigKeys(map[string]string{"notify.webhook.1": "{\"enable\": true, \"endpoint\": \"http://example.com/api\"}"})
     if err != nil {
         log.Fatalf("failed due to: %v", err)
     }
 
-    log.Println("New configuration successfully set")
+    var buf bytes.Buffer
+    enc := json.NewEncoder(&buf)
+    enc.SetEscapeHTML(false)
+    enc.SetIndent("", "\t")
+    err = enc.Encode(result)
+    if err != nil {
+        log.Fatalln(err)
+    }
+    log.Println("SetConfig: ", string(buf.Bytes()))
 ```
 
 

@@ -1444,12 +1444,6 @@ func toAPIErrorCode(err error) (apiErr APIErrorCode) {
 		apiErr = ErrInvalidSSECustomerParameters
 	case crypto.ErrInvalidCustomerKey:
 		apiErr = ErrAccessDenied // no access without correct key
-	case crypto.ErrIncompatibleEncryptionMethod:
-		apiErr = ErrIncompatibleEncryptionMethod
-	case errKMSNotConfigured:
-		apiErr = ErrKMSNotConfigured
-	case crypto.ErrKMSAuthLogin:
-		apiErr = ErrKMSAuthFailure
 	case errOperationTimedOut, context.Canceled, context.DeadlineExceeded:
 		apiErr = ErrOperationTimedOut
 	}

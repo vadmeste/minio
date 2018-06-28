@@ -20,6 +20,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+
+	"github.com/minio/minio/cmd/logger"
 )
 
 // localAdminClient - represents admin operation to be executed locally.
@@ -79,4 +85,60 @@ func (lc localAdminClient) GetConfig() ([]byte, error) {
 	}
 
 	return json.Marshal(globalServerConfig)
+}
+
+// WriteTmpConfig - writes config file content to a temporary file on
+// the local server.
+func (lc localAdminClient) WriteTmpConfig(tmpFileName string, configBytes []byte) error {
+	tmpConfigFile := filepath.Join(getConfigDir(), tmpFileName)
+	err := ioutil.WriteFile(tmpConfigFile, configBytes, 0666)
+	reqInfo := (&logger.ReqInfo{}).AppendTags("tmpConfigFile", tmpConfigFile)
+	ctx := logger.SetReqInfo(context.Background(), reqInfo)
+	logger.LogIf(ctx, err)
+	return err
+}
+
+// BackupConfig - saves a copy of the current config file
+func (lc localAdminClient) BackupConfig() (retErr error) {
+	configFile := getConfigFile()
+	reqInfo := (&logger.ReqInfo{}).AppendTags("BackupConfigFile", configFile)
+	ctx := logger.SetReqInfo(context.Background(), reqInfo)
+
+	defer func() {
+		if retErr != nil {
+			logger.LogIf(ctx, retErr)
+		}
+	}()
+	// Stat config file
+	fi, err := os.Stat(configFile)
+	if err != nil {
+		return err
+	}
+	// Copy config file
+	from, err := os.Open(configFile)
+	if err != nil {
+		return err
+	}
+	defer from.Close()
+	to, err := os.OpenFile(configFile+".old", os.O_RDWR|os.O_CREATE, fi.Mode())
+	if err != nil {
+		return err
+	}
+	defer to.Close()
+	_, err = io.Copy(to, from)
+	return err
+}
+
+// CommitConfig - Move the new config in tmpFileName onto config.json
+// on a local node.
+func (lc localAdminClient) CommitConfig(tmpFileName string) error {
+	configFile := getConfigFile()
+	tmpConfigFile := filepath.Join(getConfigDir(), tmpFileName)
+
+	err := os.Rename(tmpConfigFile, configFile)
+	reqInfo := (&logger.ReqInfo{}).AppendTags("tmpConfigFile", tmpConfigFile)
+	reqInfo.AppendTags("configFile", configFile)
+	ctx := logger.SetReqInfo(context.Background(), reqInfo)
+	logger.LogIf(ctx, err)
+	return err
 }

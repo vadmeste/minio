@@ -20,6 +20,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -35,19 +37,24 @@ func main() {
 
 	// API requests are secure (HTTPS) if secure=true and insecure (HTTPS) otherwise.
 	// New returns an Minio Admin client object.
-	madmClnt, err := madmin.New("your-minio.example.com:9000", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
+	madmClnt, err := madmin.New("localhost:9000", "minio", "minio123", false)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	err = madmClnt.SetConfigKeys(map[string]string{
-		"domain":           "example.com",
-		"notify.webhook.1": "{\"enable\": true, \"endpoint\": \"http://example.com/api/object-notifications\"}",
-	})
-
+	result, err := madmClnt.SetConfigKeys(map[string]string{"notify.webhook.1": "{\"enable\": true, \"endpoint\": \"http://example.com/api/object-notifications\"}"})
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	fmt.Println("Setting new configuration successfully executed.")
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "\t")
+	err = enc.Encode(result)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	fmt.Println("SetConfig: ", string(buf.Bytes()))
 }
