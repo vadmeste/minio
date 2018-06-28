@@ -208,6 +208,99 @@ func (s *serverConfig) Validate() error {
 	return nil
 }
 
+func (s *serverConfig) TestNotificationTargets() error {
+	for k, v := range s.Notify.AMQP {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewAMQPTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("amqp(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.Elasticsearch {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewElasticsearchTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("elasticsearch(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.Kafka {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewKafkaTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("kafka(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.MQTT {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewMQTTTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("mqtt(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.MySQL {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewMySQLTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("mysql(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.NATS {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewNATSTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("nats(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.PostgreSQL {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewPostgreSQLTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("postgreSQL(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.Redis {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewRedisTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("redis(%s): %s", k, err.Error())
+		}
+		t.Close()
+
+	}
+
+	return nil
+}
+
 // Save config file to corresponding backend
 func Save(configFile string, data interface{}) error {
 	return quick.SaveConfig(data, configFile, globalEtcdClient)

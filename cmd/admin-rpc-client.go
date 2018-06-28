@@ -95,6 +95,16 @@ func (rpcClient *AdminRPCClient) WriteTmpConfig(tmpFileName string, configBytes 
 	return err
 }
 
+// BackupConfig - saves a copy of the config file
+func (rpcClient *AdminRPCClient) BackupConfig() error {
+	args := BackupConfigArgs{}
+	reply := VoidReply{}
+
+	err := rpcClient.Call(adminServiceName+".BackupConfig", &args, &reply)
+	logger.LogIf(context.Background(), err)
+	return err
+}
+
 // CommitConfig - Move the new config in tmpFileName onto config.json on a remote node.
 func (rpcClient *AdminRPCClient) CommitConfig(tmpFileName string) error {
 	args := CommitConfigArgs{FileName: tmpFileName}
@@ -152,6 +162,7 @@ type adminCmdRunner interface {
 	GetConfig() ([]byte, error)
 	WriteTmpConfig(tmpFileName string, configBytes []byte) error
 	CommitConfig(tmpFileName string) error
+	BackupConfig() error
 }
 
 // adminPeer - represents an entity that implements admin API RPCs.
@@ -369,6 +380,7 @@ func getPeerUptimes(peers adminPeers) (time.Duration, error) {
 // getPeerConfig - Fetches config.json from all nodes in the setup and
 // returns the one that occurs in a majority of them.
 func getPeerConfig(peers adminPeers) ([]byte, error) {
+
 	if !globalIsDistXL {
 		return peers[0].cmdRunner.GetConfig()
 	}
@@ -521,6 +533,26 @@ func writeTmpConfigPeers(peers adminPeers, tmpFileName string, configBytes []byt
 
 	// Return bytes written and errors (if any) during writing
 	// temporary config file.
+	return errs
+}
+
+// Backup config contents onto config.json.backup on all nodes.
+func backupConfigPeers(peers adminPeers) []error {
+	// For a single-node minio server setup.
+	if !globalIsDistXL {
+		return []error{peers[0].cmdRunner.BackupConfig()}
+	}
+	errs := make([]error, len(peers))
+	wg := sync.WaitGroup{}
+	for i, peer := range peers {
+		wg.Add(1)
+		go func(idx int, peer adminPeer) {
+			defer wg.Done()
+			errs[idx] = peer.cmdRunner.BackupConfig()
+		}(i, peer)
+	}
+	wg.Wait()
+	// Return errors (if any) received during rename.
 	return errs
 }
 

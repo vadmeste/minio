@@ -40,6 +40,8 @@ func main() {
 |:------------------------------------|:----------------------------|:----------------------------|:--------------------------------------|:--------------------------|:------------------------------------|
 | [`ServiceStatus`](#ServiceStatus)   | [`ServerInfo`](#ServerInfo) | [`ListLocks`](#ListLocks)   | [`Heal`](#Heal)             | [`GetConfig`](#GetConfig) | [`SetCredentials`](#SetCredentials) |
 | [`ServiceSendAction`](#ServiceSendAction) | | [`ClearLocks`](#ClearLocks) |            | [`SetConfig`](#SetConfig) |                                     |
+| | |            | [`GetConfigKeys`](#GetConfigKeys) |                                     |
+| | |            | [`SetConfigKeys`](#SetConfigKeys) |                                     |
 
 
 ## 1. Constructor
@@ -357,6 +359,64 @@ __Example__
     }
     log.Println("SetConfig: ", string(buf.Bytes()))
 ```
+
+<a name="GetConfigKeys"></a>
+### GetConfigKeys(keys []string) ([]byte, error)
+Get a json document which contains a set of keys and their values from config.json.
+
+__Example__
+
+``` go
+    configBytes, err := madmClnt.GetConfigKeys([]string{"version", "notify.amqp.1"})
+    if err != nil {
+        log.Fatalf("failed due to: %v", err)
+    }
+
+    // Pretty-print config received as json.
+    var buf bytes.Buffer
+    err = json.Indent(buf, configBytes, "", "\t")
+    if err != nil {
+        log.Fatalf("failed due to: %v", err)
+    }
+
+    log.Println("config received successfully: ", string(buf.Bytes()))
+```
+
+
+<a name="SetConfigKeys"></a>
+### SetConfigKeys(params map[string]string) (SetConfigResult, error)
+Set a set of keys and values to the Minio server or distributed setup and restart for configuration
+change to take effect.
+
+
+| Param  | Type  | Description  |
+|---|---|---|
+|`st.Status`            | _bool_  | true if set-config succeeded, false otherwise. |
+|`st.NodeSummary.Name`  | _string_  | Network address of the node. |
+|`st.NodeSummary.ErrSet`   | _bool_ | Bool representation indicating if an error is encountered with the node.|
+|`st.NodeSummary.ErrMsg`   | _string_ | String representation of the error (if any) on the node.|
+
+
+__Example__
+
+``` go
+    result, err := madmClnt.SetConfigKeys(map[string]string{"notify.webhook.1": "{\"enable\": true, \"endpoint\": \"http://example.com/api\"}"})
+    if err != nil {
+        log.Fatalf("failed due to: %v", err)
+    }
+
+    var buf bytes.Buffer
+    enc := json.NewEncoder(&buf)
+    enc.SetEscapeHTML(false)
+    enc.SetIndent("", "\t")
+    err = enc.Encode(result)
+    if err != nil {
+        log.Fatalln(err)
+    }
+    log.Println("SetConfig: ", string(buf.Bytes()))
+```
+
+
 
 ## 8. Misc operations
 

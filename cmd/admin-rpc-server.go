@@ -97,6 +97,16 @@ func (receiver *adminRPCReceiver) WriteTmpConfig(args *WriteConfigArgs, reply *V
 	return receiver.local.WriteTmpConfig(args.TmpFileName, args.Buf)
 }
 
+// BackupConfigArgs - save a copy of the current config file
+type BackupConfigArgs struct {
+	AuthArgs
+}
+
+// BackupConfig - save a copy of the current config file
+func (receiver *adminRPCReceiver) BackupConfig(args *CommitConfigArgs, reply *VoidReply) error {
+	return receiver.local.BackupConfig()
+}
+
 // CommitConfigArgs - wraps the config file name that needs to be
 // committed into config.json on this node.
 type CommitConfigArgs struct {

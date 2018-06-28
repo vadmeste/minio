@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -105,6 +106,37 @@ func (lc localAdminClient) WriteTmpConfig(tmpFileName string, configBytes []byte
 	reqInfo := (&logger.ReqInfo{}).AppendTags("tmpConfigFile", tmpConfigFile)
 	ctx := logger.SetReqInfo(context.Background(), reqInfo)
 	logger.LogIf(ctx, err)
+	return err
+}
+
+// BackupConfig - saves a copy of the current config file
+func (lc localAdminClient) BackupConfig() (retErr error) {
+	configFile := getConfigFile()
+	reqInfo := (&logger.ReqInfo{}).AppendTags("BackupConfigFile", configFile)
+	ctx := logger.SetReqInfo(context.Background(), reqInfo)
+
+	defer func() {
+		if retErr != nil {
+			logger.LogIf(ctx, retErr)
+		}
+	}()
+	// Stat config file
+	fi, err := os.Stat(configFile)
+	if err != nil {
+		return err
+	}
+	// Copy config file
+	from, err := os.Open(configFile)
+	if err != nil {
+		return err
+	}
+	defer from.Close()
+	to, err := os.OpenFile(configFile+".old", os.O_RDWR|os.O_CREATE, fi.Mode())
+	if err != nil {
+		return err
+	}
+	defer to.Close()
+	_, err = io.Copy(to, from)
 	return err
 }
 

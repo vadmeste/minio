@@ -54,6 +54,16 @@ type storageClassConfig struct {
 	RRS      storageClass `json:"rrs"`
 }
 
+func (sCfg storageClassConfig) MarshalJSON() ([]byte, error) {
+	type Alias storageClassConfig
+	aux := &struct {
+		Alias
+	}{
+		Alias: (Alias)(sCfg),
+	}
+	return json.Marshal(aux)
+}
+
 // Validate SS and RRS parity when unmarshalling JSON.
 func (sCfg *storageClassConfig) UnmarshalJSON(data []byte) error {
 	type Alias storageClassConfig

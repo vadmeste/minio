@@ -75,4 +75,9 @@ func registerAdminRouter(router *mux.Router) {
 	adminV1Router.Methods(http.MethodGet).Path("/config").HandlerFunc(httpTraceAll(adminAPI.GetConfigHandler))
 	// Set config
 	adminV1Router.Methods(http.MethodPut).Path("/config").HandlerFunc(httpTraceAll(adminAPI.SetConfigHandler))
+
+	// Get config
+	adminV1Router.Methods(http.MethodGet).Path("/config-keys").HandlerFunc(httpTraceAll(adminAPI.GetConfigKeysHandler))
+	// Set config
+	adminV1Router.Methods(http.MethodPut).Path("/config-keys").HandlerFunc(httpTraceAll(adminAPI.SetConfigKeysHandler))
 }

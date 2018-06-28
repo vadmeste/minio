@@ -892,7 +892,7 @@ func toAPIErrorCode(err error) (apiErr APIErrorCode) {
 		apiErr = ErrInvalidSSECustomerParameters
 	case errSSEKeyMismatch:
 		apiErr = ErrAccessDenied // no access without correct key
-	case context.Canceled, context.DeadlineExceeded:
+	case errOperationTimedOut, context.Canceled, context.DeadlineExceeded:
 		apiErr = ErrOperationTimedOut
 	}
 

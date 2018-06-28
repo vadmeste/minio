@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +36,8 @@ import (
 	"github.com/minio/minio/pkg/handlers"
 	"github.com/minio/minio/pkg/madmin"
 	"github.com/minio/minio/pkg/quick"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const (
@@ -567,6 +571,33 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a adminAPIHandlers) getConfigDotJSON() ([]byte, error) {
+	// Take a read lock on minio/config.json. NB minio is a
+	// reserved bucket name and wouldn't conflict with normal
+	// object operations.
+	configLock := globalNSMutex.NewNSLock(minioReservedBucket, minioConfigFile)
+	if configLock.GetRLock(globalObjectTimeout) != nil {
+		return nil, errOperationTimedOut
+	}
+	defer configLock.RUnlock()
+
+	// Get config.json - in distributed mode, the configuration
+	// occurring on a quorum of the servers is returned.
+	configBytes, err := getPeerConfig(globalAdminPeers)
+	if err != nil {
+		return nil, err
+	}
+
+	// Pretty-print config received as json.
+	var buf bytes.Buffer
+	err = json.Indent(&buf, configBytes, "", "\t")
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
 // GetConfigHandler - GET /minio/admin/v1/config
 // Get config.json of this minio setup.
 func (a adminAPIHandlers) GetConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -577,26 +608,73 @@ func (a adminAPIHandlers) GetConfigHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Take a read lock on minio/config.json. NB minio is a
-	// reserved bucket name and wouldn't conflict with normal
-	// object operations.
-	configLock := globalNSMutex.NewNSLock(minioReservedBucket, minioConfigFile)
-	if configLock.GetRLock(globalObjectTimeout) != nil {
-		writeErrorResponseJSON(w, ErrOperationTimedOut, r.URL)
+	configBytes, err := a.getConfigDotJSON()
+	if err != nil {
+		logger.LogIf(context.Background(), err)
+		writeErrorResponseJSON(w, toAdminAPIErrCode(err), r.URL)
+	}
+
+	writeSuccessResponseJSON(w, configBytes)
+}
+
+// Disable tidwall json array notation in JSON key path so
+// users can set json with a key as a number.
+//    In tidwall json, notify.webhook.0 = val means { "notify" : { "webhook" : [val] }}
+//    In Minio, notify.webhook.0 = val means { "notify" : { "webhook" : {"0" : val}}}
+func normalizeJSONKey(input string) (key string) {
+	subKeys := strings.Split(input, ".")
+	for i, k := range subKeys {
+		if i > 0 {
+			key += "."
+		}
+		if _, err := strconv.Atoi(k); err == nil {
+			key += ":" + k
+		} else {
+			key += k
+		}
+	}
+	return
+}
+
+// GetConfigHandler - GET /minio/admin/v1/config-keys
+// Get some keys in config.json of this minio setup.
+func (a adminAPIHandlers) GetConfigKeysHandler(w http.ResponseWriter, r *http.Request) {
+	// Validate request signature.
+	adminAPIErr := checkAdminRequestAuthType(r, "")
+	if adminAPIErr != ErrNone {
+		writeErrorResponseJSON(w, adminAPIErr, r.URL)
 		return
 	}
-	defer configLock.RUnlock()
 
-	// Get config.json - in distributed mode, the configuration
-	// occurring on a quorum of the servers is returned.
-	configBytes, err := getPeerConfig(globalAdminPeers)
+	var keys []string
+	queries := r.URL.Query()
+
+	for k := range queries {
+		keys = append(keys, k)
+	}
+
+	configBytes, err := a.getConfigDotJSON()
 	if err != nil {
 		logger.LogIf(context.Background(), err)
 		writeErrorResponseJSON(w, toAdminAPIErrCode(err), r.URL)
 		return
 	}
 
-	writeSuccessResponseJSON(w, configBytes)
+	configStr := string(configBytes)
+	jsonResult := `{}`
+	for _, key := range keys {
+		// sjson.Set does not return an error if key is empty
+		// we should check by ourselves here
+		if key == "" {
+			continue
+		}
+		val := gjson.Get(configStr, key)
+		if j, err := sjson.Set(jsonResult, normalizeJSONKey(key), val.Value()); err == nil {
+			jsonResult = j
+		}
+	}
+
+	writeSuccessResponseJSON(w, []byte(jsonResult))
 }
 
 // toAdminAPIErrCode - converts errXLWriteQuorum error to admin API
@@ -660,6 +738,44 @@ func writeSetConfigResponse(w http.ResponseWriter, peers adminPeers,
 	return
 }
 
+func (a adminAPIHandlers) setConfigDotJSON(ctx context.Context, configBytes []byte) ([]error, error) {
+	// Write config received from request onto a temporary file on
+	// all nodes.
+	tmpFileName := fmt.Sprintf(minioConfigTmpFormat, mustGetUUID())
+	errs := writeTmpConfigPeers(globalAdminPeers, tmpFileName, configBytes)
+
+	// Check if the operation succeeded in quorum or more nodes.
+	rErr := reduceWriteQuorumErrs(ctx, errs, nil, len(globalAdminPeers)/2+1)
+	if rErr != nil {
+		return errs, rErr
+	}
+
+	// Take a lock on minio/config.json. NB minio is a reserved
+	// bucket name and wouldn't conflict with normal object
+	// operations.
+	configLock := globalNSMutex.NewNSLock(minioReservedBucket, minioConfigFile)
+	if configLock.GetLock(globalObjectTimeout) != nil {
+		return nil, errOperationTimedOut
+	}
+	defer configLock.Unlock()
+
+	// Save a backup of the current config
+	errs = backupConfigPeers(globalAdminPeers)
+	rErr = reduceWriteQuorumErrs(ctx, errs, nil, len(globalAdminPeers)/2+1)
+	if rErr != nil {
+		return errs, rErr
+	}
+
+	// Rename the temporary config file to config.json
+	errs = commitConfigPeers(globalAdminPeers, tmpFileName)
+	rErr = reduceWriteQuorumErrs(ctx, errs, nil, len(globalAdminPeers)/2+1)
+	if rErr != nil {
+		return errs, rErr
+	}
+
+	return errs, nil
+}
+
 // SetConfigHandler - PUT /minio/admin/v1/config
 func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -716,6 +832,16 @@ func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if err = config.Validate(); err != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		return
+	}
+
+	if err = config.TestNotificationTargets(); err != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		return
+	}
+
 	// If credentials for the server are provided via environment,
 	// then credentials in the provided configuration must match.
 	if globalIsEnvCreds {
@@ -727,38 +853,20 @@ func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if err := config.Validate(); err != nil {
+	configBytes, err = json.MarshalIndent(config, "", "\t")
+	if err != nil {
 		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
 		return
 	}
 
-	// Write config received from request onto a temporary file on
-	// all nodes.
-	tmpFileName := fmt.Sprintf(minioConfigTmpFormat, mustGetUUID())
-	errs := writeTmpConfigPeers(globalAdminPeers, tmpFileName, configBytes)
-
-	// Check if the operation succeeded in quorum or more nodes.
-	rErr := reduceWriteQuorumErrs(ctx, errs, nil, len(globalAdminPeers)/2+1)
-	if rErr != nil {
-		writeSetConfigResponse(w, globalAdminPeers, errs, false, r.URL)
+	peersErrs, err := a.setConfigDotJSON(ctx, configBytes)
+	if err != nil {
+		writeErrorResponseJSON(w, toAPIErrorCode(err), r.URL)
 		return
 	}
 
-	// Take a lock on minio/config.json. NB minio is a reserved
-	// bucket name and wouldn't conflict with normal object
-	// operations.
-	configLock := globalNSMutex.NewNSLock(minioReservedBucket, minioConfigFile)
-	if configLock.GetLock(globalObjectTimeout) != nil {
-		writeErrorResponseJSON(w, ErrOperationTimedOut, r.URL)
-		return
-	}
-	defer configLock.Unlock()
-
-	// Rename the temporary config file to config.json
-	errs = commitConfigPeers(globalAdminPeers, tmpFileName)
-	rErr = reduceWriteQuorumErrs(ctx, errs, nil, len(globalAdminPeers)/2+1)
-	if rErr != nil {
-		writeSetConfigResponse(w, globalAdminPeers, errs, false, r.URL)
+	if reduceWriteQuorumErrs(ctx, peersErrs, nil, len(globalAdminPeers)/2+1) != nil {
+		writeSetConfigResponse(w, globalAdminPeers, peersErrs, false, r.URL)
 		return
 	}
 
@@ -766,7 +874,130 @@ func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Reques
 	// where all listeners are closed and process restart/shutdown
 	// happens after 5s or completion of all ongoing http
 	// requests, whichever is earlier.
-	writeSetConfigResponse(w, globalAdminPeers, errs, true, r.URL)
+	writeSetConfigResponse(w, globalAdminPeers, peersErrs, true, r.URL)
+
+	// Restart all node for the modified config to take effect.
+	sendServiceCmd(globalAdminPeers, serviceRestart)
+}
+
+func convertValueType(str string, jsonType gjson.Type) (interface{}, error) {
+	switch jsonType {
+	case gjson.False, gjson.True:
+		return strconv.ParseBool(str)
+	case gjson.JSON:
+		return gjson.Parse(str).Value(), nil
+	case gjson.String:
+		return str, nil
+	case gjson.Number:
+		return strconv.ParseFloat(str, 64)
+	default:
+		return nil, nil
+	}
+}
+
+// SetConfigKeysHandler - PUT /minio/admin/v1/config-keys
+func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Request) {
+
+	ctx := context.Background()
+	// Get current object layer instance.
+	objectAPI := newObjectLayerFn()
+	if objectAPI == nil {
+		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
+		return
+	}
+
+	// Deny if WORM is enabled
+	if globalWORMEnabled {
+		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		return
+	}
+
+	// Validate request signature.
+	adminAPIErr := checkAdminRequestAuthType(r, "")
+	if adminAPIErr != ErrNone {
+		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+		return
+	}
+
+	configBytes, err := a.getConfigDotJSON()
+	if err != nil {
+		writeErrorResponseJSON(w, toAPIErrorCode(err), r.URL)
+		return
+	}
+
+	origConfig := string(configBytes)
+	configStr := origConfig
+
+	queries := r.URL.Query()
+
+	for k, v := range queries {
+		var elem string
+		if len(v) > 0 {
+			elem = v[0]
+		}
+		jsonFieldType := gjson.Get(origConfig, k).Type
+		val, cerr := convertValueType(elem, jsonFieldType)
+		if cerr != nil {
+			writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, cerr.Error(), r.URL)
+			return
+		}
+		if s, serr := sjson.Set(configStr, normalizeJSONKey(k), val); serr == nil {
+			configStr = s
+		}
+	}
+
+	configBytes = []byte(configStr)
+
+	// Validate config
+	var config serverConfig
+	if err = json.Unmarshal(configBytes, &config); err != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		return
+	}
+
+	if err = config.Validate(); err != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		return
+	}
+
+	if err = config.TestNotificationTargets(); err != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		return
+	}
+
+	// If credentials for the server are provided via environment,
+	// then credentials in the provided configuration must match.
+	if globalIsEnvCreds {
+		creds := globalServerConfig.GetCredential()
+		if config.Credential.AccessKey != creds.AccessKey ||
+			config.Credential.SecretKey != creds.SecretKey {
+			writeErrorResponseJSON(w, ErrAdminCredentialsMismatch, r.URL)
+			return
+		}
+	}
+
+	configBytes, err = json.MarshalIndent(config, "", "\t")
+	if err != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		return
+	}
+
+	peersErrs, setErr := a.setConfigDotJSON(ctx, configBytes)
+	if setErr != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, setErr.Error(), r.URL)
+		return
+	}
+
+	if reduceWriteQuorumErrs(ctx, peersErrs, nil, len(globalAdminPeers)/2+1) != nil {
+		writeSetConfigResponse(w, globalAdminPeers, peersErrs, false, r.URL)
+		return
+	}
+
+	// serverMux (cmd/server-mux.go) implements graceful shutdown,
+	// where all listeners are closed and process restart/shutdown
+	// happens after 5s or completion of all ongoing http
+	// requests, whichever is earlier.
+	writeSetConfigResponse(w, globalAdminPeers, peersErrs, true, r.URL)
 
 	// Restart all node for the modified config to take effect.
 	sendServiceCmd(globalAdminPeers, serviceRestart)
