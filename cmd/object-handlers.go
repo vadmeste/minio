@@ -1038,7 +1038,9 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 
 	var writer io.WriteCloser = pipeWriter
 	var reader io.Reader = pipeReader
+
 	var getLength = length
+
 	srcInfo.Reader, err = hash.NewReader(reader, length, "", "")
 	if err != nil {
 		pipeWriter.CloseWithError(err)

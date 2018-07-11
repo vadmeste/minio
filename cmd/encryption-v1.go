@@ -765,6 +765,7 @@ func getEncryptedMultipartsOffsetLength(offset, length int64, obj ObjectInfo) (u
 	if encLength+encStartOffset > totalPartsLength {
 		encLength = totalPartsLength - encStartOffset
 	}
+
 	return seqNumber, encStartOffset, encLength
 }
 
@@ -790,6 +791,7 @@ func getEncryptedSinglePartOffsetLength(offset, length int64, objInfo ObjectInfo
 	if encLength+encOffset > objInfo.EncryptedSize() {
 		encLength = objInfo.EncryptedSize() - encOffset
 	}
+
 	return seqNumber, encOffset, encLength
 }
 
