@@ -1027,6 +1027,8 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		startOffset = hrange.offsetBegin
 	}
 
+	var getLength = length
+
 	/// maximum copy size for multipart objects in a single operation
 	if isMaxAllowedPartSize(length) {
 		writeErrorResponse(w, ErrEntityTooLarge, r.URL)
