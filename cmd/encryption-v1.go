@@ -786,7 +786,7 @@ func (o *ObjectInfo) DecryptedSize() (int64, error) {
 	if !o.IsEncrypted() {
 		return 0, errors.New("Cannot compute decrypted size of an unencrypted object")
 	}
-	if len(o.Parts) == 0 {
+	if len(o.Parts) == 0 || !o.IsEncryptedMultipart() {
 		size, err := sio.DecryptedSize(uint64(o.Size))
 		if err != nil {
 			err = errObjectTampered // assign correct error type
