@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -148,6 +149,9 @@ func newApp(name string) *cli.App {
 
 // Main main for minio server.
 func Main(args []string) {
+
+	fmt.Println("Anis's build:", Version)
+
 	// Set the minio app name.
 	appName := filepath.Base(args[0])
 

@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	goioutil "io/ioutil"
@@ -85,6 +86,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 	transactionLock := pathJoin(bucket, object, "transaction")
 	objLock := globalNSMutex.NewNSLock(minioMetaBucket, transactionLock)
 	if err := objLock.GetRLock(globalOperationTimeout); err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 
@@ -109,6 +111,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 				IsOwner:         false,
 			}) {
 				_, err := getObjectInfo(ctx, bucket, object)
+				logger.LogIf(ctx, err)
 				if toAPIErrorCode(err) == ErrNoSuchKey {
 					s3Error = ErrNoSuchKey
 				}
@@ -120,12 +123,14 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 
 	objInfo, err := getObjectInfo(ctx, bucket, object)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
 
 	if objectAPI.IsEncryptionSupported() {
 		if apiErr, _ := DecryptObjectInfo(&objInfo, r.Header); apiErr != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", apiErr))
 			writeErrorResponse(w, apiErr, r.URL)
 			return
 		}
@@ -139,6 +144,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 			// Handle only errInvalidRange
 			// Ignore other parse error and treat it as regular Get request like Amazon S3.
 			if err == errInvalidRange {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, ErrInvalidRange, r.URL)
 				return
 			}
@@ -150,6 +156,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 
 	// Validate pre-conditions if any.
 	if checkPreconditions(w, r, objInfo) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrPreconditionFailed))
 		return
 	}
 
@@ -171,6 +178,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 
 			writer, startOffset, length, err = DecryptBlocksRequest(writer, r, bucket, object, startOffset, length, objInfo, false)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -191,6 +199,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 
 	// Reads the object at startOffset and writes to mw.
 	if err = getObject(ctx, bucket, object, startOffset, length, httpWriter, objInfo.ETag); err != nil {
+		logger.LogIf(ctx, err)
 		if !httpWriter.HasWritten() { // write error response only if no data has been written to client yet
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		}
@@ -199,6 +208,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	if err = httpWriter.Close(); err != nil {
+		logger.LogIf(ctx, err)
 		if !httpWriter.HasWritten() { // write error response only if no data has been written to client yet
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
@@ -269,16 +279,19 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 
 	objInfo, err := getObjectInfo(ctx, bucket, object)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponseHeadersOnly(w, toAPIErrorCode(err))
 		return
 	}
 
 	if objectAPI.IsEncryptionSupported() {
 		if apiErr, encrypted := DecryptObjectInfo(&objInfo, r.Header); apiErr != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", apiErr))
 			writeErrorResponse(w, apiErr, r.URL)
 			return
 		} else if encrypted {
 			if _, err = DecryptRequest(w, r, bucket, object, objInfo.UserDefined); err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -289,6 +302,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 
 	// Validate pre-conditions if any.
 	if checkPreconditions(w, r, objInfo) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrPreconditionFailed))
 		return
 	}
 
@@ -378,6 +392,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	srcBucket, srcObject := path2BucketAndObject(cpSrcPath)
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
+		logger.LogIf(ctx, errors.New("invalid copy soure |"+srcObject+"|"+srcBucket+"|"))
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
 		return
 	}
@@ -385,6 +400,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	transactionLock := pathJoin(srcBucket, srcObject, "transaction")
 	objLock := globalNSMutex.NewNSLock(minioMetaBucket, transactionLock)
 	if lockErr := objLock.GetRLock(globalOperationTimeout); lockErr != nil {
+		logger.LogIf(ctx, lockErr)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 
@@ -393,6 +409,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 
 	// Check if metadata directive is valid.
 	if !isMetadataDirectiveValid(r.Header) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidMetadataDirective))
 		writeErrorResponse(w, ErrInvalidMetadataDirective, r.URL)
 		return
 	}
@@ -400,6 +417,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	cpSrcDstSame := isStringEqual(pathJoin(srcBucket, srcObject), pathJoin(dstBucket, dstObject))
 	srcInfo, err := objectAPI.GetObjectInfo(ctx, srcBucket, srcObject)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -414,6 +432,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 
 	if objectAPI.IsEncryptionSupported() {
 		if apiErr, _ := DecryptCopyObjectInfo(&srcInfo, r.Header); apiErr != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", apiErr))
 			writeErrorResponse(w, apiErr, r.URL)
 			return
 		}
@@ -421,11 +440,13 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 
 	// Verify before x-amz-copy-source preconditions before continuing with CopyObject.
 	if checkCopyObjectPreconditions(w, r, srcInfo) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrPreconditionFailed))
 		return
 	}
 
 	/// maximum Upload size for object in a single CopyObject operation.
 	if isMaxObjectSize(srcInfo.Size) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrEntityTooLarge))
 		writeErrorResponse(w, ErrEntityTooLarge, r.URL)
 		return
 	}
@@ -444,6 +465,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 
 	srcInfo.Reader, err = hash.NewReader(reader, srcInfo.Size, "", "")
 	if err != nil {
+		logger.LogIf(ctx, err)
 		pipeWriter.CloseWithError(err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
@@ -461,6 +483,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		if sseC {
 			newKey, err = ParseSSECustomerRequest(r)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -473,6 +496,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 			// Get the old key which needs to be rotated.
 			oldKey, err = ParseSSECopyCustomerRequest(r)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -481,6 +505,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 				encMetadata[k] = v
 			}
 			if err = rotateKey(oldKey, newKey, srcBucket, srcObject, encMetadata); err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -494,6 +519,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 				writer = ioutil.LimitedWriter(writer, 0, srcInfo.Size)
 				writer, srcInfo.Size, err = DecryptAllBlocksCopyRequest(writer, r, srcBucket, srcObject, srcInfo)
 				if err != nil {
+					logger.LogIf(ctx, err)
 					pipeWriter.CloseWithError(err)
 					writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 					return
@@ -509,6 +535,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 			if sseC {
 				reader, err = newEncryptReader(reader, newKey, dstBucket, dstObject, encMetadata)
 				if err != nil {
+					logger.LogIf(ctx, err)
 					pipeWriter.CloseWithError(err)
 					writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 					return
@@ -523,6 +550,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 			}
 			srcInfo.Reader, err = hash.NewReader(reader, size, "", "") // do not try to verify encrypted content
 			if err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -533,6 +561,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 
 	srcInfo.UserDefined, err = getCpObjMetadataFromHeader(ctx, r, srcInfo.UserDefined)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		pipeWriter.CloseWithError(err)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
@@ -550,6 +579,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	// if encryption is enabled we do not need explicit "REPLACE" metadata to
 	// be enabled as well - this is to allow for key-rotation.
 	if !isMetadataReplace(r.Header) && srcInfo.metadataOnly && !srcInfo.IsEncrypted() {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidCopyDest))
 		pipeWriter.CloseWithError(fmt.Errorf("invalid copy dest"))
 		// If x-amz-metadata-directive is not set to REPLACE then we need
 		// to error out if source and destination are same.
@@ -620,6 +650,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		// object is same then only metadata is updated.
 		objInfo, err = objectAPI.CopyObject(ctx, srcBucket, srcObject, dstBucket, dstObject, srcInfo)
 		if err != nil {
+			logger.LogIf(ctx, err)
 			pipeWriter.CloseWithError(err)
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
@@ -666,6 +697,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	// X-Amz-Copy-Source shouldn't be set for this call.
 	if _, ok := r.Header["X-Amz-Copy-Source"]; ok {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidCopySource))
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
 		return
 	}
@@ -677,6 +709,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	transactionLock := pathJoin(bucket, object, "transaction")
 	objLock := globalNSMutex.NewNSLock(minioMetaBucket, transactionLock)
 	if err := objLock.GetLock(globalOperationTimeout); err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
@@ -685,6 +718,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	// Validate storage class metadata if present
 	if _, ok := r.Header[amzStorageClassCanonical]; ok {
 		if !isValidStorageClassMeta(r.Header.Get(amzStorageClassCanonical)) {
+			logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidStorageClass))
 			writeErrorResponse(w, ErrInvalidStorageClass, r.URL)
 			return
 		}
@@ -693,6 +727,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	// Get Content-Md5 sent by client and verify if valid
 	md5Bytes, err := checkValidMD5(r.Header)
 	if err != nil {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidDigest))
 		writeErrorResponse(w, ErrInvalidDigest, r.URL)
 		return
 	}
@@ -703,29 +738,34 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	if rAuthType == authTypeStreamingSigned {
 		if sizeStr, ok := r.Header["X-Amz-Decoded-Content-Length"]; ok {
 			if sizeStr[0] == "" {
+				logger.LogIf(ctx, fmt.Errorf("%v", ErrMissingContentLength))
 				writeErrorResponse(w, ErrMissingContentLength, r.URL)
 				return
 			}
 			size, err = strconv.ParseInt(sizeStr[0], 10, 64)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
 		}
 	}
 	if size == -1 {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrMissingContentLength))
 		writeErrorResponse(w, ErrMissingContentLength, r.URL)
 		return
 	}
 
 	/// maximum Upload size for objects in a single operation
 	if isMaxObjectSize(size) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrEntityTooLarge))
 		writeErrorResponse(w, ErrEntityTooLarge, r.URL)
 		return
 	}
 
 	metadata, err := extractMetadata(ctx, r)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
@@ -761,6 +801,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	switch rAuthType {
 	default:
 		// For all unknown auth types return error.
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrAccessDenied))
 		writeErrorResponse(w, ErrAccessDenied, r.URL)
 		return
 	case authTypeAnonymous:
@@ -771,6 +812,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 			IsOwner:         false,
 			ObjectName:      object,
 		}) {
+			logger.LogIf(ctx, fmt.Errorf("%v", ErrAccessDenied))
 			writeErrorResponse(w, ErrAccessDenied, r.URL)
 			return
 		}
@@ -778,18 +820,21 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		// Initialize stream signature verifier.
 		reader, s3Err = newSignV4ChunkedReader(r)
 		if s3Err != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", s3Err))
 			writeErrorResponse(w, s3Err, r.URL)
 			return
 		}
 	case authTypeSignedV2, authTypePresignedV2:
 		s3Err = isReqAuthenticatedV2(r)
 		if s3Err != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", s3Err))
 			writeErrorResponse(w, s3Err, r.URL)
 			return
 		}
 
 	case authTypePresigned, authTypeSigned:
 		if s3Err = reqSignatureV4Verify(r, globalServerConfig.GetRegion()); s3Err != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", s3Err))
 			writeErrorResponse(w, s3Err, r.URL)
 			return
 		}
@@ -800,6 +845,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	hashReader, err := hash.NewReader(reader, size, md5hex, sha256hex)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -816,12 +862,14 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		if hasSSECustomerHeader(r.Header) && !hasSuffix(object, slashSeparator) { // handle SSE-C requests
 			reader, err = EncryptRequest(hashReader, r, bucket, object, metadata)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
 			info := ObjectInfo{Size: size}
 			hashReader, err = hash.NewReader(reader, info.EncryptedSize(), "", "") // do not try to verify encrypted content
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -835,6 +883,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	// Create the object..
 	objInfo, err := putObject(ctx, bucket, object, hashReader, metadata)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -885,6 +934,7 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.PutObjectAction, bucket, object); s3Error != ErrNone {
+		logger.LogIf(ctx, fmt.Errorf("%v", s3Error))
 		writeErrorResponse(w, s3Error, r.URL)
 		return
 	}
@@ -900,6 +950,7 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 	// Validate storage class metadata if present
 	if _, ok := r.Header[amzStorageClassCanonical]; ok {
 		if !isValidStorageClassMeta(r.Header.Get(amzStorageClassCanonical)) {
+			logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidStorageClass))
 			writeErrorResponse(w, ErrInvalidStorageClass, r.URL)
 			return
 		}
@@ -911,11 +962,13 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 		if hasSSECustomerHeader(r.Header) {
 			key, err := ParseSSECustomerRequest(r)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
 			_, err = newEncryptMetadata(key, bucket, object, encMetadata)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -929,6 +982,7 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 	// Extract metadata that needs to be saved.
 	metadata, err := extractMetadata(ctx, r)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
@@ -945,6 +999,7 @@ func (api objectAPIHandlers) NewMultipartUploadHandler(w http.ResponseWriter, r 
 	}
 	uploadID, err := newMultipartUpload(ctx, bucket, object, metadata)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -985,6 +1040,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	srcBucket, srcObject := path2BucketAndObject(cpSrcPath)
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidCopySource))
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
 		return
 	}
@@ -992,6 +1048,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	transactionLock := pathJoin(srcBucket, srcObject, "transaction")
 	objLock := globalNSMutex.NewNSLock(minioMetaBucket, transactionLock)
 	if lockErr := objLock.GetRLock(globalOperationTimeout); lockErr != nil {
+		logger.LogIf(ctx, lockErr)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
@@ -1002,18 +1059,21 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 
 	partID, err := strconv.Atoi(partIDString)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInvalidPart, r.URL)
 		return
 	}
 
 	// check partID with maximum part ID for multipart objects
 	if isMaxPartID(partID) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidMaxParts))
 		writeErrorResponse(w, ErrInvalidMaxParts, r.URL)
 		return
 	}
 
 	srcInfo, err := objectAPI.GetObjectInfo(ctx, srcBucket, srcObject)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -1028,6 +1088,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 
 	if objectAPI.IsEncryptionSupported() {
 		if apiErr, _ := DecryptCopyObjectInfo(&srcInfo, r.Header); apiErr != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", apiErr))
 			writeErrorResponse(w, apiErr, r.URL)
 			return
 		}
@@ -1049,6 +1110,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 
 	// Verify before x-amz-copy-source preconditions before continuing with CopyObject.
 	if checkCopyObjectPartPreconditions(w, r, srcInfo) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrPreconditionFailed))
 		return
 	}
 
@@ -1062,6 +1124,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 
 	/// maximum copy size for multipart objects in a single operation
 	if isMaxAllowedPartSize(length) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrEntityTooLarge))
 		writeErrorResponse(w, ErrEntityTooLarge, r.URL)
 		return
 	}
@@ -1074,6 +1137,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	var getLength = length
 	srcInfo.Reader, err = hash.NewReader(reader, length, "", "")
 	if err != nil {
+		logger.LogIf(ctx, err)
 		pipeWriter.CloseWithError(err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
@@ -1082,6 +1146,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		var li ListPartsInfo
 		li, err = objectAPI.ListObjectParts(ctx, dstBucket, dstObject, uploadID, 0, 1)
 		if err != nil {
+			logger.LogIf(ctx, err)
 			pipeWriter.CloseWithError(err)
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
@@ -1093,6 +1158,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 			writer = ioutil.LimitedWriter(writer, startOffset%(64*1024), length)
 			writer, startOffset, getLength, err = DecryptBlocksRequest(writer, r, srcBucket, srcObject, startOffset, length, srcInfo, true)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -1100,12 +1166,14 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		}
 		if li.IsEncrypted() {
 			if !hasSSECustomerHeader(r.Header) {
+				logger.LogIf(ctx, fmt.Errorf("%v", ErrSSEMultipartEncrypted))
 				writeErrorResponse(w, ErrSSEMultipartEncrypted, r.URL)
 				return
 			}
 			var key []byte
 			key, err = ParseSSECustomerRequest(r)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -1114,6 +1182,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 			var objectEncryptionKey []byte
 			objectEncryptionKey, err = decryptObjectInfo(key, dstBucket, dstObject, li.UserDefined)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -1127,6 +1196,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 			partEncryptionKey := mac.Sum(nil)
 			reader, err = sio.EncryptReader(reader, sio.Config{Key: partEncryptionKey})
 			if err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -1136,6 +1206,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 			size := info.EncryptedSize()
 			srcInfo.Reader, err = hash.NewReader(reader, size, "", "")
 			if err != nil {
+				logger.LogIf(ctx, err)
 				pipeWriter.CloseWithError(err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
@@ -1149,6 +1220,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	partInfo, err := objectAPI.CopyObjectPart(ctx, srcBucket, srcObject, dstBucket,
 		dstObject, uploadID, partID, startOffset, getLength, srcInfo)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -1178,6 +1250,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	// X-Amz-Copy-Source shouldn't be set for this call.
 	if _, ok := r.Header["X-Amz-Copy-Source"]; ok {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidCopySource))
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
 		return
 	}
@@ -1185,6 +1258,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	// get Content-Md5 sent by client and verify if valid
 	md5Bytes, err := checkValidMD5(r.Header)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInvalidDigest, r.URL)
 		return
 	}
@@ -1197,23 +1271,27 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	if rAuthType == authTypeStreamingSigned {
 		if sizeStr, ok := r.Header["X-Amz-Decoded-Content-Length"]; ok {
 			if sizeStr[0] == "" {
+				logger.LogIf(ctx, fmt.Errorf("%v", ErrMissingContentLength))
 				writeErrorResponse(w, ErrMissingContentLength, r.URL)
 				return
 			}
 			size, err = strconv.ParseInt(sizeStr[0], 10, 64)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
 		}
 	}
 	if size == -1 {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrMissingContentLength))
 		writeErrorResponse(w, ErrMissingContentLength, r.URL)
 		return
 	}
 
 	/// maximum Upload size for multipart objects in a single operation
 	if isMaxAllowedPartSize(size) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrEntityTooLarge))
 		writeErrorResponse(w, ErrEntityTooLarge, r.URL)
 		return
 	}
@@ -1223,12 +1301,14 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	partID, err := strconv.Atoi(partIDString)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInvalidPart, r.URL)
 		return
 	}
 
 	// check partID with maximum part ID for multipart objects
 	if isMaxPartID(partID) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidMaxParts))
 		writeErrorResponse(w, ErrInvalidMaxParts, r.URL)
 		return
 	}
@@ -1243,6 +1323,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	switch rAuthType {
 	default:
 		// For all unknown auth types return error.
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrAccessDenied))
 		writeErrorResponse(w, ErrAccessDenied, r.URL)
 		return
 	case authTypeAnonymous:
@@ -1253,6 +1334,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 			IsOwner:         false,
 			ObjectName:      object,
 		}) {
+			logger.LogIf(ctx, fmt.Errorf("%v", ErrAccessDenied))
 			writeErrorResponse(w, ErrAccessDenied, r.URL)
 			return
 		}
@@ -1261,17 +1343,20 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		var s3Error APIErrorCode
 		reader, s3Error = newSignV4ChunkedReader(r)
 		if s3Error != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", s3Error))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
 	case authTypeSignedV2, authTypePresignedV2:
 		s3Error := isReqAuthenticatedV2(r)
 		if s3Error != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", s3Error))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
 	case authTypePresigned, authTypeSigned:
 		if s3Error := reqSignatureV4Verify(r, globalServerConfig.GetRegion()); s3Error != ErrNone {
+			logger.LogIf(ctx, fmt.Errorf("%v", s3Error))
 			writeErrorResponse(w, s3Error, r.URL)
 			return
 		}
@@ -1283,6 +1368,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	hashReader, err := hash.NewReader(reader, size, md5hex, sha256hex)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		// Verify if the underlying error is signature mismatch.
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
@@ -1300,17 +1386,20 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		var li ListPartsInfo
 		li, err = objectAPI.ListObjectParts(ctx, bucket, object, uploadID, 0, 1)
 		if err != nil {
+			logger.LogIf(ctx, err)
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
 		}
 		if li.IsEncrypted() {
 			if !hasSSECustomerHeader(r.Header) {
+				logger.LogIf(ctx, fmt.Errorf("%v", ErrSSEMultipartEncrypted))
 				writeErrorResponse(w, ErrSSEMultipartEncrypted, r.URL)
 				return
 			}
 			var key []byte
 			key, err = ParseSSECustomerRequest(r)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -1319,6 +1408,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 			var objectEncryptionKey []byte
 			objectEncryptionKey, err = decryptObjectInfo(key, bucket, object, li.UserDefined)
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -1332,6 +1422,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 			reader, err = sio.EncryptReader(reader, sio.Config{Key: partEncryptionKey})
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -1339,6 +1430,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 			info := ObjectInfo{Size: size}
 			hashReader, err = hash.NewReader(reader, info.EncryptedSize(), "", "") // do not try to verify encrypted content
 			if err != nil {
+				logger.LogIf(ctx, err)
 				writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 				return
 			}
@@ -1352,6 +1444,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	partInfo, err := putObjectPart(ctx, bucket, object, uploadID, partID, hashReader)
 	if err != nil {
 		// Verify if the underlying error is signature mismatch.
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -1381,6 +1474,7 @@ func (api objectAPIHandlers) AbortMultipartUploadHandler(w http.ResponseWriter, 
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.AbortMultipartUploadAction, bucket, object); s3Error != ErrNone {
+		logger.LogIf(ctx, fmt.Errorf("%v", s3Error))
 		writeErrorResponse(w, s3Error, r.URL)
 		return
 	}
@@ -1388,6 +1482,7 @@ func (api objectAPIHandlers) AbortMultipartUploadHandler(w http.ResponseWriter, 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
 		if _, err := objectAPI.GetObjectInfo(ctx, bucket, object); err == nil {
+			logger.LogIf(ctx, err)
 			writeErrorResponse(w, ErrMethodNotAllowed, r.URL)
 			return
 		}
@@ -1395,6 +1490,7 @@ func (api objectAPIHandlers) AbortMultipartUploadHandler(w http.ResponseWriter, 
 
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
 	if err := abortMultipartUpload(ctx, bucket, object, uploadID); err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -1426,11 +1522,13 @@ func (api objectAPIHandlers) ListObjectPartsHandler(w http.ResponseWriter, r *ht
 		return
 	}
 	if maxParts < 0 {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidMaxParts))
 		writeErrorResponse(w, ErrInvalidMaxParts, r.URL)
 		return
 	}
 	listPartsInfo, err := objectAPI.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 		return
 	}
@@ -1458,6 +1556,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	transactionLock := pathJoin(bucket, object, "transaction")
 	objLock := globalNSMutex.NewNSLock(minioMetaBucket, transactionLock)
 	if err := objLock.GetLock(globalOperationTimeout); err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
@@ -1481,19 +1580,23 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 
 	completeMultipartBytes, err := goioutil.ReadAll(r.Body)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
 	complMultipartUpload := &CompleteMultipartUpload{}
 	if err = xml.Unmarshal(completeMultipartBytes, complMultipartUpload); err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrMalformedXML, r.URL)
 		return
 	}
 	if len(complMultipartUpload.Parts) == 0 {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrMalformedXML))
 		writeErrorResponse(w, ErrMalformedXML, r.URL)
 		return
 	}
 	if !sort.IsSorted(CompletedParts(complMultipartUpload.Parts)) {
+		logger.LogIf(ctx, fmt.Errorf("%v", ErrInvalidPartOrder))
 		writeErrorResponse(w, ErrInvalidPartOrder, r.URL)
 		return
 	}
@@ -1511,6 +1614,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	}
 	objInfo, err := completeMultiPartUpload(ctx, bucket, object, uploadID, completeParts)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		switch oErr := err.(type) {
 		case PartTooSmall:
 			// Write part too small error.
@@ -1528,6 +1632,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	response := generateCompleteMultpartUploadResponse(bucket, object, location, objInfo.ETag)
 	encodedSuccessResponse := encodeResponse(response)
 	if err != nil {
+		logger.LogIf(ctx, err)
 		writeErrorResponse(w, ErrInternalError, r.URL)
 		return
 	}
@@ -1573,6 +1678,7 @@ func (api objectAPIHandlers) DeleteObjectHandler(w http.ResponseWriter, r *http.
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.DeleteObjectAction, bucket, object); s3Error != ErrNone {
+		logger.LogIf(ctx, fmt.Errorf("%v", s3Error))
 		writeErrorResponse(w, s3Error, r.URL)
 		return
 	}
@@ -1601,6 +1707,7 @@ func (api objectAPIHandlers) DeleteObjectHandler(w http.ResponseWriter, r *http.
 			getBucketInfo = api.CacheAPI().GetBucketInfo
 		}
 		if _, err := getBucketInfo(ctx, bucket); err != nil {
+			logger.LogIf(ctx, err)
 			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
 			return
 		}
