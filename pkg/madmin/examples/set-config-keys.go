@@ -42,7 +42,7 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	result, err := madmClnt.SetConfigKeys(map[string]string{"notify.webhook.1": "{\"enable\": true, \"endpoint\": \"http://example.com/api/object-notifications\"}"})
+	result, err := madmClnt.SetConfigKeys(map[string]string{"notify.webhook.1": "{\"enable\": true, \"url\": \"http://example.com/api/object-notifications\"}"})
 	if err != nil {
 		log.Fatalln(err)
 	}
