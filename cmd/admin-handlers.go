@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -813,6 +814,89 @@ func convertValueType(str string, jsonType gjson.Type) (interface{}, error) {
 	}
 }
 
+func isInvalidJSONField(expectedKeys gjson.Result, keys string) (string, string) {
+	var found bool
+	// var jsonLevel int
+	var fullKeyName string
+	// Validation for a single key
+	if expectedKeys.Type == gjson.Null &&
+		expectedKeys.Raw == "" &&
+		expectedKeys.Str == "" &&
+		expectedKeys.Num == 0 &&
+		expectedKeys.Index == 0 {
+		return "Invalid key", ""
+	}
+	// Validation for multiple key names in JSON format
+	var skipChrsFront int
+	var skipChrsEnd int
+	if expectedKeys.Type == gjson.JSON {
+		if len(keys) == 2 {
+			return "Invalid/Empty JSON data", ""
+		}
+		raw := expectedKeys.Raw
+		if keys[:1] == "{" {
+			skipChrsFront = 1
+		} else {
+			skipChrsFront = 0
+		}
+		if keys[len(keys)-1:] == "}" {
+			skipChrsEnd = 1
+		} else {
+			skipChrsEnd = 0
+		}
+		keys := regexp.MustCompile(`[,:]`).Split(keys[skipChrsFront:len(keys)-skipChrsEnd], -1)
+		rawKeys := regexp.MustCompile(`[,:]`).Split(raw[1:len(raw)-1], -1)
+
+		for i := 0; i < len(keys); i++ {
+			if keys[i][:1] == "{" {
+				if keys[i][1:2] == "\"" {
+					skipChrsFront = 2
+				} else {
+					if keys[i][len(keys[i])-1:] == "\"" {
+						skipChrsEnd = 1
+					} else {
+						skipChrsEnd = 0
+					}
+					return "Invalid JSON format", fullKeyName + "." + keys[i][1:len(keys[i])-skipChrsEnd]
+				}
+				if keys[i][len(keys[i])-1:] == "\"" {
+					skipChrsEnd = 1
+				} else {
+					skipChrsEnd = 0
+				}
+				fullKeyName += "." + keys[i][skipChrsFront:len(keys[i])-skipChrsEnd]
+			} else {
+				if keys[i][:1] == "\"" {
+					skipChrsFront = 1
+				} else {
+					return "Invalid JSON format", keys[i]
+				}
+				if keys[i][len(keys[i])-1:] == "\"" {
+					skipChrsEnd = 1
+				} else {
+					return "Invalid JSON format", keys[i]
+				}
+				fullKeyName = keys[i][skipChrsFront : len(keys[i])-skipChrsEnd]
+			}
+			found = false
+			for j := 0; j < len(rawKeys); j++ {
+				if keys[i] == rawKeys[j] {
+					found = true
+					break
+				}
+				j++
+			}
+			if !found {
+				return "Invalid key", fullKeyName
+			}
+			if i+1 < len(keys) && keys[i+1][:1] != "{" {
+				i++
+			}
+		}
+	}
+	return "", ""
+}
+
 // SetConfigKeysHandler - PUT /minio/admin/v1/config-keys
 func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -843,17 +927,32 @@ func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	origConfig := string(configBytes)
-	configStr := origConfig
+	configStr := string(configBytes)
+	var config = newServerConfig()
+	structConfigJSON, err := json.Marshal(config)
+	if err != nil {
+		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		return
+	}
+	structConfig := string(structConfigJSON)
 
 	queries := r.URL.Query()
-
 	for k, v := range queries {
 		var elem string
 		if len(v) > 0 {
 			elem = v[0]
 		}
-		jsonFieldType := gjson.Get(origConfig, k).Type
+		// Compare key against struct config
+		jsonField := gjson.Get(structConfig, k)
+		if err, k2 := isInvalidJSONField(jsonField, elem); err != "" {
+			if k2 != "" && k2[:1] != "=" {
+				k2 = "." + k2
+			}
+			writeCustomErrorResponseJSON(w, ErrNoSuchKey, err+": "+k+k2, r.URL)
+			return
+		}
+
+		jsonFieldType := jsonField.Type
 		val, cerr := convertValueType(elem, jsonFieldType)
 		if cerr != nil {
 			writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, cerr.Error(), r.URL)
@@ -863,11 +962,9 @@ func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 			configStr = s
 		}
 	}
-
 	configBytes = []byte(configStr)
 
 	// Validate config
-	var config serverConfig
 	if err = json.Unmarshal(configBytes, &config); err != nil {
 		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
 		return
