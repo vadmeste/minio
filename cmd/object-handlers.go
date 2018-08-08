@@ -180,29 +180,23 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	setObjectHeaders(w, objInfo, hrange)
 	setHeadGetRespHeaders(w, r.URL.Query())
-	httpWriter := ioutil.WriteOnClose(writer)
+	setObjectHeaders(w, objInfo, hrange)
+
+	// HTTP status code is returned at this stage: no error should
+	// be returned at this stage.
 
 	getObject := objectAPI.GetObject
 	if api.CacheAPI() != nil && !hasSSECustomerHeader(r.Header) {
 		getObject = api.CacheAPI().GetObject
 	}
 
-	// Reads the object at startOffset and writes to mw.
-	if err = getObject(ctx, bucket, object, startOffset, length, httpWriter, objInfo.ETag); err != nil {
-		if !httpWriter.HasWritten() { // write error response only if no data has been written to client yet
-			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
-		}
-		httpWriter.Close()
-		return
-	}
+	httpWriter := ioutil.WriteOnClose(writer)
 
-	if err = httpWriter.Close(); err != nil {
-		if !httpWriter.HasWritten() { // write error response only if no data has been written to client yet
-			writeErrorResponse(w, toAPIErrorCode(err), r.URL)
-			return
-		}
+	// Reads the object at startOffset and writes to mw.
+	getObject(ctx, bucket, object, startOffset, length, httpWriter, objInfo.ETag)
+	if err := httpWriter.Close(); err != nil {
+		logger.LogIf(ctx, err)
 	}
 
 	// Get host and port from Request.RemoteAddr.
