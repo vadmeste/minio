@@ -97,3 +97,15 @@ func GetReqInfo(ctx context.Context) *ReqInfo {
 	}
 	return nil
 }
+
+// AddTagToContext adds a key-value tag to the ReqInfo to the given
+// context and returns the updated context. If the context does not
+// have a ReqInfo, it is also added.
+func AddTagToContext(ctx context.Context, key, value string) context.Context {
+	ri := GetReqInfo(ctx)
+	if ri == nil {
+		ri = &ReqInfo{}
+	}
+	ri.AppendTags(key, value)
+	return SetReqInfo(ctx, ri)
+}

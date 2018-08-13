@@ -305,7 +305,8 @@ func readXLMeta(ctx context.Context, disk StorageAPI, bucket string, object stri
 	xlMetaBuf, err := disk.ReadAll(bucket, path.Join(object, xlMetaJSONFile))
 	if err != nil {
 		if err != errFileNotFound {
-			logger.LogIf(ctx, err)
+			nctx := logger.AddTagToContext(ctx, "disk", disk.String())
+			logger.LogIf(nctx, err)
 		}
 		return xlMetaV1{}, err
 	}
