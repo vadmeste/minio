@@ -109,6 +109,7 @@ func (p *parallelReader) Read() ([][]byte, error) {
 			}
 			continue
 		}
+		logger.LogIf(context.Background(), errVal.err)
 		p.readers[errVal.idx] = nil
 		for currReaderIndex < len(p.readers) {
 			if p.readers[currReaderIndex] != nil {
@@ -168,6 +169,7 @@ func (e Erasure) Decode(ctx context.Context, writer io.Writer, readers []*bitrot
 		}
 		bufs, err := reader.Read()
 		if err != nil {
+			logger.LogIf(ctx, err)
 			return err
 		}
 		if err = e.DecodeDataBlocks(bufs); err != nil {
@@ -176,6 +178,7 @@ func (e Erasure) Decode(ctx context.Context, writer io.Writer, readers []*bitrot
 		}
 		n, err := writeDataBlocks(ctx, writer, bufs, e.dataBlocks, blockOffset, blockLength)
 		if err != nil {
+			logger.LogIf(ctx, err)
 			return err
 		}
 		bytesWritten += n
