@@ -19,6 +19,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"hash"
 
 	"github.com/minio/highwayhash"
@@ -138,7 +139,7 @@ func (b *bitrotReader) ReadChunk(offset int64, length int64) ([]byte, error) {
 	if b.buf == nil {
 		b.buf = make([]byte, b.endOffset-offset)
 		if _, err := b.disk.ReadFile(b.volume, b.filePath, offset, b.buf, b.verifier); err != nil {
-			ctx := logger.AddTagToContext(context.Background(), "disk", b.disk.String())
+			ctx := logger.AddTagToContext(context.Background(), "disk", fmt.Sprintf("%s", b.disk))
 			logger.LogIf(ctx, err)
 			return nil, err
 		}

@@ -405,7 +405,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	// Should return IncompleteBody{} error when reader has fewer bytes
 	// than specified in request header.
 	if n < data.Size() {
-		logger.LogIf(ctx, IncompleteBody{})
+		logger.LogIf(logger.AddTagToContext(ctx, "partNumber", fmt.Sprintf("%d", partID)), IncompleteBody{})
 		return pi, IncompleteBody{}
 	}
 

@@ -94,6 +94,9 @@ type httpListener struct {
 // isRoutineNetErr returns true if error is due to a network timeout,
 // connect reset or io.EOF and false otherwise
 func isRoutineNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
 	if nErr, ok := err.(*net.OpError); ok {
 		// Check if the error is a tcp connection reset
 		if syscallErr, ok := nErr.Err.(*os.SyscallError); ok {
@@ -104,7 +107,7 @@ func isRoutineNetErr(err error) bool {
 		// Check if the error is a timeout
 		return nErr.Timeout()
 	}
-	return err == io.EOF
+	return err == io.EOF || strings.Contains(err.Error(), "EOF")
 }
 
 // start - starts separate goroutine for each TCP listener.  A valid insecure/TLS HTTP new connection is passed to httpListener.acceptCh.
