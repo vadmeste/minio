@@ -18,6 +18,7 @@ package rpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -26,6 +27,9 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/handlers"
 )
 
 // Authenticator - validator of first argument of any RPC call.
@@ -247,7 +251,9 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	callResponse.ReplyBytes = buf.Bytes()
 
-	gob.NewEncoder(w).Encode(callResponse)
+	if err := gob.NewEncoder(w).Encode(callResponse); err != nil {
+		logger.LogIf(context.Background(), fmt.Errorf("Server write error to client %s %#v, RemoteHost: %s", err, err, handlers.GetSourceIP(req)))
+	}
 
 	w.(http.Flusher).Flush()
 }

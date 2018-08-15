@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -24,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/minio/minio/cmd/logger"
 	xrpc "github.com/minio/minio/cmd/rpc"
 	xnet "github.com/minio/minio/pkg/net"
 )
@@ -217,7 +219,8 @@ func (client *RPCClient) Call(serviceMethod string, args interface {
 		}
 
 		if isNetError(err) {
-			client.setRetryTicker(time.NewTicker(xrpc.DefaultRPCTimeout))
+			logger.LogIf(context.Background(), fmt.Errorf("Server disconnected with error %s %#v", err, err))
+			client.setRetryTicker(time.NewTicker(10 * time.Second))
 		} else {
 			client.setRetryTicker(nil)
 		}

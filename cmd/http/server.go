@@ -36,7 +36,7 @@ const (
 	DefaultShutdownTimeout = 5 * time.Second
 
 	// DefaultTCPKeepAliveTimeout - default TCP keep alive timeout for accepted connection.
-	DefaultTCPKeepAliveTimeout = 10 * time.Second
+	DefaultTCPKeepAliveTimeout = 30 * time.Second
 
 	// DefaultReadTimeout - default timout to read data from accepted connection.
 	DefaultReadTimeout = 5 * time.Minute
@@ -191,7 +191,7 @@ func NewServer(addrs []string, handler http.Handler, getCert certs.GetCertificat
 			CipherSuites:             defaultCipherSuites,
 			CurvePreferences:         secureCurves,
 			MinVersion:               tls.VersionTLS12,
-			NextProtos:               []string{"http/1.1", "h2"},
+			NextProtos:               []string{"h2", "http/1.1"},
 		}
 		tlsConfig.GetCertificate = getCert
 	}
