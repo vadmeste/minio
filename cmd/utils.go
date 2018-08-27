@@ -25,10 +25,13 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -180,26 +183,61 @@ func contains(slice interface{}, elem interface{}) bool {
 	return false
 }
 
+type profiler struct {
+	stopFn func()
+	pathFn func() string
+}
+
+func (p profiler) Stop() {
+	p.stopFn()
+}
+
+func (p profiler) Path() string {
+	return p.pathFn()
+}
+
 // Starts a profiler returns nil if profiler is not enabled, caller needs to handle this.
-func startProfiler(profiler string) interface {
+func startProfiler(profilerType, dirPath string) interface {
 	Stop()
+	Path() string
 } {
+
+	var err error
+	if dirPath == "" {
+		dirPath, err = ioutil.TempDir("", "profile")
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	var prof interface {
+		Stop()
+	}
+
 	// Enable profiler if ``_MINIO_PROFILER`` is set. Supported options are [cpu, mem, block].
-	switch profiler {
+	switch profilerType {
 	case "cpu":
-		return profile.Start(profile.CPUProfile, profile.NoShutdownHook)
+		prof = profile.Start(profile.CPUProfile, profile.NoShutdownHook, profile.ProfilePath(dirPath))
 	case "mem":
-		return profile.Start(profile.MemProfile, profile.NoShutdownHook)
+		prof = profile.Start(profile.MemProfile, profile.NoShutdownHook, profile.ProfilePath(dirPath))
 	case "block":
-		return profile.Start(profile.BlockProfile, profile.NoShutdownHook)
+		prof = profile.Start(profile.BlockProfile, profile.NoShutdownHook, profile.ProfilePath(dirPath))
 	default:
 		return nil
+	}
+
+	return &profiler{
+		stopFn: prof.Stop,
+		pathFn: func() string {
+			return filepath.Join(dirPath, profilerType+".pprof")
+		},
 	}
 }
 
 // Global profiler to be used by service go-routine.
 var globalProfiler interface {
 	Stop()
+	Path() string
 }
 
 // dump the request into a string in JSON format.

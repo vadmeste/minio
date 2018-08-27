@@ -23,6 +23,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -268,6 +269,64 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	// Reply with storage information (across nodes in a
 	// distributed setup) as json.
 	writeSuccessResponseJSON(w, jsonBytes)
+}
+
+// StartProfilingHandler - POST /minio/admin/v1/profiling
+// ----------
+// Enable profiling information
+func (a adminAPIHandlers) StartProfilingHandler(w http.ResponseWriter, r *http.Request) {
+	adminAPIErr := checkAdminRequestAuthType(r, "")
+	if adminAPIErr != ErrNone {
+		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+		return
+	}
+
+	vars := mux.Vars(r)
+	profiler := vars["profiler"]
+
+	if globalProfiler != nil {
+		globalProfiler.Stop()
+	}
+
+	globalProfiler = startProfiler(profiler, "")
+	writeSuccessNoContent(w)
+}
+
+func (a adminAPIHandlers) DownloadProfilingHandler(w http.ResponseWriter, r *http.Request) {
+	adminAPIErr := checkAdminRequestAuthType(r, "")
+	if adminAPIErr != ErrNone {
+		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+		return
+	}
+
+	if globalProfiler == nil {
+		writeCustomErrorResponseJSON(w, http.StatusMethodNotAllowed, "profiler not enabled", r.URL)
+		return
+	}
+
+	f, err := os.Open(globalProfiler.Path())
+	if err != nil {
+		writeCustomErrorResponseJSON(w, http.StatusInternalServerError, err.Error(), r.URL)
+		return
+	}
+
+	writeStreamResponse(w, http.StatusOK, f, mimeNone)
+}
+
+func (a adminAPIHandlers) StopProfilingHandler(w http.ResponseWriter, r *http.Request) {
+	adminAPIErr := checkAdminRequestAuthType(r, "")
+	if adminAPIErr != ErrNone {
+		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+		return
+	}
+
+	if globalProfiler == nil {
+		writeCustomErrorResponseJSON(w, http.StatusMethodNotAllowed, "profiler not enabled", r.URL)
+		return
+	}
+
+	globalProfiler.Stop()
+	writeSuccessNoContent(w)
 }
 
 // extractHealInitParams - Validates params for heal init API.
