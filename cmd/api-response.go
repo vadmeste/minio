@@ -17,7 +17,9 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -516,16 +518,20 @@ func generateMultiDeleteResponse(quiet bool, deletedObjects []ObjectIdentifier, 
 	return deleteResp
 }
 
-func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType mimeType) {
+func writeStreamResponse(w http.ResponseWriter, statusCode int, response io.Reader, mType mimeType) {
 	setCommonHeaders(w)
 	if mType != mimeNone {
 		w.Header().Set("Content-Type", string(mType))
 	}
 	w.WriteHeader(statusCode)
 	if response != nil {
-		w.Write(response)
+		io.Copy(w, response)
 		w.(http.Flusher).Flush()
 	}
+}
+
+func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType mimeType) {
+	writeStreamResponse(w, statusCode, bytes.NewBuffer(response), mType)
 }
 
 // mimeType represents various MIME type used API responses.
