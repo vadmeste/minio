@@ -19,6 +19,7 @@ package cmd
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/madmin"
@@ -132,6 +133,14 @@ func (api *DummyObjectLayer) ListBucketsHeal(ctx context.Context) (buckets []Buc
 }
 
 func (api *DummyObjectLayer) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (info ListObjectsInfo, err error) {
+	return
+}
+
+func (api *DummyObjectLayer) ListLocks(ctx context.Context, bucket, prefix string, duration time.Duration) (info []VolumeLockInfo, err error) {
+	return
+}
+
+func (api *DummyObjectLayer) ClearLocks(context.Context, []VolumeLockInfo) (err error) {
 	return
 }
 
