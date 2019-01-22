@@ -89,16 +89,8 @@ func readServerConfig(ctx context.Context, objAPI ObjectLayer) (*serverConfig, e
 		configData = bytes.Replace(configData, []byte("\r\n"), []byte("\n"), -1)
 	}
 
-	if err = quick.CheckDuplicateKeys(string(configData)); err != nil {
-		return nil, err
-	}
-
 	var config = &serverConfig{}
 	if err = json.Unmarshal(configData, config); err != nil {
-		return nil, err
-	}
-
-	if err = quick.CheckData(config); err != nil {
 		return nil, err
 	}
 
