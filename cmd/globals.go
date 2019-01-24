@@ -175,6 +175,8 @@ var (
 	// Global HTTP request statisitics
 	globalHTTPStats = newHTTPStats()
 
+	globalParallelHeal int
+
 	// Time when object layer was initialized on start up.
 	globalBootTime time.Time
 

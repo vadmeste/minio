@@ -720,6 +720,9 @@ func (h *healSequence) healBucket(bucket string) error {
 	}
 
 	entries := runtime.NumCPU() * globalEndpoints.Nodes()
+	if globalParallelHeal > 0 {
+		entries = globalParallelHeal
+	}
 
 	marker := ""
 	isTruncated := true

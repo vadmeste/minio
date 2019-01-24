@@ -148,6 +148,13 @@ func parseCompressIncludes(includes []string) ([]string, error) {
 }
 
 func handleCommonEnvVars() {
+
+	if parallelHealEnv := os.Getenv("_MINIO_PARALLEL_HEAL"); parallelHealEnv != "" {
+		parallel, err := strconv.Atoi(parallelHealEnv)
+		logger.FatalIf(err, "Unable to parse _MINIO_PARALLEL_HEAL")
+		globalParallelHeal = parallel
+	}
+
 	compressEnvDelimiter := ","
 	// Start profiler if env is set.
 	if profiler := os.Getenv("_MINIO_PROFILER"); profiler != "" {
