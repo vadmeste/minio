@@ -19,9 +19,11 @@ package cmd
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -148,6 +150,9 @@ func parseCompressIncludes(includes []string) ([]string, error) {
 }
 
 func handleCommonEnvVars() {
+
+	fmt.Println("Number of detected cores:", runtime.NumCPU())
+	fmt.Println("")
 
 	if parallelHealEnv := os.Getenv("_MINIO_PARALLEL_HEAL"); parallelHealEnv != "" {
 		parallel, err := strconv.Atoi(parallelHealEnv)
