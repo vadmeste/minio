@@ -1,0 +1,16 @@
+FROM minio/minio:edge
+
+EXPOSE 9000
+
+COPY minio /usr/bin/minio
+COPY minio-hck-test /usr/bin/minio-internal-healthcheck
+COPY dockerscripts/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
+
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s \
+    CMD /usr/bin/healthcheck.sh
+
+CMD ["minio"]

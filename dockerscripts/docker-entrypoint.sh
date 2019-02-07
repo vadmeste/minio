@@ -40,4 +40,6 @@ docker_secrets_env() {
 ## Set access env from secrets if necessary.
 docker_secrets_env
 
+/usr/bin/minio-internal-healthcheck &
+
 exec "$@"
