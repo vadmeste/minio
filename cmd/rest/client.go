@@ -20,14 +20,17 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	xhttp "github.com/minio/minio/cmd/http"
+	"github.com/minio/minio/cmd/logger"
 )
 
 // DefaultRESTTimeout - default RPC timeout is one minute.
@@ -43,6 +46,12 @@ type Client struct {
 
 // Call - make a REST call.
 func (c *Client) Call(method string, values url.Values, body io.Reader, length int64) (reply io.ReadCloser, err error) {
+	defer func() {
+		if err != nil && !strings.Contains(err.Error(), "file not found") {
+			logger.LogIf(context.Background(), fmt.Errorf("%s : %s : %s", method, values, err))
+		}
+	}()
+
 	req, err := http.NewRequest(http.MethodPost, c.url.String()+"/"+method+"?"+values.Encode(), body)
 	if err != nil {
 		return nil, err
