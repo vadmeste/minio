@@ -17,9 +17,12 @@
 package cmd
 
 import (
+	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"time"
 
 	"github.com/minio/cli"
 	"github.com/minio/mc/pkg/console"
@@ -151,6 +154,14 @@ func newApp(name string) *cli.App {
 
 // Main main for minio server.
 func Main(args []string) {
+
+	go func() {
+		for {
+			log.Println("Goroutines: ", runtime.NumGoroutine())
+			time.Sleep(10 * time.Second)
+		}
+	}()
+
 	// Set the minio app name.
 	appName := filepath.Base(args[0])
 
