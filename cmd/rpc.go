@@ -35,7 +35,7 @@ const DefaultSkewTime = 15 * time.Minute
 const defaultRPCTimeout = 5 * time.Minute
 
 // defaultRPCRetryTime - default RPC time to wait before retry after a network error
-const defaultRPCRetryTime = 30 * time.Second
+const defaultRPCRetryTime = 1 * time.Minute
 
 var errRPCRetry = fmt.Errorf("rpc: retry error")
 
