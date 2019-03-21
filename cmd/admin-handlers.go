@@ -733,7 +733,7 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 	healPath := pathJoin(bucket, objPrefix)
 	if clientToken == "" && !forceStart && !forceStop {
 		nh, exists := globalAllHealState.getHealSequenceByPath(healPath)
-		if exists && !nh.hasEnded() && len(nh.currentStatus.Items) > 0 {
+		if exists && nh.clientToken != bgHealingUUID && !nh.hasEnded() && len(nh.currentStatus.Items) > 0 {
 			b, err := json.Marshal(madmin.HealStartSuccess{
 				ClientToken:   nh.clientToken,
 				ClientAddress: nh.clientAddress,
@@ -766,7 +766,7 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case forceStop:
 		go func() {
-			respBytes, apiErr := globalAllHealState.stopHealSequenceByPath(healPath)
+			respBytes, apiErr := globalAllHealState.stopHealSequenceByPath(healPath, bgHealingUUID)
 			hr := healResp{respBytes: respBytes, apiErr: apiErr}
 			respCh <- hr
 		}()

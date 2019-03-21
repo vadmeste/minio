@@ -265,6 +265,9 @@ var (
 	// GlobalGatewaySSE sse options
 	GlobalGatewaySSE gatewaySSE
 
+	// The always present healing routine ready to heal objects
+	globalBackgroundHealing *healRoutine
+
 	// Add new variable global values here.
 )
 
