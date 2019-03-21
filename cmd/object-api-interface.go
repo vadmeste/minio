@@ -90,7 +90,7 @@ type ObjectLayer interface {
 	HealBucket(ctx context.Context, bucket string, dryRun, remove bool) (madmin.HealResultItem, error)
 	HealObject(ctx context.Context, bucket, object string, dryRun, remove bool, scanMode madmin.HealScanMode) (madmin.HealResultItem, error)
 	ListBucketsHeal(ctx context.Context) (buckets []BucketInfo, err error)
-	HealObjects(ctx context.Context, bucket, prefix string, healObjectFn func(string, string) error) error
+	ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (ListObjectsInfo, error)
 
 	// Policy operations
 	SetBucketPolicy(context.Context, string, *policy.Policy) error
