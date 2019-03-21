@@ -21,14 +21,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/madmin"
-	"github.com/minio/minio/pkg/sync/errgroup"
 )
 
 // healStatusSummary - overall short summary of a healing sequence
@@ -560,6 +558,23 @@ func (h *healSequence) traverseAndHeal() {
 	close(h.traverseAndHealDoneCh)
 }
 
+func (h *healSequence) queueHealTask(path string, healType madmin.HealItemType) error {
+	var respCh = make(chan healResult)
+	defer close(respCh)
+	// Send heal request
+	globalHealBackground.queueHealTask(healTask{path: path, responseCh: respCh})
+	// Wait for answer and push result to the client
+	select {
+	case res := <-respCh:
+		if res.err != nil {
+			return res.err
+		}
+		res.result.Type = healType
+		return h.pushHealResultItem(res.result)
+	}
+	return nil
+}
+
 // healMinioSysMeta - heals all files under a given meta prefix, returns a function
 // which in-turn heals the respective meta directory path and any files in int.
 func (h *healSequence) healMinioSysMeta(metaPrefix string) func() error {
@@ -576,17 +591,6 @@ func (h *healSequence) healMinioSysMeta(metaPrefix string) func() error {
 		marker := ""
 		isTruncated := true
 		for isTruncated {
-			if globalHTTPServer != nil {
-				// Wait at max 1 minute for an inprogress request
-				// before proceeding to heal
-				waitCount := 60
-				// Any requests in progress, delay the heal.
-				for globalHTTPServer.GetRequestCount() > 2 && waitCount > 0 {
-					waitCount--
-					time.Sleep(1 * time.Second)
-				}
-			}
-
 			// Lists all objects under `config` prefix.
 			objectInfos, err := objectAPI.ListObjectsHeal(h.ctx, minioMetaBucket, metaPrefix,
 				marker, "", 1000)
@@ -595,22 +599,15 @@ func (h *healSequence) healMinioSysMeta(metaPrefix string) func() error {
 			}
 
 			for index := range objectInfos.Objects {
+
 				if h.isQuitting() {
 					return errHealStopSignalled
 				}
+
 				o := objectInfos.Objects[index]
-				res, herr := objectAPI.HealObject(h.ctx, o.Bucket, o.Name, h.settings.DryRun, h.settings.Remove, h.settings.ScanMode)
-				// Object might have been deleted, by the time heal
-				// was attempted we ignore this file an move on.
-				if isErrObjectNotFound(herr) {
-					continue
-				}
+				herr := h.queueHealTask(pathJoin(o.Bucket, o.Name), madmin.HealItemBucketMetadata)
 				if herr != nil {
 					return herr
-				}
-				res.Type = madmin.HealItemBucketMetadata
-				if err = h.pushHealResultItem(res); err != nil {
-					return err
 				}
 			}
 
@@ -634,26 +631,7 @@ func (h *healSequence) healDiskFormat() error {
 		return errServerNotInitialized
 	}
 
-	res, err := objectAPI.HealFormat(h.ctx, h.settings.DryRun)
-	// return any error, ignore error returned when disks have
-	// already healed.
-	if err != nil && err != errNoHealRequired {
-		return errFnHealFromAPIErr(h.ctx, err)
-	}
-
-	// Healing succeeded notify the peers to reload format and re-initialize disks.
-	// We will not notify peers only if healing succeeded.
-	if err == nil {
-		for _, nerr := range globalNotificationSys.ReloadFormat(h.settings.DryRun) {
-			if nerr.Err != nil {
-				logger.GetReqInfo(h.ctx).SetTags("peerAddress", nerr.Host.String())
-				logger.LogIf(h.ctx, nerr.Err)
-			}
-		}
-	}
-
-	// Push format heal result
-	return h.pushHealResultItem(res)
+	return h.queueHealTask("/", madmin.HealItemMetadata)
 }
 
 // healBuckets - check for all buckets heal or just particular bucket.
@@ -695,13 +673,7 @@ func (h *healSequence) healBucket(bucket string) error {
 		return errServerNotInitialized
 	}
 
-	result, err := objectAPI.HealBucket(h.ctx, bucket, h.settings.DryRun, h.settings.Remove)
-	// handle heal-bucket error
-	if err != nil {
-		return err
-	}
-
-	if err = h.pushHealResultItem(result); err != nil {
+	if err := h.queueHealTask(bucket, madmin.HealItemBucket); err != nil {
 		return err
 	}
 
@@ -709,7 +681,7 @@ func (h *healSequence) healBucket(bucket string) error {
 		if h.objPrefix != "" {
 			// Check if an object named as the objPrefix exists,
 			// and if so heal it.
-			_, err = objectAPI.GetObjectInfo(h.ctx, bucket, h.objPrefix, ObjectOptions{})
+			_, err := objectAPI.GetObjectInfo(h.ctx, bucket, h.objPrefix, ObjectOptions{})
 			if err == nil {
 				if err = h.healObject(bucket, h.objPrefix); err != nil {
 					return err
@@ -720,44 +692,26 @@ func (h *healSequence) healBucket(bucket string) error {
 		return nil
 	}
 
-	entries := runtime.NumCPU()
-
 	marker := ""
 	isTruncated := true
 	for isTruncated {
-		if globalHTTPServer != nil {
-			// Wait at max 1 minute for an inprogress request
-			// before proceeding to heal
-			waitCount := 60
-			// Any requests in progress, delay the heal.
-			for globalHTTPServer.GetRequestCount() > 2 && waitCount > 0 {
-				waitCount--
-				time.Sleep(1 * time.Second)
-			}
-		}
-
 		// Heal numCPU * nodes objects at a time.
 		objectInfos, err := objectAPI.ListObjectsHeal(h.ctx, bucket,
-			h.objPrefix, marker, "", entries)
+			h.objPrefix, marker, "", 1000)
 		if err != nil {
 			return errFnHealFromAPIErr(h.ctx, err)
 		}
 
-		g := errgroup.WithNErrs(len(objectInfos.Objects))
 		for index := range objectInfos.Objects {
-			index := index
-			g.Go(func() error {
-				o := objectInfos.Objects[index]
-				return h.healObject(o.Bucket, o.Name)
-			}, index)
-		}
+			if h.isQuitting() {
+				return errHealStopSignalled
+			}
 
-		for _, err := range g.Wait() {
-			if err != nil {
+			o := objectInfos.Objects[index]
+			if err := h.healObject(o.Bucket, o.Name); err != nil {
 				return err
 			}
 		}
-
 		isTruncated = objectInfos.IsTruncated
 		marker = objectInfos.NextMarker
 	}
@@ -766,22 +720,16 @@ func (h *healSequence) healBucket(bucket string) error {
 
 // healObject - heal the given object and record result
 func (h *healSequence) healObject(bucket, object string) error {
-	if h.isQuitting() {
-		return errHealStopSignalled
-	}
-
 	// Get current object layer instance.
 	objectAPI := newObjectLayerFn()
 	if objectAPI == nil {
 		return errServerNotInitialized
 	}
 
-	hri, err := objectAPI.HealObject(h.ctx, bucket, object, h.settings.DryRun, h.settings.Remove, h.settings.ScanMode)
+	err := h.queueHealTask(pathJoin(bucket, object), madmin.HealItemObject)
 	if isErrObjectNotFound(err) {
 		return nil
 	}
-	if err != nil {
-		hri.Detail = err.Error()
-	}
-	return h.pushHealResultItem(hri)
+
+	return err
 }
