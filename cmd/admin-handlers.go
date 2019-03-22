@@ -732,7 +732,7 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 
 	healPath := pathJoin(bucket, objPrefix)
 	if clientToken == "" && !forceStart && !forceStop {
-		nh, exists := globalAllHealState.getHealSequence(healPath)
+		nh, exists := globalAllHealState.getHealSequenceByPath(healPath)
 		if exists && !nh.hasEnded() && len(nh.currentStatus.Items) > 0 {
 			b, err := json.Marshal(madmin.HealStartSuccess{
 				ClientToken:   nh.clientToken,
@@ -753,8 +753,7 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 	if clientToken != "" && !forceStart && !forceStop {
 		// Since clientToken is given, fetch heal status from running
 		// heal sequence.
-		respBytes, errCode := globalAllHealState.PopHealStatusJSON(
-			healPath, clientToken)
+		respBytes, errCode := globalAllHealState.PopHealStatusJSON(clientToken)
 		if errCode != ErrNone {
 			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(errCode), r.URL)
 		} else {
@@ -767,7 +766,7 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case forceStop:
 		go func() {
-			respBytes, apiErr := globalAllHealState.stopHealSequence(healPath)
+			respBytes, apiErr := globalAllHealState.stopHealSequenceByPath(healPath)
 			hr := healResp{respBytes: respBytes, apiErr: apiErr}
 			respCh <- hr
 		}()
