@@ -206,7 +206,7 @@ func (ahs *allHealState) LaunchNewHealSequence(h *healSequence) (
 
 	existsAndLive := false
 	he, exists := ahs.getHealSequenceByPath(h.path)
-	if exists {
+	if exists && he.clientToken != bgHealingUUID {
 		if !he.hasEnded() || len(he.currentStatus.Items) > 0 {
 			existsAndLive = true
 		}
@@ -235,7 +235,7 @@ func (ahs *allHealState) LaunchNewHealSequence(h *healSequence) (
 	// Check if new heal sequence to be started overlaps with any
 	// existing, running sequence
 	for k, hSeq := range ahs.healSeqMap {
-		if !hSeq.hasEnded() && (strings.HasPrefix(hSeq.path, h.path) ||
+		if k != bgHealingUUID && !hSeq.hasEnded() && (strings.HasPrefix(hSeq.path, h.path) ||
 			strings.HasPrefix(h.path, hSeq.path)) {
 
 			errMsg = "The provided heal sequence path overlaps with an existing " +
@@ -273,11 +273,6 @@ func (ahs *allHealState) PopHealStatusJSON(clientToken string) ([]byte, APIError
 	if !exists {
 		// If there is no such heal sequence, return error.
 		return nil, ErrHealNoSuchProcess
-	}
-
-	// Check if client-token is valid
-	if clientToken != h.clientToken {
-		return nil, ErrHealInvalidClientToken
 	}
 
 	// Take lock to access and update the heal-sequence
@@ -348,6 +343,9 @@ type healSequence struct {
 	// the last result index sent to client
 	lastSentResultIndex int64
 
+	// Send
+	reportProgress bool
+
 	// Holds the request-info for logging
 	ctx context.Context
 }
@@ -379,6 +377,7 @@ func newHealSequence(bucket, objPrefix, clientAddr string,
 		traverseAndHealDoneCh: make(chan error),
 		stopSignalCh:          make(chan struct{}),
 		ctx:                   ctx,
+		reportProgress:        true,
 	}
 }
 
@@ -582,6 +581,9 @@ func (h *healSequence) queueHealTask(path string, healType madmin.HealItemType) 
 	case res := <-respCh:
 		if res.err != nil {
 			return res.err
+		}
+		if !h.reportProgress {
+			return nil
 		}
 		res.result.Type = healType
 		return h.pushHealResultItem(res.result)
