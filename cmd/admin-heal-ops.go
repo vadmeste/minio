@@ -124,9 +124,9 @@ func (ahs *allHealState) periodicHealSeqsClean() {
 		case <-ticker.C:
 			now := UTCNow()
 			ahs.Lock()
-			for path, h := range ahs.healSeqMap {
+			for token, h := range ahs.healSeqMap {
 				if h.hasEnded() && h.endTime.Add(keepHealSeqStateDuration).Before(now) {
-					delete(ahs.healSeqMap, path)
+					delete(ahs.healSeqMap, token)
 				}
 			}
 			ahs.Unlock()
@@ -140,16 +140,31 @@ func (ahs *allHealState) periodicHealSeqsClean() {
 
 // getHealSequence - Retrieve a heal sequence by path. The second
 // argument returns if a heal sequence actually exists.
-func (ahs *allHealState) getHealSequence(path string) (h *healSequence, exists bool) {
+func (ahs *allHealState) getHealSequenceByToken(token string) (h *healSequence, exists bool) {
 	ahs.Lock()
 	defer ahs.Unlock()
-	h, exists = ahs.healSeqMap[path]
+	h, exists = ahs.healSeqMap[token]
 	return h, exists
 }
 
-func (ahs *allHealState) stopHealSequence(path string) ([]byte, APIError) {
+// getHealSequence - Retrieve a heal sequence by path. The second
+// argument returns if a heal sequence actually exists.
+func (ahs *allHealState) getHealSequenceByPath(path string) (h *healSequence, exists bool) {
+	ahs.Lock()
+	defer ahs.Unlock()
+	for _, hs := range ahs.healSeqMap {
+		if hs.path == path {
+			h = hs
+			exists = true
+			return
+		}
+	}
+	return nil, false
+}
+
+func (ahs *allHealState) stopHealSequenceByPath(path string) ([]byte, APIError) {
 	var hsp madmin.HealStopSuccess
-	he, exists := ahs.getHealSequence(path)
+	he, exists := ahs.getHealSequenceByPath(path)
 	if !exists {
 		hsp = madmin.HealStopSuccess{
 			ClientToken: "invalid",
@@ -169,7 +184,7 @@ func (ahs *allHealState) stopHealSequence(path string) ([]byte, APIError) {
 		ahs.Lock()
 		defer ahs.Unlock()
 		// Heal sequence explicitly stopped, remove it.
-		delete(ahs.healSeqMap, path)
+		delete(ahs.healSeqMap, he.clientToken)
 	}
 
 	b, err := json.Marshal(&hsp)
@@ -190,7 +205,7 @@ func (ahs *allHealState) LaunchNewHealSequence(h *healSequence) (
 	respBytes []byte, apiErr APIError, errMsg string) {
 
 	existsAndLive := false
-	he, exists := ahs.getHealSequence(h.path)
+	he, exists := ahs.getHealSequenceByPath(h.path)
 	if exists {
 		if !he.hasEnded() || len(he.currentStatus.Items) > 0 {
 			existsAndLive = true
@@ -220,17 +235,17 @@ func (ahs *allHealState) LaunchNewHealSequence(h *healSequence) (
 	// Check if new heal sequence to be started overlaps with any
 	// existing, running sequence
 	for k, hSeq := range ahs.healSeqMap {
-		if !hSeq.hasEnded() && (strings.HasPrefix(k, h.path) ||
-			strings.HasPrefix(h.path, k)) {
+		if !hSeq.hasEnded() && (strings.HasPrefix(hSeq.path, h.path) ||
+			strings.HasPrefix(h.path, hSeq.path)) {
 
 			errMsg = "The provided heal sequence path overlaps with an existing " +
-				fmt.Sprintf("heal path: %s", k)
+				fmt.Sprintf("heal path: %s", hSeq.path)
 			return nil, errorCodes.ToAPIErr(ErrHealOverlappingPaths), errMsg
 		}
 	}
 
 	// Add heal state and start sequence
-	ahs.healSeqMap[h.path] = h
+	ahs.healSeqMap[h.clientToken] = h
 
 	// Launch top-level background heal go-routine
 	go h.healSequenceStart()
@@ -251,11 +266,10 @@ func (ahs *allHealState) LaunchNewHealSequence(h *healSequence) (
 // status results from global state and returns its JSON
 // representation. The clientToken helps ensure there aren't
 // conflicting clients fetching status.
-func (ahs *allHealState) PopHealStatusJSON(path string,
-	clientToken string) ([]byte, APIErrorCode) {
+func (ahs *allHealState) PopHealStatusJSON(clientToken string) ([]byte, APIErrorCode) {
 
 	// fetch heal state for given path
-	h, exists := ahs.getHealSequence(path)
+	h, exists := ahs.getHealSequenceByToken(clientToken)
 	if !exists {
 		// If there is no such heal sequence, return error.
 		return nil, ErrHealNoSuchProcess
