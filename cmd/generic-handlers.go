@@ -472,7 +472,6 @@ var notimplementedBucketResourceNames = map[string]bool{
 	"acl":            true,
 	"cors":           true,
 	"inventory":      true,
-	"lifecycle":      true,
 	"logging":        true,
 	"metrics":        true,
 	"replication":    true,
