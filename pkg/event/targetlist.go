@@ -35,6 +35,18 @@ type TargetList struct {
 	targets map[TargetID]Target
 }
 
+func (list *TargetList) PrintDebug() {
+	list.Lock()
+	defer list.Unlock()
+
+	for k, v := range list.targets {
+		if v == nil {
+			fmt.Printf("unexpected v nil\n")
+		}
+		fmt.Printf("%+v %+v\n", k, v)
+	}
+}
+
 // Add - adds unique target to target list.
 func (list *TargetList) Add(target Target) error {
 	list.Lock()

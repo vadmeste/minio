@@ -939,6 +939,13 @@ func readNotificationConfig(ctx context.Context, objAPI ObjectLayer, bucketName 
 		return nil, err
 	}
 
+	fmt.Printf("%s\n", string(configData))
+	if globalNotificationSys.targetList == nil {
+		fmt.Printf("targetList is nil\n")
+	} else {
+		globalNotificationSys.targetList.PrintDebug()
+	}
+
 	config, err := event.ParseConfig(bytes.NewReader(configData), globalServerConfig.GetRegion(), globalNotificationSys.targetList)
 	logger.LogIf(ctx, err)
 	return config, err
