@@ -633,6 +633,7 @@ func getAuthValidators(config *serverConfig) *validator.Validators {
 func getNotificationTargets(config *serverConfig) *event.TargetList {
 	targetList := event.NewTargetList()
 	if config == nil {
+		fmt.Printf("config is nil\n")
 		return targetList
 	}
 	for id, args := range config.Notify.AMQP {

@@ -939,7 +939,7 @@ func readNotificationConfig(ctx context.Context, objAPI ObjectLayer, bucketName 
 		return nil, err
 	}
 
-	fmt.Printf("%s\n", string(configData))
+	fmt.Printf("%s %v\n", string(configData), err)
 	if globalNotificationSys.targetList == nil {
 		fmt.Printf("targetList is nil\n")
 	} else {
