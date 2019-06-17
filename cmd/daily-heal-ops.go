@@ -43,7 +43,7 @@ func newBgHealSequence(numDisks int) *healSequence {
 	}
 
 	return &healSequence{
-		sourceCh:    make(chan string),
+		sourceCh:    make(chan sweepEntry),
 		startTime:   UTCNow(),
 		clientToken: bgHealingUUID,
 		settings:    hs,

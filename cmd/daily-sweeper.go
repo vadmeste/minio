@@ -24,13 +24,18 @@ import (
 	"github.com/minio/minio/cmd/logger"
 )
 
+type sweepEntry struct {
+	bucket BucketInfo
+	object ObjectInfo
+}
+
 // The list of modules listening for the daily listing of all objects
 // such as the daily heal ops, disk usage and bucket lifecycle management.
-var globalDailySweepListeners = make([]chan string, 0)
+var globalDailySweepListeners = make([]chan sweepEntry, 0)
 var globalDailySweepListenersMu = sync.Mutex{}
 
 // Add a new listener to the daily objects listing
-func registerDailySweepListener(ch chan string) {
+func registerDailySweepListener(ch chan sweepEntry) {
 	globalDailySweepListenersMu.Lock()
 	defer globalDailySweepListenersMu.Unlock()
 
@@ -38,11 +43,11 @@ func registerDailySweepListener(ch chan string) {
 }
 
 // Safe copy of globalDailySweepListeners content
-func copyDailySweepListeners() []chan string {
+func copyDailySweepListeners() []chan sweepEntry {
 	globalDailySweepListenersMu.Lock()
 	defer globalDailySweepListenersMu.Unlock()
 
-	var listenersCopy = make([]chan string, len(globalDailySweepListeners))
+	var listenersCopy = make([]chan sweepEntry, len(globalDailySweepListeners))
 	copy(listenersCopy, globalDailySweepListeners)
 
 	return listenersCopy
@@ -71,7 +76,7 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 	for _, bucket := range buckets {
 		// Send bucket names to all listeners
 		for _, l := range copyDailySweepListeners() {
-			l <- bucket.Name
+			l <- sweepEntry{bucket: bucket}
 		}
 
 		marker := ""
@@ -82,7 +87,7 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 			}
 			for _, obj := range res.Objects {
 				for _, l := range copyDailySweepListeners() {
-					l <- pathJoin(bucket.Name, obj.Name)
+					l <- sweepEntry{bucket: bucket, object: obj}
 				}
 			}
 			if !res.IsTruncated {
