@@ -1569,6 +1569,6 @@ func (s *xlSets) HealObjects(ctx context.Context, bucket, prefix string, healObj
 	return nil
 }
 
-func (s *xlSets) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi ListObjectsInfo, err error) {
+func (s *xlSets) ListObjectsAll(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi ListObjectsInfo, err error) {
 	return s.listObjects(ctx, bucket, prefix, marker, delimiter, maxKeys, true)
 }

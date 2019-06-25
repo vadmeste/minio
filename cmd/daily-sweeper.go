@@ -76,7 +76,7 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 
 		marker := ""
 		for {
-			res, err := objAPI.ListObjectsHeal(ctx, bucket.Name, "", marker, "", 1000)
+			res, err := objAPI.ListObjectsAll(ctx, bucket.Name, "", marker, "", 1000)
 			if err != nil {
 				continue
 			}

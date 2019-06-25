@@ -94,7 +94,7 @@ type ObjectLayer interface {
 	HealObjects(ctx context.Context, bucket, prefix string, healObjectFn func(string, string) error) error
 
 	ListBucketsHeal(ctx context.Context) (buckets []BucketInfo, err error)
-	ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result ListObjectsInfo, err error)
+	ListObjectsAll(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result ListObjectsInfo, err error)
 
 	// Policy operations
 	SetBucketPolicy(context.Context, string, *policy.Policy) error
