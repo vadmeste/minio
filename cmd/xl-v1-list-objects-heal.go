@@ -23,8 +23,8 @@ func (xl xlObjects) ListBucketsHeal(ctx context.Context) ([]BucketInfo, error) {
 	return nil, nil
 }
 
-// This is not implemented, look for xl-sets.ListObjectsHeal()
-func (xl xlObjects) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi ListObjectsInfo, err error) {
+// This is not implemented, look for xl-sets.ListObjectsAll()
+func (xl xlObjects) ListObjectsAll(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi ListObjectsInfo, err error) {
 	return ListObjectsInfo{}, nil
 }
 

@@ -26,8 +26,36 @@ import (
 )
 
 const (
-	bgHealingUUID = "0000-0000-0000-0000"
+	bgHealingUUID     = "0000-0000-0000-0000"
+	bgHealingInterval = 30 * 24 * time.Hour
 )
+
+type healListener struct {
+	ch           chan sweepEntry
+	lastActivity time.Time
+}
+
+func (h *healListener) Send(elem sweepEntry) {
+	h.ch <- elem
+	h.lastActivity = time.Now()
+}
+
+func (h *healListener) Interested(bucketName string) bool {
+	var states = []madmin.BgHealState{getLocalBackgroundHealStatus()}
+	if globalIsDistXL {
+		peerStates := globalNotificationSys.BackgroundHealStatus()
+		states = append(states, peerStates...)
+	}
+
+	var lastActivity time.Time
+	for _, state := range states {
+		if state.LastHealActivity.After(lastActivity) {
+			lastActivity = state.LastHealActivity
+		}
+	}
+
+	return time.Since(lastActivity) > bgHealingInterval
+}
 
 // NewBgHealSequence creates a background healing sequence
 // operation which crawls all objects and heal them.
@@ -43,7 +71,7 @@ func newBgHealSequence(numDisks int) *healSequence {
 	}
 
 	return &healSequence{
-		sourceCh:    make(chan string),
+		sourceCh:    make(chan sweepEntry),
 		startTime:   UTCNow(),
 		clientToken: bgHealingUUID,
 		settings:    hs,
@@ -97,5 +125,6 @@ func startDailyHeal() {
 	nh := newBgHealSequence(numDisks)
 	globalSweepHealState.LaunchNewHealSequence(nh)
 
-	registerDailySweepListener(nh.sourceCh)
+	l := &healListener{ch: nh.sourceCh}
+	registerDailySweepListener(l)
 }

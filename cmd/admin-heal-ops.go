@@ -312,7 +312,7 @@ type healSequence struct {
 	path string
 
 	// List of entities (format, buckets, objects) to heal
-	sourceCh chan string
+	sourceCh chan sweepEntry
 
 	// Report healing progress, false if this is a background
 	// healing since currently there is no entity which will
@@ -583,16 +583,19 @@ func (h *healSequence) healItemsFromSourceCh() error {
 		logger.LogIf(h.ctx, err)
 	}
 
-	for path := range h.sourceCh {
-
+	for entry := range h.sourceCh {
 		var itemType madmin.HealItemType
+		var path string
 		switch {
-		case path == "/":
+		case entry.bucket.Name == "":
 			itemType = madmin.HealItemMetadata
-		case !strings.Contains(path, "/"):
+			path = "/"
+		case entry.object.Name == "":
 			itemType = madmin.HealItemBucket
+			path = entry.bucket.Name
 		default:
 			itemType = madmin.HealItemObject
+			path = pathJoin(entry.bucket.Name, entry.object.Name)
 		}
 
 		if err := h.queueHealTask(path, itemType); err != nil {

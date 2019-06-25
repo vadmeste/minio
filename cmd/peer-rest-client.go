@@ -467,6 +467,18 @@ func (client *peerRESTClient) BackgroundHealStatus() (madmin.BgHealState, error)
 	return state, err
 }
 
+func (client *peerRESTClient) BackgroundLifecycleStatus() (madmin.BgLifecycleState, error) {
+	respBody, err := client.call(peerRESTMethodBackgroundLifecycleStatus, nil, nil, -1)
+	if err != nil {
+		return madmin.BgLifecycleState{}, err
+	}
+	defer http.DrainBody(respBody)
+
+	state := madmin.BgLifecycleState{}
+	err = gob.NewDecoder(respBody).Decode(&state)
+	return state, err
+}
+
 func (client *peerRESTClient) doTrace(traceCh chan interface{}, doneCh chan struct{}, trcAll, trcErr bool) {
 	values := make(url.Values)
 	values.Set(peerRESTTraceAll, strconv.FormatBool(trcAll))

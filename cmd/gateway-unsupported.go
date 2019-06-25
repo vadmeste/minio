@@ -118,8 +118,8 @@ func (a GatewayUnsupported) ListBucketsHeal(ctx context.Context) (buckets []Buck
 	return nil, NotImplemented{}
 }
 
-// ListObjectsHeal - Not implemented stub
-func (a GatewayUnsupported) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result ListObjectsInfo, err error) {
+// ListObjectsAll - Not implemented stub
+func (a GatewayUnsupported) ListObjectsAll(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result ListObjectsInfo, err error) {
 	return ListObjectsInfo{}, NotImplemented{}
 }
 

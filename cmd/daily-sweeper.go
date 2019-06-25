@@ -24,25 +24,35 @@ import (
 	"github.com/minio/minio/cmd/logger"
 )
 
+type sweepEntry struct {
+	bucket BucketInfo
+	object ObjectInfo
+}
+
+type sweepListener interface {
+	Send(sweepEntry)
+	Interested(string) bool
+}
+
 // The list of modules listening for the daily listing of all objects
 // such as the daily heal ops, disk usage and bucket lifecycle management.
-var globalDailySweepListeners = make([]chan string, 0)
+var globalDailySweepListeners = make([]sweepListener, 0)
 var globalDailySweepListenersMu = sync.Mutex{}
 
 // Add a new listener to the daily objects listing
-func registerDailySweepListener(ch chan string) {
+func registerDailySweepListener(listener sweepListener) {
 	globalDailySweepListenersMu.Lock()
 	defer globalDailySweepListenersMu.Unlock()
 
-	globalDailySweepListeners = append(globalDailySweepListeners, ch)
+	globalDailySweepListeners = append(globalDailySweepListeners, listener)
 }
 
 // Safe copy of globalDailySweepListeners content
-func copyDailySweepListeners() []chan string {
+func copyDailySweepListeners() []sweepListener {
 	globalDailySweepListenersMu.Lock()
 	defer globalDailySweepListenersMu.Unlock()
 
-	var listenersCopy = make([]chan string, len(globalDailySweepListeners))
+	var listenersCopy = make([]sweepListener, len(globalDailySweepListeners))
 	copy(listenersCopy, globalDailySweepListeners)
 
 	return listenersCopy
@@ -69,20 +79,32 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 	// List all objects, having read quorum or not in all buckets
 	// and send them to all the registered sweep listeners
 	for _, bucket := range buckets {
-		// Send bucket names to all listeners
+		var listeners []sweepListener
 		for _, l := range copyDailySweepListeners() {
-			l <- bucket.Name
+			if l.Interested(bucket.Name) {
+				listeners = append(listeners, l)
+			}
+		}
+
+		if len(listeners) == 0 {
+			// Next bucket
+			continue
+		}
+
+		// Send bucket names to all listeners
+		for _, l := range listeners {
+			l.Send(sweepEntry{bucket: bucket})
 		}
 
 		marker := ""
 		for {
-			res, err := objAPI.ListObjectsHeal(ctx, bucket.Name, "", marker, "", 1000)
+			res, err := objAPI.ListObjectsAll(ctx, bucket.Name, "", marker, "", 1000)
 			if err != nil {
 				continue
 			}
 			for _, obj := range res.Objects {
-				for _, l := range copyDailySweepListeners() {
-					l <- pathJoin(bucket.Name, obj.Name)
+				for _, l := range listeners {
+					l.Send(sweepEntry{bucket: bucket, object: obj})
 				}
 			}
 			if !res.IsTruncated {
@@ -121,7 +143,7 @@ func dailySweeper() {
 
 	// Perform a sweep round each month
 	for {
-		if time.Since(lastSweepTime) < 30*24*time.Hour {
+		if time.Since(lastSweepTime) < 6*time.Hour {
 			time.Sleep(time.Hour)
 			continue
 		}

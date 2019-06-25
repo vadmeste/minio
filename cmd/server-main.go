@@ -384,10 +384,12 @@ func serverMain(ctx *cli.Context) {
 		logger.Fatal(errors.New("Invalid KMS configuration"), "auto-encryption is enabled but server does not support encryption")
 	}
 
+	initDailySweeper()
+	initDailyLifecycle()
+
 	if globalIsXL {
 		initBackgroundHealing()
 		initDailyHeal()
-		initDailySweeper()
 	}
 
 	globalObjLayerMutex.Lock()

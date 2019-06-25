@@ -303,3 +303,36 @@ func (adm *AdminClient) BackgroundHealStatus() (BgHealState, error) {
 	}
 	return healState, nil
 }
+
+// BgLifecycleState represents the status of the background lifecycle operations
+type BgLifecycleState struct {
+	LastActivity time.Time
+}
+
+// BackgroundLifecycleStatus returns the background heal status of the
+// current server or cluster.
+func (adm *AdminClient) BackgroundLifecycleStatus() (BgLifecycleState, error) {
+	// Execute POST request to background heal status api
+	resp, err := adm.executeMethod("POST", requestData{relPath: "/v1/background-lifecycle/status"})
+	if err != nil {
+		return BgLifecycleState{}, err
+	}
+	defer closeResponse(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		return BgLifecycleState{}, httpRespToErrorResponse(resp)
+	}
+
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return BgLifecycleState{}, err
+	}
+
+	var lifecycleState BgLifecycleState
+
+	err = json.Unmarshal(respBytes, &lifecycleState)
+	if err != nil {
+		return BgLifecycleState{}, err
+	}
+	return lifecycleState, nil
+}
