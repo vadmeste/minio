@@ -24,13 +24,19 @@ import (
 	"github.com/minio/minio/cmd/logger"
 )
 
+// General objects listing operation sends to listener
+// a sweepEntry for each bucket and object
 type sweepEntry struct {
 	bucket BucketInfo
 	object ObjectInfo
 }
 
+// Listeners to objects listing needs to satisfy
+// sweepListener
 type sweepListener interface {
+	// Receive a new bucket/object entry
 	Send(sweepEntry)
+	// Interested to receive objects listing
 	Interested(string) bool
 }
 
@@ -87,7 +93,7 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 		}
 
 		if len(listeners) == 0 {
-			// Next bucket
+			// No listener for this bucket, move on
 			continue
 		}
 
@@ -102,6 +108,7 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 			if err != nil {
 				continue
 			}
+			// Send all objects to listeners
 			for _, obj := range res.Objects {
 				for _, l := range listeners {
 					l.Send(sweepEntry{bucket: bucket, object: obj})
