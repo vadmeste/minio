@@ -37,6 +37,9 @@ type healListener struct {
 
 func (h *healListener) Send(elem sweepEntry) {
 	h.ch <- elem
+}
+
+func (h *healListener) SignalEnd() {
 	h.lastActivity = time.Now()
 }
 

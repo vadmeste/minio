@@ -35,6 +35,9 @@ type lifecycleListener struct {
 
 func (l *lifecycleListener) Send(elem sweepEntry) {
 	l.ch <- elem
+}
+
+func (l *lifecycleListener) SignalEnd() {
 	l.lastActivity = time.Now()
 }
 
