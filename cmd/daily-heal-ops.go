@@ -46,7 +46,7 @@ func (h *healListener) SignalEnd() {
 func (h *healListener) Interested(bucketName string) bool {
 	var states = []bgOpsStatus{
 		bgOpsStatus{
-			healingOps: getLocalBgHealingOpsStatus(),
+			HealingOps: getLocalBgHealingOpsStatus(),
 		},
 	}
 	if globalIsDistXL {
@@ -56,8 +56,8 @@ func (h *healListener) Interested(bucketName string) bool {
 
 	var lastActivity time.Time
 	for _, state := range states {
-		if state.healingOps.lastActivity.After(lastActivity) {
-			lastActivity = state.healingOps.lastActivity
+		if state.HealingOps.LastActivity.After(lastActivity) {
+			lastActivity = state.HealingOps.LastActivity
 		}
 	}
 
@@ -109,7 +109,7 @@ func getLocalBackgroundHealStatus() madmin.BgHealState {
 
 func getLocalBgHealingOpsStatus() bgHealingOpsStatus {
 	return bgHealingOpsStatus{
-		lastActivity: globalHealListener.lastActivity,
+		LastActivity: globalHealListener.lastActivity,
 	}
 }
 

@@ -43,7 +43,7 @@ func (l *lifecycleListener) SignalEnd() {
 func (l *lifecycleListener) Interested(bucketName string) bool {
 	var states = []bgOpsStatus{
 		bgOpsStatus{
-			lifecycleOps: getLocalBgLifecycleOpsStatus(),
+			LifecycleOps: getLocalBgLifecycleOpsStatus(),
 		},
 	}
 	if globalIsDistXL {
@@ -53,8 +53,8 @@ func (l *lifecycleListener) Interested(bucketName string) bool {
 
 	var lastActivity time.Time
 	for _, state := range states {
-		if state.lifecycleOps.lastActivity.After(lastActivity) {
-			lastActivity = state.lifecycleOps.lastActivity
+		if state.LifecycleOps.LastActivity.After(lastActivity) {
+			lastActivity = state.LifecycleOps.LastActivity
 		}
 	}
 
@@ -71,7 +71,7 @@ var globalLifecycleListener = &lifecycleListener{ch: make(chan sweepEntry)}
 
 func getLocalBgLifecycleOpsStatus() bgLifecycleOpsStatus {
 	return bgLifecycleOpsStatus{
-		lastActivity: globalLifecycleListener.lastActivity,
+		LastActivity: globalLifecycleListener.lastActivity,
 	}
 }
 

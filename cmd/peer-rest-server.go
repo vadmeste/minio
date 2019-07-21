@@ -781,8 +781,8 @@ func (s *peerRESTServer) BackgroundOpsStatusHandler(w http.ResponseWriter, r *ht
 	ctx := newContext(r, w, "BackgroundOpsStatus")
 
 	state := bgOpsStatus{
-		lifecycleOps: getLocalBgLifecycleOpsStatus(),
-		healingOps:   getLocalBgHealingOpsStatus(),
+		LifecycleOps: getLocalBgLifecycleOpsStatus(),
+		HealingOps:   getLocalBgHealingOpsStatus(),
 	}
 
 	defer w.(http.Flusher).Flush()

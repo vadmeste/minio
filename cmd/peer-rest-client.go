@@ -468,15 +468,15 @@ func (client *peerRESTClient) BackgroundHealStatus() (madmin.BgHealState, error)
 }
 
 type bgHealingOpsStatus struct {
-	lastActivity time.Time
+	LastActivity time.Time
 }
 type bgLifecycleOpsStatus struct {
-	lastActivity time.Time
+	LastActivity time.Time
 }
 
 type bgOpsStatus struct {
-	healingOps   bgHealingOpsStatus
-	lifecycleOps bgLifecycleOpsStatus
+	HealingOps   bgHealingOpsStatus
+	LifecycleOps bgLifecycleOpsStatus
 }
 
 func (client *peerRESTClient) BackgroundOpsStatus() (bgOpsStatus, error) {
