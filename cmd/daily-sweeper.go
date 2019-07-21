@@ -85,9 +85,6 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 	}
 
 	allListeners := copyDailySweepListeners()
-	for _, l := range allListeners {
-		l.SignalStart()
-	}
 
 	// List all objects, having read quorum or not in all buckets
 	// and send them to all the registered sweep listeners
@@ -95,6 +92,7 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 		var listeners []sweepListener
 		for _, l := range allListeners {
 			if l.Interested(bucket.Name) {
+				l.SignalStart()
 				listeners = append(listeners, l)
 			}
 		}
