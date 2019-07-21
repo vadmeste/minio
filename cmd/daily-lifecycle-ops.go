@@ -36,7 +36,7 @@ func (l *lifecycleListener) Send(elem sweepEntry) {
 	l.ch <- elem
 }
 
-func (l *lifecycleListener) SignalEnd() {
+func (l *lifecycleListener) SignalStart() {
 	l.lastActivity = time.Now()
 }
 

@@ -39,7 +39,7 @@ func (h *healListener) Send(elem sweepEntry) {
 	h.ch <- elem
 }
 
-func (h *healListener) SignalEnd() {
+func (h *healListener) SignalStart() {
 	h.lastActivity = time.Now()
 }
 

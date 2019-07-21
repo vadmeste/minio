@@ -38,8 +38,8 @@ type sweepListener interface {
 	Send(sweepEntry)
 	// Interested to receive objects listing
 	Interested(string) bool
-	// Signal ending of the current sweep operation
-	SignalEnd()
+	// Signal the start of the current sweep operation
+	SignalStart()
 }
 
 // The list of modules listening for the daily listing of all objects
@@ -85,11 +85,9 @@ func sweepRound(ctx context.Context, objAPI ObjectLayer) error {
 	}
 
 	allListeners := copyDailySweepListeners()
-	defer func() {
-		for _, l := range allListeners {
-			l.SignalEnd()
-		}
-	}()
+	for _, l := range allListeners {
+		l.SignalStart()
+	}
 
 	// List all objects, having read quorum or not in all buckets
 	// and send them to all the registered sweep listeners
