@@ -251,13 +251,13 @@ func (sys *NotificationSys) BackgroundHealStatus() []madmin.BgHealState {
 }
 
 // BackgroundLifecycleStatus - returns background lifecycle status of all peers
-func (sys *NotificationSys) BackgroundLifecycleStatus() []madmin.BgLifecycleState {
-	states := make([]madmin.BgLifecycleState, len(sys.peerClients))
+func (sys *NotificationSys) BackgroundOpsStatus() []bgOpsStatus {
+	states := make([]bgOpsStatus, len(sys.peerClients))
 	for idx, client := range sys.peerClients {
 		if client == nil {
 			continue
 		}
-		st, err := client.BackgroundLifecycleStatus()
+		st, err := client.BackgroundOpsStatus()
 		if err != nil {
 			logger.LogIf(context.Background(), err)
 		} else {

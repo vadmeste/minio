@@ -44,16 +44,20 @@ func (h *healListener) SignalEnd() {
 }
 
 func (h *healListener) Interested(bucketName string) bool {
-	var states = []madmin.BgHealState{getLocalBackgroundHealStatus()}
+	var states = []bgOpsStatus{
+		bgOpsStatus{
+			healingOps: getLocalBgHealingOpsStatus(),
+		},
+	}
 	if globalIsDistXL {
-		peerStates := globalNotificationSys.BackgroundHealStatus()
+		peerStates := globalNotificationSys.BackgroundOpsStatus()
 		states = append(states, peerStates...)
 	}
 
 	var lastActivity time.Time
 	for _, state := range states {
-		if state.LastHealActivity.After(lastActivity) {
-			lastActivity = state.LastHealActivity
+		if state.healingOps.lastActivity.After(lastActivity) {
+			lastActivity = state.healingOps.lastActivity
 		}
 	}
 
@@ -103,6 +107,14 @@ func getLocalBackgroundHealStatus() madmin.BgHealState {
 	}
 }
 
+func getLocalBgHealingOpsStatus() bgHealingOpsStatus {
+	return bgHealingOpsStatus{
+		lastActivity: globalHealListener.lastActivity,
+	}
+}
+
+var globalHealListener = &healListener{}
+
 func initDailyHeal() {
 	go startDailyHeal()
 }
@@ -128,6 +140,6 @@ func startDailyHeal() {
 	nh := newBgHealSequence(numDisks)
 	globalSweepHealState.LaunchNewHealSequence(nh)
 
-	l := &healListener{ch: nh.sourceCh}
-	registerDailySweepListener(l)
+	globalHealListener.ch = nh.sourceCh
+	registerDailySweepListener(globalHealListener)
 }

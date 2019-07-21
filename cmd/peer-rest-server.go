@@ -772,15 +772,18 @@ func (s *peerRESTServer) BackgroundHealStatusHandler(w http.ResponseWriter, r *h
 	logger.LogIf(ctx, gob.NewEncoder(w).Encode(state))
 }
 
-func (s *peerRESTServer) BackgroundLifecycleStatusHandler(w http.ResponseWriter, r *http.Request) {
+func (s *peerRESTServer) BackgroundOpsStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.IsValid(w, r) {
 		s.writeErrorResponse(w, errors.New("invalid request"))
 		return
 	}
 
-	ctx := newContext(r, w, "BackgroundLifecycleStatus")
+	ctx := newContext(r, w, "BackgroundOpsStatus")
 
-	state := getLocalBackgroundLifecycleStatus()
+	state := bgOpsStatus{
+		lifecycleOps: getLocalBgLifecycleOpsStatus(),
+		healingOps:   getLocalBgHealingOpsStatus(),
+	}
 
 	defer w.(http.Flusher).Flush()
 	logger.LogIf(ctx, gob.NewEncoder(w).Encode(state))
@@ -832,7 +835,7 @@ func registerPeerRESTHandlers(router *mux.Router) {
 	subrouter.Methods(http.MethodPost).Path("/" + peerRESTMethodReloadFormat).HandlerFunc(httpTraceHdrs(server.ReloadFormatHandler)).Queries(restQueries(peerRESTDryRun)...)
 	subrouter.Methods(http.MethodPost).Path("/" + peerRESTMethodBucketLifecycleSet).HandlerFunc(httpTraceHdrs(server.SetBucketLifecycleHandler)).Queries(restQueries(peerRESTBucket)...)
 	subrouter.Methods(http.MethodPost).Path("/" + peerRESTMethodBucketLifecycleRemove).HandlerFunc(httpTraceHdrs(server.RemoveBucketLifecycleHandler)).Queries(restQueries(peerRESTBucket)...)
-	subrouter.Methods(http.MethodPost).Path("/" + peerRESTMethodBackgroundLifecycleStatus).HandlerFunc(server.BackgroundLifecycleStatusHandler)
+	subrouter.Methods(http.MethodPost).Path("/" + peerRESTMethodBackgroundOpsStatus).HandlerFunc(server.BackgroundOpsStatusHandler)
 
 	subrouter.Methods(http.MethodPost).Path("/" + peerRESTMethodTrace).HandlerFunc(server.TraceHandler)
 	subrouter.Methods(http.MethodPost).Path("/" + peerRESTMethodBackgroundHealStatus).HandlerFunc(server.BackgroundHealStatusHandler)

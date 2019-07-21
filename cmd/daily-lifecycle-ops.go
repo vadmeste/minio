@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/minio/minio/pkg/lifecycle"
-	"github.com/minio/minio/pkg/madmin"
 )
 
 const (
@@ -42,16 +41,20 @@ func (l *lifecycleListener) SignalEnd() {
 }
 
 func (l *lifecycleListener) Interested(bucketName string) bool {
-	var states = []madmin.BgLifecycleState{getLocalBackgroundLifecycleStatus()}
+	var states = []bgOpsStatus{
+		bgOpsStatus{
+			lifecycleOps: getLocalBgLifecycleOpsStatus(),
+		},
+	}
 	if globalIsDistXL {
-		peerStates := globalNotificationSys.BackgroundLifecycleStatus()
+		peerStates := globalNotificationSys.BackgroundOpsStatus()
 		states = append(states, peerStates...)
 	}
 
 	var lastActivity time.Time
 	for _, state := range states {
-		if state.LastActivity.After(lastActivity) {
-			lastActivity = state.LastActivity
+		if state.lifecycleOps.lastActivity.After(lastActivity) {
+			lastActivity = state.lifecycleOps.lastActivity
 		}
 	}
 
@@ -66,9 +69,9 @@ func (l *lifecycleListener) Interested(bucketName string) bool {
 // Register to the daily objects listing
 var globalLifecycleListener = &lifecycleListener{ch: make(chan sweepEntry)}
 
-func getLocalBackgroundLifecycleStatus() madmin.BgLifecycleState {
-	return madmin.BgLifecycleState{
-		LastActivity: globalLifecycleListener.lastActivity,
+func getLocalBgLifecycleOpsStatus() bgLifecycleOpsStatus {
+	return bgLifecycleOpsStatus{
+		lastActivity: globalLifecycleListener.lastActivity,
 	}
 }
 

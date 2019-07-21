@@ -467,14 +467,26 @@ func (client *peerRESTClient) BackgroundHealStatus() (madmin.BgHealState, error)
 	return state, err
 }
 
-func (client *peerRESTClient) BackgroundLifecycleStatus() (madmin.BgLifecycleState, error) {
-	respBody, err := client.call(peerRESTMethodBackgroundLifecycleStatus, nil, nil, -1)
+type bgHealingOpsStatus struct {
+	lastActivity time.Time
+}
+type bgLifecycleOpsStatus struct {
+	lastActivity time.Time
+}
+
+type bgOpsStatus struct {
+	healingOps   bgHealingOpsStatus
+	lifecycleOps bgLifecycleOpsStatus
+}
+
+func (client *peerRESTClient) BackgroundOpsStatus() (bgOpsStatus, error) {
+	respBody, err := client.call(peerRESTMethodBackgroundOpsStatus, nil, nil, -1)
 	if err != nil {
-		return madmin.BgLifecycleState{}, err
+		return bgOpsStatus{}, err
 	}
 	defer http.DrainBody(respBody)
 
-	state := madmin.BgLifecycleState{}
+	state := bgOpsStatus{}
 	err = gob.NewDecoder(respBody).Decode(&state)
 	return state, err
 }
