@@ -117,9 +117,16 @@ func lifecycleRound(ctx context.Context, objAPI ObjectLayer) error {
 			continue
 		}
 
+		// Common prefixes
+		var prefixes []string
+		for _, rule := range l.Rules {
+			prefixes = append(prefixes, rule.Filter.Prefix)
+		}
+		commonPrefix := lcp(prefixes)
+
 		marker := ""
 		for {
-			res, err := objAPI.ListObjects(ctx, bucket.Name, "", marker, "", 1000)
+			res, err := objAPI.ListObjects(ctx, bucket.Name, commonPrefix, marker, "", 1000)
 			if err != nil {
 				continue
 			}
