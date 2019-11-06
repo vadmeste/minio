@@ -348,6 +348,10 @@ func (l *ossObjects) StorageInfo(ctx context.Context) (si minio.StorageInfo) {
 	return si
 }
 
+func (l *ossObjects) ObjectLayerInfo(ctx context.Context) (si minio.ObjectLayerInfo) {
+	return minio.ObjectLayerInfo{}
+}
+
 // ossIsValidBucketName verifies whether a bucket name is valid.
 func ossIsValidBucketName(bucket string) bool {
 	// dot is not allowed in bucket name

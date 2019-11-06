@@ -203,3 +203,26 @@ func getStorageInfo(disks []StorageAPI) StorageInfo {
 func (xl xlObjects) StorageInfo(ctx context.Context) StorageInfo {
 	return getStorageInfo(xl.getDisks())
 }
+
+func getObjLayerInfo(disks []StorageAPI) (objLayerInfo ObjectLayerInfo) {
+	info, err := disks[0].DataInfo()
+	if err != nil {
+		return
+	}
+
+	objLayerInfo.ObjectsCount += info.TotalXLJSONs
+	objLayerInfo.BucketsCount = info.TotalVolumes
+	objLayerInfo.BucketsSizes = make(map[string]uint64)
+	for k, v := range info.BucketsSizes {
+		objLayerInfo.BucketsSizes[k] = v
+	}
+	objLayerInfo.ObjectsSizesHistogram = make([]uint64, len(ObjectsHistogramIntervals))
+	for i, v := range info.ObjectsSizesHistogram {
+		objLayerInfo.ObjectsSizesHistogram[i] = v
+	}
+	return
+}
+
+func (xl xlObjects) ObjectLayerInfo(ctx context.Context) ObjectLayerInfo {
+	return getObjLayerInfo(xl.getDisks())
+}

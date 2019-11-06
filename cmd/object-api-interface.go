@@ -54,6 +54,7 @@ type ObjectLayer interface {
 	// Storage operations.
 	Shutdown(context.Context) error
 	StorageInfo(context.Context) StorageInfo
+	ObjectLayerInfo(context.Context) ObjectLayerInfo
 
 	// Bucket operations.
 	MakeBucketWithLocation(ctx context.Context, bucket string, location string) error

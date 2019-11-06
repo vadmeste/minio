@@ -226,6 +226,53 @@ func (adm *AdminClient) StorageInfo() (StorageInfo, error) {
 	return storageInfo, nil
 }
 
+var ObjectsHistogramIntervals = []struct{ start, end int64 }{
+	{0, 1024 - 1},
+	{1024, 1024*1024 - 1},
+	{1024 * 1024, 1024*1024*10 - 1},
+	{1024 * 1024 * 10, 1024*1024*64 - 1},
+	{1024 * 1024 * 64, 1024*1024*128 - 1},
+	{1024 * 1024 * 128, 1024*1024*512 - 1},
+	{1024 * 1024 * 512, -1},
+}
+
+type ObjectLayerInfo struct {
+	ObjectsCount uint64
+	BucketsCount uint64
+
+	BucketsSizes          map[string]uint64
+	ObjectsSizesHistogram []uint64
+}
+
+// ObjectLayerInfo
+func (adm *AdminClient) ObjectLayerInfo() (ObjectLayerInfo, error) {
+	resp, err := adm.executeMethod("GET", requestData{relPath: adminAPIPrefix + "/objectlayerinfo"})
+	defer closeResponse(resp)
+	if err != nil {
+		return ObjectLayerInfo{}, err
+	}
+
+	// Check response http status code
+	if resp.StatusCode != http.StatusOK {
+		return ObjectLayerInfo{}, httpRespToErrorResponse(resp)
+	}
+
+	// Unmarshal the server's json response
+	var objectLayerInfo ObjectLayerInfo
+
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return ObjectLayerInfo{}, err
+	}
+
+	err = json.Unmarshal(respBytes, &objectLayerInfo)
+	if err != nil {
+		return ObjectLayerInfo{}, err
+	}
+
+	return objectLayerInfo, nil
+}
+
 // ServerDrivesPerfInfo holds informantion about address and write speed of
 // all drives in a single server node
 type ServerDrivesPerfInfo struct {

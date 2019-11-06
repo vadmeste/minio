@@ -167,6 +167,16 @@ func (client *storageRESTClient) DiskInfo() (info DiskInfo, err error) {
 	return info, err
 }
 
+func (client *storageRESTClient) DataInfo() (info DataInfo, err error) {
+	respBody, err := client.call(storageRESTMethodDataInfo, nil, nil, -1)
+	if err != nil {
+		return
+	}
+	defer http.DrainBody(respBody)
+	err = gob.NewDecoder(respBody).Decode(&info)
+	return info, err
+}
+
 // MakeVol - create a volume on a remote disk.
 func (client *storageRESTClient) MakeVol(volume string) (err error) {
 	values := make(url.Values)

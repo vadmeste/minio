@@ -181,7 +181,7 @@ func (fs *FSObjects) Shutdown(ctx context.Context) error {
 
 // diskUsage returns du information for the posix path, in a continuous routine.
 func (fs *FSObjects) diskUsage(doneCh chan struct{}) {
-	usageFn := func(ctx context.Context, entry string) error {
+	usageFn := func(ctx context.Context, base, entry string) error {
 		if globalHTTPServer != nil {
 			// Wait at max 1 minute for an inprogress request
 			// before proceeding to count the usage.
@@ -219,7 +219,7 @@ func (fs *FSObjects) diskUsage(doneCh chan struct{}) {
 			return
 		case <-time.After(globalUsageCheckInterval):
 			var usage uint64
-			usageFn = func(ctx context.Context, entry string) error {
+			usageFn = func(ctx context.Context, base, entry string) error {
 				if globalHTTPServer != nil {
 					// Wait at max 1 minute for an inprogress request
 					// before proceeding to count the usage.
@@ -266,6 +266,10 @@ func (fs *FSObjects) StorageInfo(ctx context.Context) StorageInfo {
 	}
 	storageInfo.Backend.Type = BackendFS
 	return storageInfo
+}
+
+func (fs *FSObjects) ObjectLayerInfo(ctx context.Context) ObjectLayerInfo {
+	return ObjectLayerInfo{}
 }
 
 /// Bucket operations

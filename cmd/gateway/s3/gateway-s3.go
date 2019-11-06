@@ -306,6 +306,10 @@ func (l *s3Objects) StorageInfo(ctx context.Context) (si minio.StorageInfo) {
 	return si
 }
 
+func (l *s3Objects) ObjectLayerInfo(ctx context.Context) minio.ObjectLayerInfo {
+	return minio.ObjectLayerInfo{}
+}
+
 // MakeBucket creates a new container on S3 backend.
 func (l *s3Objects) MakeBucketWithLocation(ctx context.Context, bucket, location string) error {
 	// Verify if bucket name is valid.

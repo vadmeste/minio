@@ -301,7 +301,7 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	writeSuccessResponseJSON(w, jsonBytes)
 }
 
-// ServerInfoHandler - GET /minio/admin/v2/storageinfo
+// StorageInfoHandler - GET /minio/admin/v2/storageinfo
 // ----------
 // Get server information
 func (a adminAPIHandlers) StorageInfoHandler(w http.ResponseWriter, r *http.Request) {
@@ -315,6 +315,31 @@ func (a adminAPIHandlers) StorageInfoHandler(w http.ResponseWriter, r *http.Requ
 
 	// Marshal API response
 	jsonBytes, err := json.Marshal(storageInfo)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	// Reply with storage information (across nodes in a
+	// distributed setup) as json.
+	writeSuccessResponseJSON(w, jsonBytes)
+
+}
+
+// ObjectLayerInfoHandler - GET /minio/admin/v1/objectlayerinfo
+// ----------
+// Get server information
+func (a adminAPIHandlers) ObjectLayerInfoHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "ObjectLayerInfo")
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
+		return
+	}
+
+	objLayerInfo := objectAPI.ObjectLayerInfo(ctx)
+
+	// Marshal API response
+	jsonBytes, err := json.Marshal(objLayerInfo)
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return

@@ -70,6 +70,23 @@ type StorageInfo struct {
 	}
 }
 
+var ObjectsHistogramIntervals = []struct{ start, end uint64 }{
+	{0, 1024 - 1},
+	{1024, 1024*1024 - 1},
+	{1024 * 1024, 1024*1024*10 - 1},
+	{1024 * 1024 * 10, 1024*1024*64 - 1},
+	{1024 * 1024 * 64, 1024*1024*128 - 1},
+	{1024 * 1024 * 128, 1024*1024*512 - 1},
+	{1024 * 1024 * 512, 0},
+}
+
+type ObjectLayerInfo struct {
+	ObjectsCount          uint64
+	BucketsCount          uint64
+	BucketsSizes          map[string]uint64
+	ObjectsSizesHistogram []uint64
+}
+
 // BucketInfo - represents bucket metadata.
 type BucketInfo struct {
 	// Name of the bucket.

@@ -17,13 +17,14 @@
 package cmd
 
 const (
-	storageRESTVersion       = "v10"
-	storageRESTVersionPrefix = SlashSeparator + "v10"
+	storageRESTVersion       = "v11"
+	storageRESTVersionPrefix = SlashSeparator + "v11"
 	storageRESTPrefix        = minioReservedBucketPath + "/storage"
 )
 
 const (
 	storageRESTMethodDiskInfo  = "/diskinfo"
+	storageRESTMethodDataInfo  = "/datainfo"
 	storageRESTMethodMakeVol   = "/makevol"
 	storageRESTMethodStatVol   = "/statvol"
 	storageRESTMethodDeleteVol = "/deletevol"

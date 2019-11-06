@@ -80,6 +80,12 @@ type posix struct {
 	totalUsed  uint64 // ref: https://golang.org/pkg/sync/atomic/#pkg-note-BUG
 	ioErrCount int32  // ref: https://golang.org/pkg/sync/atomic/#pkg-note-BUG
 
+	totalXLJSONs uint64
+	totalVolumes uint64
+
+	bucketsSizesMU sync.RWMutex
+	bucketsSizes   map[string]uint64
+
 	diskPath string
 	pool     sync.Pool
 
@@ -206,13 +212,16 @@ func newPosix(path string) (*posix, error) {
 				return &b
 			},
 		},
-		stopUsageCh: make(chan struct{}),
-		diskMount:   mountinfo.IsLikelyMountPoint(path),
+		stopUsageCh:  make(chan struct{}),
+		diskMount:    mountinfo.IsLikelyMountPoint(path),
+		bucketsSizes: make(map[string]uint64),
 	}
 
 	if !p.diskMount {
 		go p.diskUsage(GlobalServiceDoneCh)
 	}
+
+	go p.diskStats(GlobalServiceDoneCh)
 
 	// Success.
 	return p, nil
@@ -371,6 +380,45 @@ func (s *posix) DiskInfo() (info DiskInfo, err error) {
 	}, nil
 }
 
+type DataInfo struct {
+	TotalXLJSONs          uint64
+	TotalVolumes          uint64
+	BucketsSizes          map[string]uint64
+	ObjectsSizesHistogram []uint64
+}
+
+func (s *posix) DataInfo() (info DataInfo, err error) {
+	defer func() {
+		if s != nil && err == errFaultyDisk {
+			atomic.AddInt32(&s.ioErrCount, 1)
+		}
+	}()
+
+	if s == nil {
+		return info, errFaultyDisk
+	}
+
+	if atomic.LoadInt32(&s.ioErrCount) > maxAllowedIOError {
+		return info, errFaultyDisk
+	}
+
+	totalXLJSONs := atomic.LoadUint64(&s.totalXLJSONs)
+	totalVolumes := atomic.LoadUint64(&s.totalVolumes)
+
+	bucketsSizes := make(map[string]uint64)
+	s.bucketsSizesMU.RLock()
+	for k, v := range s.bucketsSizes {
+		bucketsSizes[k] = v
+	}
+	s.bucketsSizesMU.RUnlock()
+
+	return DataInfo{
+		TotalXLJSONs: totalXLJSONs,
+		TotalVolumes: totalVolumes,
+		BucketsSizes: bucketsSizes,
+	}, nil
+}
+
 // getVolDir - will convert incoming volume names to
 // corresponding valid volume names on the backend in a platform
 // compatible way for all operating systems. If volume is not found
@@ -421,7 +469,7 @@ func (s *posix) diskUsage(doneCh chan struct{}) {
 	ticker := time.NewTicker(globalUsageCheckInterval)
 	defer ticker.Stop()
 
-	usageFn := func(ctx context.Context, entry string) error {
+	usageFn := func(ctx context.Context, base, entry string) error {
 		if globalHTTPServer != nil {
 			// Wait at max 1 minute for an inprogress request
 			// before proceeding to count the usage.
@@ -463,7 +511,7 @@ func (s *posix) diskUsage(doneCh chan struct{}) {
 			return
 		case <-time.After(globalUsageCheckInterval):
 			var usage uint64
-			usageFn = func(ctx context.Context, entry string) error {
+			usageFn = func(ctx context.Context, base, entry string) error {
 				if globalHTTPServer != nil {
 					// Wait at max 1 minute for an inprogress request
 					// before proceeding to count the usage.
@@ -494,6 +542,106 @@ func (s *posix) diskUsage(doneCh chan struct{}) {
 			}
 
 			atomic.StoreUint64(&s.totalUsed, usage)
+		}
+	}
+}
+
+func (s *posix) diskStats(doneCh chan struct{}) {
+	ticker := time.NewTicker(time.Second)
+
+	var totalXLJSONs, totalVolumes uint64
+	var bucketsSizes = make(map[string]uint64)
+
+	generateUsageFn := func(ctx context.Context, base string, realtimeUpdate bool) func(context.Context, string, string) error {
+		return func(ctx context.Context, base, entry string) error {
+			if globalHTTPServer != nil {
+				// Wait at max 1 minute for an inprogress request
+				// before proceeding to count the usage.
+				waitCount := 60
+				// Any requests in progress, delay the usage.
+				for globalHTTPServer.GetRequestCount() > 0 && waitCount > 0 {
+					waitCount--
+					time.Sleep(1 * time.Second)
+				}
+			}
+
+			select {
+			case <-s.stopUsageCh:
+				return errWalkAbort
+			default:
+				fi, err := os.Stat(entry)
+				if err != nil {
+					err = osErrToFSFileErr(err)
+					return err
+				}
+
+				prefix := strings.TrimPrefix(entry, base)
+				prefix = strings.TrimPrefix(prefix, "/")
+
+				switch strings.Count(prefix, "/") {
+				case 0:
+				case 1:
+					if strings.HasSuffix(prefix, "/") {
+						totalVolumes += 1
+						if realtimeUpdate {
+							atomic.AddUint64(&s.totalVolumes, 1)
+						}
+					}
+				default:
+					if strings.HasSuffix(prefix, "/xl.json") {
+						totalXLJSONs += 1
+						if realtimeUpdate {
+							atomic.AddUint64(&s.totalXLJSONs, 1)
+						}
+					}
+					bucketName := prefix[:strings.Index(prefix, "/")]
+					bucketsSizes[bucketName] += uint64(fi.Size())
+					if realtimeUpdate {
+						s.bucketsSizesMU.Lock()
+						s.bucketsSizes[bucketName] += uint64(fi.Size())
+						s.bucketsSizesMU.Unlock()
+					}
+				}
+
+				return nil
+			}
+		}
+	}
+
+	ctx := context.Background()
+
+	firstUsageFn := generateUsageFn(ctx, s.diskPath, true)
+	usageFn := generateUsageFn(ctx, s.diskPath, false)
+
+	for {
+		select {
+		case <-s.stopUsageCh:
+			return
+		case <-doneCh:
+			return
+		case <-ticker.C:
+			ticker.Stop()
+			totalXLJSONs = 0
+			totalVolumes = 0
+			bucketsSizes = make(map[string]uint64)
+
+			if err := getDiskUsage(context.Background(), s.diskPath, firstUsageFn); err != nil {
+				logger.LogIf(ctx, err)
+			}
+		case <-time.After(globalUsageCheckInterval):
+			totalXLJSONs = 0
+			totalVolumes = 0
+			bucketsSizes = make(map[string]uint64)
+
+			if err := getDiskUsage(context.Background(), s.diskPath, usageFn); err != nil {
+				logger.LogIf(ctx, err)
+			}
+
+			atomic.StoreUint64(&s.totalXLJSONs, totalXLJSONs)
+			atomic.StoreUint64(&s.totalVolumes, totalVolumes)
+			s.bucketsSizesMU.Lock()
+			s.bucketsSizes = bucketsSizes
+			s.bucketsSizesMU.Unlock()
 		}
 	}
 }
