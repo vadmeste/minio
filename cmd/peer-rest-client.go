@@ -570,6 +570,18 @@ func (client *peerRESTClient) SignalService(sig serviceSignal) error {
 	return nil
 }
 
+func (client *peerRESTClient) GetObjectLayerInfo() (map[int]ObjectLayerInfo, error) {
+	respBody, err := client.call(peerRESTMethodGetObjectLayerInfo, nil, nil, -1)
+	if err != nil {
+		return nil, err
+	}
+	defer http.DrainBody(respBody)
+
+	info := make(map[int]ObjectLayerInfo)
+	err = gob.NewDecoder(respBody).Decode(&info)
+	return info, err
+}
+
 func (client *peerRESTClient) BackgroundHealStatus() (madmin.BgHealState, error) {
 	respBody, err := client.call(peerRESTMethodBackgroundHealStatus, nil, nil, -1)
 	if err != nil {

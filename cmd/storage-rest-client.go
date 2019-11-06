@@ -147,6 +147,10 @@ func (client *storageRESTClient) IsOnline() bool {
 	return atomic.LoadInt32(&client.connected) == 1
 }
 
+func (client *storageRESTClient) IsLocal() bool {
+	return false
+}
+
 // LastError - returns the network error if any.
 func (client *storageRESTClient) LastError() error {
 	return client.lastError

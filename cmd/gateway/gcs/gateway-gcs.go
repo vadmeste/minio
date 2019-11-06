@@ -422,6 +422,10 @@ func (l *gcsGateway) StorageInfo(ctx context.Context) (si minio.StorageInfo) {
 	return si
 }
 
+func (l *gcsGateway) ObjectLayerInfo(ctx context.Context) minio.ObjectLayerInfo {
+	return minio.ObjectLayerInfo{}
+}
+
 // MakeBucketWithLocation - Create a new container on GCS backend.
 func (l *gcsGateway) MakeBucketWithLocation(ctx context.Context, bucket, location string) error {
 	bkt := l.client.Bucket(bucket)

@@ -33,6 +33,7 @@ const (
 	peerRESTMethodDeleteBucket              = "/deletebucket"
 	peerRESTMethodServerUpdate              = "/serverupdate"
 	peerRESTMethodSignalService             = "/signalservice"
+	peerRESTMethodGetObjectLayerInfo        = "/getobjectlayerinfo"
 	peerRESTMethodBackgroundHealStatus      = "/backgroundhealstatus"
 	peerRESTMethodBackgroundOpsStatus       = "/backgroundopsstatus"
 	peerRESTMethodGetLocks                  = "/getlocks"

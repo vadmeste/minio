@@ -245,6 +245,24 @@ func (sys *NotificationSys) LoadGroup(group string) []NotificationPeerErr {
 	return ng.Wait()
 }
 
+// ObjectLayerInfo - returns the object layer stats
+func (sys *NotificationSys) ObjectLayerInfo() []map[int]ObjectLayerInfo {
+	objInfos := make([]map[int]ObjectLayerInfo, len(sys.peerClients))
+	for idx, client := range sys.peerClients {
+		if client == nil {
+			continue
+		}
+		objInfo, err := client.GetObjectLayerInfo()
+		if err != nil {
+			logger.LogIf(context.Background(), err)
+		} else {
+			objInfos[idx] = objInfo
+		}
+	}
+
+	return objInfos
+}
+
 // BackgroundHealStatus - returns background heal status of all peers
 func (sys *NotificationSys) BackgroundHealStatus() []madmin.BgHealState {
 	states := make([]madmin.BgHealState, len(sys.peerClients))

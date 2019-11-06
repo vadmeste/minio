@@ -70,6 +70,32 @@ type StorageInfo struct {
 	}
 }
 
+type objectHistogramInterval struct {
+	name       string
+	start, end int64
+}
+
+var ObjectsHistogramIntervals = []objectHistogramInterval{
+	objectHistogramInterval{"LESS_THAN_1024_B", -1, 1024 - 1},
+	objectHistogramInterval{"BETWEEN_1024_B_AND_1_MB", 1024, 1024*1024 - 1},
+	objectHistogramInterval{"BETWEEN_1_MB_AND_10_MB", 1024 * 1024, 1024*1024*10 - 1},
+	objectHistogramInterval{"BETWEEN_10_MB_AND_64_MB", 1024 * 1024 * 10, 1024*1024*64 - 1},
+	objectHistogramInterval{"BETWEEN_64_MB_AND_128_MB", 1024 * 1024 * 64, 1024*1024*128 - 1},
+	objectHistogramInterval{"BETWEEN_128_MB_AND_512_MB", 1024 * 1024 * 128, 1024*1024*512 - 1},
+	objectHistogramInterval{"GREATER_THAN_512_MB", 1024 * 1024 * 512, -1},
+}
+
+type ObjectLayerInfo struct {
+	LastUpdate time.Time
+
+	ObjectsCount          uint64
+	TotalSize             uint64
+	ObjectsSizesHistogram map[string]uint64
+
+	BucketsCount uint64
+	BucketsSizes map[string]uint64
+}
+
 // BucketInfo - represents bucket metadata.
 type BucketInfo struct {
 	// Name of the bucket.

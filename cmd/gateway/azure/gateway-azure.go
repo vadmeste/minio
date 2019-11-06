@@ -456,6 +456,10 @@ func (a *azureObjects) StorageInfo(ctx context.Context) (si minio.StorageInfo) {
 	return si
 }
 
+func (a *azureObjects) ObjectLayerInfo(ctx context.Context) minio.ObjectLayerInfo {
+	return minio.ObjectLayerInfo{}
+}
+
 // MakeBucketWithLocation - Create a new container on azure backend.
 func (a *azureObjects) MakeBucketWithLocation(ctx context.Context, bucket, location string) error {
 	// Verify if bucket (container-name) is valid.

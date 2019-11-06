@@ -385,6 +385,7 @@ func serverMain(ctx *cli.Context) {
 		logger.StartupMessage(msg)
 	}
 
+	initObjLayerStats()
 	initDailyLifecycle()
 
 	if globalIsXL {

@@ -268,6 +268,58 @@ func (fs *FSObjects) StorageInfo(ctx context.Context) StorageInfo {
 	return storageInfo
 }
 
+func (fs *FSObjects) walkObjLayerInfo(ctx context.Context, info *ObjectLayerInfo, bucket, prefix string) {
+	entries, err := readDir(pathJoin(fs.fsPath, bucket, prefix))
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if strings.HasSuffix(entry, "/") {
+			fs.walkObjLayerInfo(ctx, info, bucket, pathJoin(prefix, entry))
+		} else {
+			info.ObjectsCount += 1
+
+			// Stat the file to get file size.
+			fi, err := fsStatFile(ctx, pathJoin(fs.fsPath, bucket, prefix, entry))
+			if err != nil {
+				continue
+			}
+			size := uint64(fi.Size())
+			info.TotalSize += size
+			info.BucketsSizes[bucket] += size
+			info.ObjectsSizesHistogram[objHisto(size)] += 1
+		}
+	}
+
+}
+
+func (fs *FSObjects) ObjectLayerInfo(ctx context.Context) ObjectLayerInfo {
+	buckets, err := readDir(fs.fsPath)
+	if err != nil {
+		return ObjectLayerInfo{}
+	}
+
+	var info = ObjectLayerInfo{
+		BucketsCount:          uint64(len(buckets)),
+		BucketsSizes:          make(map[string]uint64),
+		ObjectsSizesHistogram: make(map[string]uint64),
+	}
+
+	for _, bucket := range buckets {
+		bucket = strings.TrimSuffix(bucket, "/")
+
+		// Ignore all reserved bucket names and invalid bucket names.
+		if isReservedOrInvalidBucket(bucket, false) {
+			continue
+		}
+		fs.walkObjLayerInfo(ctx, &info, bucket, "")
+	}
+
+	info.LastUpdate = UTCNow()
+	return info
+}
+
 /// Bucket operations
 
 // getBucketDir - will convert incoming bucket names to

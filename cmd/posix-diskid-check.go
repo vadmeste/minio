@@ -38,6 +38,10 @@ func (p *posixDiskIDCheck) IsOnline() bool {
 	return storedDiskID == p.diskID
 }
 
+func (p *posixDiskIDCheck) IsLocal() bool {
+	return true
+}
+
 func (p *posixDiskIDCheck) LastError() error {
 	return p.storage.LastError()
 }

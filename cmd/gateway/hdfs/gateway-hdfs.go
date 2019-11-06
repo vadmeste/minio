@@ -232,6 +232,10 @@ func (n *hdfsObjects) StorageInfo(ctx context.Context) minio.StorageInfo {
 	return sinfo
 }
 
+func (n *hdfsObjects) ObjectLayerInfo(ctx context.Context) minio.ObjectLayerInfo {
+	return minio.ObjectLayerInfo{}
+}
+
 // hdfsObjects implements gateway for Minio and S3 compatible object storage servers.
 type hdfsObjects struct {
 	minio.GatewayUnsupported

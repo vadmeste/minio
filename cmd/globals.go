@@ -19,6 +19,7 @@ package cmd
 import (
 	"crypto/x509"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/minio/minio-go/v6/pkg/set"
@@ -255,6 +256,9 @@ var (
 	// The always present healing routine ready to heal objects
 	globalBackgroundHealRoutine *healRoutine
 	globalBackgroundHealState   *allHealState
+
+	globalObjectLayerInfo   map[int]ObjectLayerInfo
+	globalObjectLayerInfoMu sync.RWMutex
 
 	// Only enabled when one of the sub-systems fail
 	// to initialize, this allows for administrators to

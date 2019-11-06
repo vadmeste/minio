@@ -303,7 +303,7 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	writeSuccessResponseJSON(w, jsonBytes)
 }
 
-// ServerInfoHandler - GET /minio/admin/v2/storageinfo
+// StorageInfoHandler - GET /minio/admin/v2/storageinfo
 // ----------
 // Get server information
 func (a adminAPIHandlers) StorageInfoHandler(w http.ResponseWriter, r *http.Request) {
@@ -317,6 +317,66 @@ func (a adminAPIHandlers) StorageInfoHandler(w http.ResponseWriter, r *http.Requ
 
 	// Marshal API response
 	jsonBytes, err := json.Marshal(storageInfo)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	// Reply with storage information (across nodes in a
+	// distributed setup) as json.
+	writeSuccessResponseJSON(w, jsonBytes)
+
+}
+
+// ObjectLayerInfoHandler - GET /minio/admin/v1/objectlayerinfo
+// ----------
+// Get server information
+func (a adminAPIHandlers) ObjectLayerInfoHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "ObjectLayerInfo")
+	objectAPI, _ := validateAdminReq(ctx, w, r, iampolicy.ListServerInfoAdminAction)
+	if objectAPI == nil {
+		return
+	}
+
+	lastRecentObjLayerInfo := make(map[int]ObjectLayerInfo)
+
+	var allObjLayerInfo []map[int]ObjectLayerInfo
+	allObjLayerInfo = append(allObjLayerInfo, safeCopyObjectLayerInfo())
+	allObjLayerInfo = append(allObjLayerInfo, globalNotificationSys.ObjectLayerInfo()...)
+
+	for _, objInfo := range allObjLayerInfo {
+		for k, v := range objInfo {
+			if v.LastUpdate.After(lastRecentObjLayerInfo[k].LastUpdate) {
+				lastRecentObjLayerInfo[k] = v
+			}
+		}
+	}
+
+	var aggregatedInfo = ObjectLayerInfo{
+		BucketsSizes:          make(map[string]uint64),
+		ObjectsSizesHistogram: make(map[string]uint64),
+	}
+
+	for _, v := range lastRecentObjLayerInfo {
+		if aggregatedInfo.LastUpdate.Before(v.LastUpdate) {
+			aggregatedInfo.LastUpdate = v.LastUpdate
+		}
+		aggregatedInfo.TotalSize += v.TotalSize
+		aggregatedInfo.ObjectsCount += v.ObjectsCount
+		if aggregatedInfo.BucketsCount < v.BucketsCount {
+			aggregatedInfo.BucketsCount = v.BucketsCount
+		}
+
+		for bucketName, bucketSize := range v.BucketsSizes {
+			aggregatedInfo.BucketsSizes[bucketName] += bucketSize
+		}
+		for histogramInterval, count := range v.ObjectsSizesHistogram {
+			aggregatedInfo.ObjectsSizesHistogram[histogramInterval] += count
+		}
+	}
+
+	// Marshal API response
+	jsonBytes, err := json.Marshal(aggregatedInfo)
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return

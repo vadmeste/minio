@@ -439,6 +439,28 @@ func (s *xlSets) StorageInfo(ctx context.Context) StorageInfo {
 	return storageInfo
 }
 
+func (s *xlSets) ObjectLayerInfo(ctx context.Context) (info ObjectLayerInfo) {
+	info.ObjectsSizesHistogram = make(map[string]uint64)
+	info.BucketsSizes = make(map[string]uint64)
+
+	for index := range s.sets {
+		setInfo := s.sets[index].ObjectLayerInfo(ctx)
+		info.ObjectsCount += setInfo.ObjectsCount
+		info.TotalSize += setInfo.TotalSize
+		if setInfo.BucketsCount > info.BucketsCount {
+			info.BucketsCount = setInfo.BucketsCount
+		}
+		for bucket, size := range setInfo.BucketsSizes {
+			info.BucketsSizes[bucket] += size
+		}
+		for i, count := range setInfo.ObjectsSizesHistogram {
+			info.ObjectsSizesHistogram[i] += count
+		}
+	}
+
+	return
+}
+
 // Shutdown shutsdown all erasure coded sets in parallel
 // returns error upon first error.
 func (s *xlSets) Shutdown(ctx context.Context) error {
