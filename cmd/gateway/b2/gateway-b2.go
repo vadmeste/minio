@@ -239,6 +239,10 @@ func (l *b2Objects) StorageInfo(ctx context.Context) (si minio.StorageInfo) {
 	return si
 }
 
+func (l *b2Objects) ObjectLayerInfo(ctx context.Context) minio.ObjectLayerInfo {
+	return minio.ObjectLayerInfo{}
+}
+
 // MakeBucket creates a new container on B2 backend.
 func (l *b2Objects) MakeBucketWithLocation(ctx context.Context, bucket, location string) error {
 	// location is ignored for B2 backend.

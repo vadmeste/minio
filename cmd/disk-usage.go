@@ -23,14 +23,14 @@ import (
 // getDiskUsage walks the file tree rooted at root, calling usageFn
 // for each file or directory in the tree, including root.
 func getDiskUsage(ctx context.Context, root string, usageFn usageFunc) error {
-	return walk(ctx, root+SlashSeparator, usageFn)
+	return walk(ctx, root, root+SlashSeparator, usageFn)
 }
 
-type usageFunc func(ctx context.Context, entry string) error
+type usageFunc func(ctx context.Context, base, entry string) error
 
 // walk recursively descends path, calling walkFn.
-func walk(ctx context.Context, path string, usageFn usageFunc) error {
-	if err := usageFn(ctx, path); err != nil {
+func walk(ctx context.Context, base, path string, usageFn usageFunc) error {
+	if err := usageFn(ctx, base, path); err != nil {
 		return err
 	}
 
@@ -40,12 +40,12 @@ func walk(ctx context.Context, path string, usageFn usageFunc) error {
 
 	entries, err := readDir(path)
 	if err != nil {
-		return usageFn(ctx, path)
+		return usageFn(ctx, base, path)
 	}
 
 	for _, entry := range entries {
 		fname := pathJoin(path, entry)
-		if err = walk(ctx, fname, usageFn); err != nil {
+		if err = walk(ctx, base, fname, usageFn); err != nil {
 			return err
 		}
 	}

@@ -226,6 +226,67 @@ func (adm *AdminClient) StorageInfo() (StorageInfo, error) {
 	return storageInfo, nil
 }
 
+type objectHistogramInterval struct {
+	name       string
+	start, end int64
+}
+
+var objHisto1 = objectHistogramInterval{"1", -1, 1024 - 1}
+var objHisto2 = objectHistogramInterval{"2", 1024, 1024*1024 - 1}
+var objHisto3 = objectHistogramInterval{"3", 1024 * 1024, 1024*1024*10 - 1}
+var objHisto4 = objectHistogramInterval{"4", 1024 * 1024 * 10, 1024*1024*64 - 1}
+var objHisto5 = objectHistogramInterval{"5", 1024 * 1024 * 64, 1024*1024*128 - 1}
+var objHisto6 = objectHistogramInterval{"6", 1024 * 1024 * 128, 1024*1024*512 - 1}
+var objHisto7 = objectHistogramInterval{"7", 1024 * 1024 * 512, -1}
+
+var ObjectsHistogramIntervals = []objectHistogramInterval{
+	objHisto1,
+	objHisto2,
+	objHisto3,
+	objHisto4,
+	objHisto5,
+	objHisto6,
+	objHisto7,
+}
+
+type ObjectLayerInfo struct {
+	ObjectsCount          uint64
+	TotalSize             uint64
+	ObjectsSizesHistogram map[string]uint64
+
+	BucketsCount uint64
+	BucketsSizes map[string]uint64
+}
+
+// ObjectLayerInfo
+func (adm *AdminClient) ObjectLayerInfo() (ObjectLayerInfo, error) {
+	resp, err := adm.executeMethod("GET", requestData{relPath: adminAPIPrefix + "/objectlayerinfo"})
+	defer closeResponse(resp)
+	if err != nil {
+		return ObjectLayerInfo{}, err
+	}
+
+	// Check response http status code
+	if resp.StatusCode != http.StatusOK {
+		return ObjectLayerInfo{}, httpRespToErrorResponse(resp)
+	}
+
+	// Unmarshal the server's json response
+	var objectLayerInfo ObjectLayerInfo
+
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return ObjectLayerInfo{}, err
+	}
+
+	err = json.Unmarshal(respBytes, &objectLayerInfo)
+	if err != nil {
+		return ObjectLayerInfo{}, err
+	}
+
+	return objectLayerInfo, nil
+}
+
 // ServerDrivesPerfInfo holds informantion about address and write speed of
 // all drives in a single server node
 type ServerDrivesPerfInfo struct {

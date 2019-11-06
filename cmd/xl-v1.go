@@ -203,3 +203,78 @@ func getStorageInfo(disks []StorageAPI) StorageInfo {
 func (xl xlObjects) StorageInfo(ctx context.Context) StorageInfo {
 	return getStorageInfo(xl.getDisks())
 }
+
+func objHisto(usize uint64) string {
+	size := int64(usize)
+
+	var interval objectHistogramInterval
+	for _, interval = range ObjectsHistogramIntervals {
+		var cond1, cond2 bool
+		if size >= interval.start || interval.start == -1 {
+			cond1 = true
+		}
+		if size <= interval.end || interval.end == -1 {
+			cond2 = true
+		}
+		if cond1 && cond2 {
+			return interval.name
+		}
+	}
+	// This would be the last element
+	return interval.name
+}
+
+func recursiv(ctx context.Context, disk StorageAPI, info *ObjectLayerInfo, bucketName, prefix string) {
+	entries, err := disk.ListDir(bucketName, prefix, -1, xlMetaJSONFile)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry, "/") {
+			recursiv(ctx, disk, info, bucketName, pathJoin(prefix, entry))
+		} else {
+			info.ObjectsCount += 1
+			meta, err := readXLMeta(ctx, disk, bucketName, pathJoin(prefix, entry))
+			if err != nil {
+				continue
+			}
+			info.TotalSize += uint64(meta.Stat.Size)
+			info.BucketsSizes[bucketName] += uint64(meta.Stat.Size)
+			info.ObjectsSizesHistogram[objHisto(uint64(meta.Stat.Size))] += 1
+		}
+	}
+	return
+}
+
+func (xl xlObjects) ObjectLayerInfo(ctx context.Context) ObjectLayerInfo {
+	var disk StorageAPI
+	for _, d := range xl.getDisks() {
+		if d == nil {
+			continue
+		}
+		if d.IsOnline() {
+			disk = d
+			break
+		}
+	}
+	if disk == nil {
+		return ObjectLayerInfo{}
+	}
+
+	volsInfo, err := disk.ListVols()
+	if err != nil {
+		return ObjectLayerInfo{}
+	}
+
+	var info = ObjectLayerInfo{
+		BucketsCount:          uint64(len(volsInfo)),
+		BucketsSizes:          make(map[string]uint64),
+		ObjectsSizesHistogram: make(map[string]uint64),
+	}
+
+	for _, vol := range volsInfo {
+		recursiv(ctx, disk, &info, vol.Name, "")
+	}
+
+	return info
+}

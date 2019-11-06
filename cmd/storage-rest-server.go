@@ -112,6 +112,19 @@ func (s *storageRESTServer) DiskInfoHandler(w http.ResponseWriter, r *http.Reque
 	gob.NewEncoder(w).Encode(info)
 }
 
+func (s *storageRESTServer) DataInfoHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.IsValid(w, r) {
+		return
+	}
+	info, err := s.storage.DataInfo()
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+	defer w.(http.Flusher).Flush()
+	gob.NewEncoder(w).Encode(info)
+}
+
 // MakeVolHandler - make a volume.
 func (s *storageRESTServer) MakeVolHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.IsValid(w, r) {

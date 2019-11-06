@@ -32,6 +32,7 @@ type StorageAPI interface {
 	SetDiskID(id string)
 
 	DiskInfo() (info DiskInfo, err error)
+	DataInfo() (info DataInfo, err error)
 
 	// Volume operations.
 	MakeVol(volume string) (err error)
