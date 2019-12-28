@@ -303,24 +303,24 @@ func lookupConfigs(s config.Config) {
 		}
 	}
 
-	etcdCfg, err := xetcd.LookupConfig(s[config.EtcdSubSys][config.Default], globalRootCAs)
+	globalEtcdConfig, err = xetcd.LookupConfig(s[config.EtcdSubSys][config.Default], globalRootCAs)
 	if err != nil {
 		logger.LogIf(ctx, fmt.Errorf("Unable to initialize etcd config: %w", err))
 	}
 
-	if etcdCfg.Enabled {
-		globalEtcdClient, err = xetcd.New(etcdCfg)
+	if globalEtcdConfig.Enabled {
+		globalEtcdClient, err = xetcd.New(globalEtcdConfig)
 		if err != nil {
 			logger.LogIf(ctx, fmt.Errorf("Unable to initialize etcd config: %w", err))
 		}
 	}
 
 	if len(globalDomainNames) != 0 && !globalDomainIPs.IsEmpty() && globalEtcdClient != nil {
-		globalDNSConfig, err = dns.NewCoreDNS(etcdCfg.Config,
+		globalDNSConfig, err = dns.NewCoreDNS(globalEtcdConfig.Config,
 			dns.DomainNames(globalDomainNames),
 			dns.DomainIPs(globalDomainIPs),
 			dns.DomainPort(globalMinioPort),
-			dns.CoreDNSPath(etcdCfg.CoreDNSPath),
+			dns.CoreDNSPath(globalEtcdConfig.CoreDNSPath),
 		)
 		if err != nil {
 			logger.LogIf(ctx, fmt.Errorf("Unable to initialize DNS config for %s: %w",
