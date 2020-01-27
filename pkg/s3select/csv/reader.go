@@ -19,12 +19,12 @@ package csv
 import (
 	"bufio"
 	"bytes"
-	"encoding/csv"
 	"fmt"
 	"io"
 	"runtime"
 	"sync"
 
+	csv "github.com/minio/minio/pkg/csvparser"
 	"github.com/minio/minio/pkg/s3select/sql"
 )
 
@@ -294,6 +294,7 @@ func NewReader(readCloser io.ReadCloser, args *ReaderArgs) (*Reader, error) {
 		ret := csv.NewReader(r)
 		ret.Comma = []rune(args.FieldDelimiter)[0]
 		ret.Comment = []rune(args.CommentCharacter)[0]
+		ret.Quote = []rune(args.QuoteCharacter)[0]
 		ret.FieldsPerRecord = -1
 		// If LazyQuotes is true, a quote may appear in an unquoted field and a
 		// non-doubled quote may appear in a quoted field.

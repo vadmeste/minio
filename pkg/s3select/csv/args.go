@@ -88,20 +88,23 @@ func (args *ReaderArgs) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 		return fmt.Errorf("invalid FieldDelimiter '%v'", parsedArgs.FieldDelimiter)
 	}
 
+	// QuoteCharacter & QuoteEscapeCharacter should be the same for the moment
+	if parsedArgs.QuoteCharacter != parsedArgs.QuoteEscapeCharacter {
+		return fmt.Errorf("unsupported different quote and quote escape character")
+	}
+
 	switch parsedArgs.QuoteCharacter {
 	case "":
 		parsedArgs.QuoteCharacter = defaultQuoteCharacter
-	case defaultQuoteCharacter:
 	default:
-		return fmt.Errorf("unsupported QuoteCharacter '%v'", parsedArgs.QuoteCharacter)
+		// TODO: implement validation if possible (valid utf8 character ?)
 	}
 
 	switch parsedArgs.QuoteEscapeCharacter {
 	case "":
-		parsedArgs.QuoteEscapeCharacter = defaultQuoteEscapeCharacter
-	case defaultQuoteEscapeCharacter:
+		parsedArgs.QuoteEscapeCharacter = defaultQuoteCharacter
 	default:
-		return fmt.Errorf("unsupported QuoteEscapeCharacter '%v'", parsedArgs.QuoteEscapeCharacter)
+		// TODO: implement validation if possible (valid utf8 character ?)
 	}
 
 	switch parsedArgs.CommentCharacter {
@@ -170,20 +173,23 @@ func (args *WriterArgs) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 		return fmt.Errorf("invalid FieldDelimiter '%v'", parsedArgs.FieldDelimiter)
 	}
 
+	// QuoteCharacter & QuoteEscapeCharacter should be the same for the moment
+	if parsedArgs.QuoteCharacter != parsedArgs.QuoteEscapeCharacter {
+		return fmt.Errorf("unsupported different quote and quote escape character")
+	}
+
 	switch parsedArgs.QuoteCharacter {
 	case "":
 		parsedArgs.QuoteCharacter = defaultQuoteCharacter
-	case defaultQuoteCharacter:
 	default:
-		return fmt.Errorf("unsupported QuoteCharacter '%v'", parsedArgs.QuoteCharacter)
+		// TODO: implement validation if possible (valid utf8 character ?)
 	}
 
 	switch parsedArgs.QuoteEscapeCharacter {
 	case "":
-		parsedArgs.QuoteEscapeCharacter = defaultQuoteEscapeCharacter
-	case defaultQuoteEscapeCharacter:
+		parsedArgs.QuoteEscapeCharacter = defaultQuoteCharacter
 	default:
-		return fmt.Errorf("unsupported QuoteEscapeCharacter '%v'", parsedArgs.QuoteEscapeCharacter)
+		// TODO: implement validation if possible (valid utf8 character ?)
 	}
 
 	*args = WriterArgs(parsedArgs)

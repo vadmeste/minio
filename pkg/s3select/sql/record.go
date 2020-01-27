@@ -36,11 +36,16 @@ const (
 	SelectFmtParquet
 )
 
+type CSVOpts struct {
+	FieldDelimiter rune
+	Quote          rune
+}
+
 // Record - is a type containing columns and their values.
 type Record interface {
 	Get(name string) (*Value, error)
 	Set(name string, value *Value) error
-	WriteCSV(writer io.Writer, fieldDelimiter rune) error
+	WriteCSV(writer io.Writer, opts CSVOpts) error
 	WriteJSON(writer io.Writer) error
 
 	// Clone the record and if possible use the destination provided.
