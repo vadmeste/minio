@@ -144,10 +144,19 @@ func getMappedPolicyPath(name string, userType IAMUserType, isGroup bool) string
 type UserIdentity struct {
 	Version     int              `json:"version"`
 	Credentials auth.Credentials `json:"credentials"`
+	ParentUser  string           `json:"-"`
 }
 
 func newUserIdentity(creds auth.Credentials) UserIdentity {
 	return UserIdentity{Version: 1, Credentials: creds}
+}
+
+func (u UserIdentity) IsTemp() bool {
+	return u.Credentials.SessionToken != "" && !u.IsServiceAccount()
+}
+
+func (u UserIdentity) IsServiceAccount() bool {
+	return u.ParentUser != ""
 }
 
 // GroupInfo contains info about a group
@@ -180,7 +189,7 @@ type IAMSys struct {
 	// map of policy names to policy definitions
 	iamPolicyDocsMap map[string]iampolicy.Policy
 	// map of usernames to credentials
-	iamUsersMap map[string]auth.Credentials
+	iamUsersMap map[string]UserIdentity
 	// map of group names to group info
 	iamGroupsMap map[string]GroupInfo
 	// map of user names to groups they are a member of
@@ -210,8 +219,8 @@ type IAMStorageAPI interface {
 	loadPolicyDoc(policy string, m map[string]iampolicy.Policy) error
 	loadPolicyDocs(m map[string]iampolicy.Policy) error
 
-	loadUser(user string, userType IAMUserType, m map[string]auth.Credentials) error
-	loadUsers(userType IAMUserType, m map[string]auth.Credentials) error
+	loadUser(user string, userType IAMUserType, m map[string]UserIdentity) error
+	loadUsers(userType IAMUserType, m map[string]UserIdentity) error
 
 	loadGroup(group string, m map[string]GroupInfo) error
 	loadGroups(m map[string]GroupInfo) error
@@ -567,8 +576,8 @@ func (sys *IAMSys) DeleteUser(accessKey string) error {
 	for _, u := range sys.iamUsersMap {
 		if u.IsServiceAccount() {
 			if u.ParentUser == accessKey {
-				_ = sys.store.deleteUserIdentity(u.AccessKey, srvAccUser)
-				delete(sys.iamUsersMap, u.AccessKey)
+				_ = sys.store.deleteUserIdentity(u.Credentials.AccessKey, srvAccUser)
+				delete(sys.iamUsersMap, u.Credentials.AccessKey)
 			}
 		}
 	}
@@ -620,7 +629,7 @@ func (sys *IAMSys) SetTempUser(accessKey string, cred auth.Credentials, policyNa
 		return err
 	}
 
-	sys.iamUsersMap[accessKey] = cred
+	sys.iamUsersMap[accessKey] = u
 	return nil
 }
 
@@ -645,7 +654,7 @@ func (sys *IAMSys) ListUsers() (map[string]madmin.UserInfo, error) {
 			users[k] = madmin.UserInfo{
 				PolicyName: sys.iamUserPolicyMap[k].Policy,
 				Status: func() madmin.AccountStatus {
-					if v.IsValid() {
+					if v.Credentials.IsValid() {
 						return madmin.AccountEnabled
 					}
 					return madmin.AccountDisabled
@@ -726,7 +735,7 @@ func (sys *IAMSys) GetUserInfo(name string) (u madmin.UserInfo, err error) {
 	u = madmin.UserInfo{
 		PolicyName: sys.iamUserPolicyMap[name].Policy,
 		Status: func() madmin.AccountStatus {
-			if creds.IsValid() {
+			if creds.Credentials.IsValid() {
 				return madmin.AccountEnabled
 			}
 			return madmin.AccountDisabled
@@ -754,18 +763,18 @@ func (sys *IAMSys) SetUserStatus(accessKey string, status madmin.AccountStatus) 
 		return errIAMActionNotAllowed
 	}
 
-	cred, ok := sys.iamUsersMap[accessKey]
+	user, ok := sys.iamUsersMap[accessKey]
 	if !ok {
 		return errNoSuchUser
 	}
 
-	if cred.IsTemp() {
+	if user.IsTemp() {
 		return errIAMActionNotAllowed
 	}
 
 	uinfo := newUserIdentity(auth.Credentials{
 		AccessKey: accessKey,
-		SecretKey: cred.SecretKey,
+		SecretKey: user.Credentials.SecretKey,
 		Status: func() string {
 			if status == madmin.AccountEnabled {
 				return config.EnableOn
@@ -782,7 +791,7 @@ func (sys *IAMSys) SetUserStatus(accessKey string, status madmin.AccountStatus) 
 		return err
 	}
 
-	sys.iamUsersMap[accessKey] = uinfo.Credentials
+	sys.iamUsersMap[accessKey] = uinfo
 	return nil
 }
 
@@ -842,14 +851,14 @@ func (sys *IAMSys) NewServiceAccount(ctx context.Context, parentUser, sessionPol
 		return auth.Credentials{}, err
 	}
 
-	cred.ParentUser = parentUser
 	u := newUserIdentity(cred)
+	u.ParentUser = parentUser
 
 	if err := sys.store.saveUserIdentity(u.Credentials.AccessKey, srvAccUser, u); err != nil {
 		return auth.Credentials{}, err
 	}
 
-	sys.iamUsersMap[u.Credentials.AccessKey] = u.Credentials
+	sys.iamUsersMap[u.Credentials.AccessKey] = u
 
 	return cred, nil
 }
@@ -872,16 +881,16 @@ func (sys *IAMSys) GetServiceAccount(ctx context.Context, serviceAccountAccessKe
 		return auth.Credentials{}, errServerNotInitialized
 	}
 
-	cr, ok := sys.iamUsersMap[serviceAccountAccessKey]
+	user, ok := sys.iamUsersMap[serviceAccountAccessKey]
 	if !ok {
 		return auth.Credentials{}, errNoSuchUser
 	}
 
-	if !cr.IsServiceAccount() {
+	if !user.IsServiceAccount() {
 		return auth.Credentials{}, errIAMActionNotAllowed
 	}
 
-	return cr, nil
+	return user.Credentials, nil
 }
 
 // SetUser - set user credentials and policy.
@@ -908,8 +917,8 @@ func (sys *IAMSys) SetUser(accessKey string, uinfo madmin.UserInfo) error {
 		return errServerNotInitialized
 	}
 
-	cr, ok := sys.iamUsersMap[accessKey]
-	if cr.IsTemp() && ok {
+	user, ok := sys.iamUsersMap[accessKey]
+	if user.IsTemp() && ok {
 		return errIAMActionNotAllowed
 	}
 
@@ -917,7 +926,7 @@ func (sys *IAMSys) SetUser(accessKey string, uinfo madmin.UserInfo) error {
 		return err
 	}
 
-	sys.iamUsersMap[accessKey] = u.Credentials
+	sys.iamUsersMap[accessKey] = u
 
 	// Set policy if specified.
 	if uinfo.PolicyName != "" {
@@ -940,7 +949,7 @@ func (sys *IAMSys) SetUserSecretKey(accessKey string, secretKey string) error {
 		return errIAMActionNotAllowed
 	}
 
-	cred, ok := sys.iamUsersMap[accessKey]
+	u, ok := sys.iamUsersMap[accessKey]
 	if !ok {
 		return errNoSuchUser
 	}
@@ -949,13 +958,11 @@ func (sys *IAMSys) SetUserSecretKey(accessKey string, secretKey string) error {
 		return errServerNotInitialized
 	}
 
-	cred.SecretKey = secretKey
-	u := newUserIdentity(cred)
+	u.Credentials.SecretKey = secretKey
 	if err := sys.store.saveUserIdentity(accessKey, regularUser, u); err != nil {
 		return err
 	}
 
-	sys.iamUsersMap[accessKey] = cred
 	return nil
 }
 
@@ -964,8 +971,8 @@ func (sys *IAMSys) GetUser(accessKey string) (cred auth.Credentials, ok bool) {
 	sys.RLock()
 	defer sys.RUnlock()
 
-	cred, ok = sys.iamUsersMap[accessKey]
-	return cred, ok && cred.IsValid()
+	user, ok := sys.iamUsersMap[accessKey]
+	return user.Credentials, ok && user.Credentials.IsValid()
 }
 
 // AddUsersToGroup - adds users to a group, creating the group if
@@ -1426,7 +1433,7 @@ func (sys *IAMSys) policyDBGet(name string, isGroup bool) ([]string, error) {
 	// user and the groups they are member of are enabled.
 	if u, ok := sys.iamUsersMap[name]; !ok {
 		return nil, errNoSuchUser
-	} else if u.Status == statusDisabled {
+	} else if u.Credentials.Status == statusDisabled {
 		// User is disabled, so we return no policy - this
 		// ensures the request is denied.
 		return nil, nil
@@ -1807,7 +1814,7 @@ func NewIAMSys() *IAMSys {
 
 	return &IAMSys{
 		usersSysType:            utype,
-		iamUsersMap:             make(map[string]auth.Credentials),
+		iamUsersMap:             make(map[string]UserIdentity),
 		iamPolicyDocsMap:        make(map[string]iampolicy.Policy),
 		iamUserPolicyMap:        make(map[string]MappedPolicy),
 		iamGroupsMap:            make(map[string]GroupInfo),

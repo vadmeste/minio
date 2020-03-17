@@ -305,7 +305,7 @@ func (ies *IAMEtcdStore) loadPolicyDocs(m map[string]iampolicy.Policy) error {
 	return nil
 }
 
-func (ies *IAMEtcdStore) loadUser(user string, userType IAMUserType, m map[string]auth.Credentials) error {
+func (ies *IAMEtcdStore) loadUser(user string, userType IAMUserType, m map[string]UserIdentity) error {
 	var u UserIdentity
 	err := ies.loadIAMConfig(&u, getUserIdentityPath(user, userType))
 	if err != nil {
@@ -324,7 +324,7 @@ func (ies *IAMEtcdStore) loadUser(user string, userType IAMUserType, m map[strin
 	}
 
 	// If this is a service account, rotate the session key if we are changing the server creds
-	if globalOldCred.IsValid() && u.Credentials.IsServiceAccount() {
+	if globalOldCred.IsValid() && u.IsServiceAccount() {
 		if !globalOldCred.Equal(globalActiveCred) {
 			m := jwtgo.MapClaims{}
 			stsTokenCallback := func(t *jwtgo.Token) (interface{}, error) {
@@ -346,12 +346,12 @@ func (ies *IAMEtcdStore) loadUser(user string, userType IAMUserType, m map[strin
 	if u.Credentials.AccessKey == "" {
 		u.Credentials.AccessKey = user
 	}
-	m[user] = u.Credentials
+	m[user] = u
 	return nil
 
 }
 
-func (ies *IAMEtcdStore) loadUsers(userType IAMUserType, m map[string]auth.Credentials) error {
+func (ies *IAMEtcdStore) loadUsers(userType IAMUserType, m map[string]UserIdentity) error {
 	var basePrefix string
 	switch userType {
 	case srvAccUser:
@@ -468,7 +468,7 @@ func (ies *IAMEtcdStore) loadMappedPolicies(userType IAMUserType, isGroup bool, 
 }
 
 func (ies *IAMEtcdStore) loadAll(sys *IAMSys, objectAPI ObjectLayer) error {
-	iamUsersMap := make(map[string]auth.Credentials)
+	iamUsersMap := make(map[string]UserIdentity)
 	iamGroupsMap := make(map[string]GroupInfo)
 	iamPolicyDocsMap := make(map[string]iampolicy.Policy)
 	iamUserPolicyMap := make(map[string]MappedPolicy)

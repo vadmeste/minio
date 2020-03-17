@@ -90,7 +90,6 @@ type Credentials struct {
 	Expiration   time.Time `xml:"Expiration" json:"expiration,omitempty"`
 	SessionToken string    `xml:"SessionToken" json:"sessionToken,omitempty"`
 	Status       string    `xml:"-" json:"status,omitempty"`
-	ParentUser   string    `xml:"-" json:"parentUser,omitempty"`
 }
 
 func (cred Credentials) String() string {
@@ -116,16 +115,6 @@ func (cred Credentials) IsExpired() bool {
 	}
 
 	return cred.Expiration.Before(time.Now().UTC())
-}
-
-// IsTemp - returns whether credential is temporary or not.
-func (cred Credentials) IsTemp() bool {
-	return cred.SessionToken != "" && cred.ParentUser == ""
-}
-
-// IsServiceAccount - returns whether credential is a service account or not
-func (cred Credentials) IsServiceAccount() bool {
-	return cred.ParentUser != ""
 }
 
 // IsValid - returns whether credential is valid or not.

@@ -295,7 +295,7 @@ func (iamOS *IAMObjectStore) loadPolicyDocs(m map[string]iampolicy.Policy) error
 	return nil
 }
 
-func (iamOS *IAMObjectStore) loadUser(user string, userType IAMUserType, m map[string]auth.Credentials) error {
+func (iamOS *IAMObjectStore) loadUser(user string, userType IAMUserType, m map[string]UserIdentity) error {
 	objectAPI := iamOS.getObjectAPI()
 	if objectAPI == nil {
 		return errServerNotInitialized
@@ -318,7 +318,7 @@ func (iamOS *IAMObjectStore) loadUser(user string, userType IAMUserType, m map[s
 	}
 
 	// If this is a service account, rotate the session key if needed
-	if globalOldCred.IsValid() && u.Credentials.IsServiceAccount() {
+	if globalOldCred.IsValid() && u.IsServiceAccount() {
 		if !globalOldCred.Equal(globalActiveCred) {
 			m := jwtgo.MapClaims{}
 			stsTokenCallback := func(t *jwtgo.Token) (interface{}, error) {
@@ -340,11 +340,11 @@ func (iamOS *IAMObjectStore) loadUser(user string, userType IAMUserType, m map[s
 	if u.Credentials.AccessKey == "" {
 		u.Credentials.AccessKey = user
 	}
-	m[user] = u.Credentials
+	m[user] = u
 	return nil
 }
 
-func (iamOS *IAMObjectStore) loadUsers(userType IAMUserType, m map[string]auth.Credentials) error {
+func (iamOS *IAMObjectStore) loadUsers(userType IAMUserType, m map[string]UserIdentity) error {
 	objectAPI := iamOS.getObjectAPI()
 	if objectAPI == nil {
 		return errServerNotInitialized
@@ -486,7 +486,7 @@ func (iamOS *IAMObjectStore) loadAll(sys *IAMSys, objectAPI ObjectLayer) error {
 	iamOS.setObjectAPI(objectAPI)
 	defer iamOS.clearObjectAPI()
 
-	iamUsersMap := make(map[string]auth.Credentials)
+	iamUsersMap := make(map[string]UserIdentity)
 	iamGroupsMap := make(map[string]GroupInfo)
 	iamPolicyDocsMap := make(map[string]iampolicy.Policy)
 	iamUserPolicyMap := make(map[string]MappedPolicy)
