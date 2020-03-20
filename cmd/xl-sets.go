@@ -950,7 +950,10 @@ func isTruncated(entryChs []FileInfoCh, entries []FileInfo, entriesValid []bool)
 func (s *xlSets) startMergeWalks(ctx context.Context, bucket, prefix, marker string, recursive bool, endWalkCh <-chan struct{}) []FileInfoCh {
 	var entryChs []FileInfoCh
 	for _, set := range s.sets {
-		for _, disk := range set.getDisks() {
+		disks := set.getDisks()
+		listQuorum := len(disks)/2 + 1
+		availableDisks := 0
+		for _, disk := range disks {
 			if disk == nil {
 				// Disk can be offline
 				continue
@@ -960,9 +963,13 @@ func (s *xlSets) startMergeWalks(ctx context.Context, bucket, prefix, marker str
 				// Disk walk returned error, ignore it.
 				continue
 			}
+			availableDisks++
 			entryChs = append(entryChs, FileInfoCh{
 				Ch: entryCh,
 			})
+			if availableDisks >= listQuorum {
+				break
+			}
 		}
 	}
 	return entryChs
