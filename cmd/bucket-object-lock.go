@@ -67,6 +67,10 @@ func (sys *BucketObjectLockSys) Get(bucketName string) (r *objectlock.Retention,
 		return lc.ToRetention(), true
 	}
 
+	if sys == nil {
+		return
+	}
+
 	sys.RLock()
 	defer sys.RUnlock()
 	r, ok = sys.retentionMap[bucketName]
@@ -75,6 +79,9 @@ func (sys *BucketObjectLockSys) Get(bucketName string) (r *objectlock.Retention,
 
 // Remove - removes retention sysuration.
 func (sys *BucketObjectLockSys) Remove(bucketName string) {
+	if sys == nil {
+		return
+	}
 	sys.Lock()
 	delete(sys.retentionMap, bucketName)
 	sys.Unlock()

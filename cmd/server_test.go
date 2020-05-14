@@ -125,14 +125,6 @@ func TestServerSuite(t *testing.T) {
 		t.Skip("cannot set up server reliably on Windows")
 	}
 	testCases := []*TestSuiteCommon{
-		// Init and run test on FS backend with signature v4.
-		{serverType: "FS", signer: signerV4},
-		// Init and run test on FS backend with signature v2.
-		{serverType: "FS", signer: signerV2},
-		// Init and run test on FS backend, with tls enabled.
-		{serverType: "FS", signer: signerV4, secure: true},
-		// Init and run test on XL backend.
-		{serverType: "XL", signer: signerV4},
 		// Init and run test on XLSet backend.
 		{serverType: "XLSet", signer: signerV4},
 	}

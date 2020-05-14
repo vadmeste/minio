@@ -47,6 +47,9 @@ func (sys *BucketQuotaSys) Set(bucketName string, q madmin.BucketQuota) {
 
 // Get - Get quota configuration.
 func (sys *BucketQuotaSys) Get(bucketName string) (q madmin.BucketQuota, ok bool) {
+	if sys == nil {
+		return
+	}
 	sys.RLock()
 	defer sys.RUnlock()
 	q, ok = sys.quotaMap[bucketName]
@@ -55,6 +58,9 @@ func (sys *BucketQuotaSys) Get(bucketName string) (q madmin.BucketQuota, ok bool
 
 // Remove - removes quota configuration.
 func (sys *BucketQuotaSys) Remove(bucketName string) {
+	if sys == nil {
+		return
+	}
 	sys.Lock()
 	delete(sys.quotaMap, bucketName)
 	sys.Unlock()
