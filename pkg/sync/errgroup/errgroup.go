@@ -1,5 +1,5 @@
 /*
- * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
+ * MinIO Cloud Storage, (C) 2017-2020 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,20 +25,54 @@ import (
 //
 // A zero Group is valid and does not cancel on error.
 type Group struct {
-	wg   sync.WaitGroup
 	errs []error
+
+	min     int
+	total   int
+	done    int
+	success int
+
+	quitting bool
+	cond     *sync.Cond
+	mu       sync.Mutex
+}
+
+type GroupOpts struct {
+	min   int
+	nerrs int
+}
+
+func WithOpts(opts GroupOpts) *Group {
+	g := &Group{
+		errs: make([]error, opts.nerrs),
+		min:  opts.min,
+		cond: sync.NewCond(&sync.Mutex{}),
+	}
+	g.cond.L.Lock()
+	return g
 }
 
 // WithNErrs returns a new Group with length of errs slice upto nerrs,
 // upon Wait() errors are returned collected from all tasks.
 func WithNErrs(nerrs int) *Group {
-	return &Group{errs: make([]error, nerrs)}
+	return WithOpts(GroupOpts{nerrs: nerrs, min: nerrs})
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the slice of errors from all function calls.
 func (g *Group) Wait() []error {
-	g.wg.Wait()
+	for {
+		if g.done >= g.total {
+			break
+		}
+		if g.success >= g.min {
+			break
+		}
+		g.cond.Wait()
+	}
+
+	g.quitting = true
+	g.cond.L.Unlock()
 	return g.errs
 }
 
@@ -47,13 +81,25 @@ func (g *Group) Wait() []error {
 // The first call to return a non-nil error will be
 // collected in errs slice and returned by Wait().
 func (g *Group) Go(f func() error, index int) {
-	g.wg.Add(1)
+	if g.quitting {
+		return
+	}
 
+	g.total++
 	go func() {
-		defer g.wg.Done()
-
-		if err := f(); err != nil {
+		err := f()
+		// Changes must be made when cond.L is locked.
+		g.cond.L.Lock()
+		g.done++
+		if err == nil {
+			g.success++
+		} else {
 			g.errs[index] = err
 		}
+
+		// Notify when cond.L lock is acquired.
+		g.cond.Broadcast()
+		g.cond.L.Unlock()
+
 	}()
 }
