@@ -947,17 +947,16 @@ func (z *erasureZones) listObjects(ctx context.Context, bucket, prefix, marker, 
 func lexicallySortedEntryZone(zoneEntryChs [][]FileInfoCh, zoneEntries [][]FileInfo, zoneEntriesValid [][]bool) (FileInfo, int, int, bool) {
 	for i, entryChs := range zoneEntryChs {
 		i := i
-		var wg sync.WaitGroup
+		g := errgroup.WithOpts(errgroup.GroupOpts{NErrs: len(entryChs), Min: len(entryChs)/2 + 1})
 		for j := range entryChs {
 			j := j
-			wg.Add(1)
 			// Pop() entries in parallel for large drive setups.
-			go func() {
-				defer wg.Done()
+			g.Go(func() error {
 				zoneEntries[i][j], zoneEntriesValid[i][j] = entryChs[j].Pop()
-			}()
+				return nil
+			}, j)
 		}
-		wg.Wait()
+		g.Wait()
 	}
 
 	var isTruncated = false
@@ -1178,17 +1177,17 @@ func mergeZonesEntriesCh(zonesEntryChs [][]FileInfoCh, maxKeys int, drivesPerSet
 func isTruncatedZones(zoneEntryChs [][]FileInfoCh, zoneEntries [][]FileInfo, zoneEntriesValid [][]bool) bool {
 	for i, entryChs := range zoneEntryChs {
 		i := i
-		var wg sync.WaitGroup
+		g := errgroup.WithOpts(errgroup.GroupOpts{NErrs: len(entryChs), Min: len(entryChs)/2 + 1})
 		for j := range entryChs {
 			j := j
-			wg.Add(1)
 			// Pop() entries in parallel for large drive setups.
-			go func() {
-				defer wg.Done()
+			g.Go(func() error {
 				zoneEntries[i][j], zoneEntriesValid[i][j] = entryChs[j].Pop()
-			}()
+				return nil
+			}, j)
+
 		}
-		wg.Wait()
+		g.Wait()
 	}
 
 	var isTruncated = false

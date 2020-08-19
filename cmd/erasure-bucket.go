@@ -86,31 +86,43 @@ func undoDeleteBucket(storageDisks []StorageAPI, bucket string) {
 
 // getBucketInfo - returns the BucketInfo from one of the load balanced disks.
 func (er erasureObjects) getBucketInfo(ctx context.Context, bucketName string) (bucketInfo BucketInfo, err error) {
-	var bucketErrs []error
-	for _, disk := range er.getLoadBalancedDisks() {
-		if disk == nil {
-			bucketErrs = append(bucketErrs, errDiskNotFound)
-			continue
-		}
-		volInfo, serr := disk.StatVol(bucketName)
-		if serr == nil {
-			return BucketInfo(volInfo), nil
-		}
-		err = serr
-		// For any reason disk went offline continue and pick the next one.
-		if IsErrIgnored(err, bucketMetadataOpIgnoredErrs...) {
-			bucketErrs = append(bucketErrs, err)
-			continue
-		}
-		// Any error which cannot be ignored, we return quickly.
+	disksCount := len(er.getDisks())
+	readQuorum := getReadQuorum(len(er.getDisks()))
+
+	g := errgroup.WithOpts(errgroup.GroupOpts{NErrs: disksCount, Min: readQuorum})
+
+	var bucketsInfo = make([]BucketInfo, disksCount)
+
+	for i, d := range er.getLoadBalancedDisks() {
+		index := i
+		disk := d
+		g.Go(func() error {
+			if disk == nil {
+				return errDiskNotFound
+			}
+			volInfo, err := disk.StatVol(bucketName)
+			if err != nil {
+				return err
+			}
+			bucketsInfo[index] = BucketInfo(volInfo)
+			return nil
+
+		}, index)
+	}
+
+	bucketErrs := g.Wait()
+	err = reduceReadQuorumErrs(ctx, bucketErrs, nil, readQuorum)
+	if err != nil {
 		return BucketInfo{}, err
 	}
-	// If all our errors were ignored, then we try to
-	// reduce to one error based on read quorum.
-	// `nil` is deliberately passed for ignoredErrs
-	// because these errors were already ignored.
-	readQuorum := getReadQuorum(len(er.getDisks()))
-	return BucketInfo{}, reduceReadQuorumErrs(ctx, bucketErrs, nil, readQuorum)
+
+	for _, bInfo := range bucketsInfo {
+		if bInfo.Name != "" {
+			return bInfo, nil
+		}
+	}
+
+	return BucketInfo{}, errUnexpected
 }
 
 // GetBucketInfo - returns BucketInfo for a bucket.

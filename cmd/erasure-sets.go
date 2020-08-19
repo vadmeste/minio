@@ -990,28 +990,36 @@ func (s *erasureSets) startMergeWalksVersionsN(ctx context.Context, bucket, pref
 // FileInfoCh which can be read from.
 func (s *erasureSets) startMergeWalksN(ctx context.Context, bucket, prefix, marker string, recursive bool, endWalkCh <-chan struct{}, ndisks int) []FileInfoCh {
 	var entryChs []FileInfoCh
-	var success int
+	var entryChsMu sync.Mutex
+
+	// var success int
 	for _, set := range s.sets {
 		// Reset for the next erasure set.
-		success = ndisks
-		for _, disk := range set.getLoadBalancedDisks() {
-			if disk == nil {
-				// Disk can be offline
-				continue
-			}
-			entryCh, err := disk.Walk(bucket, prefix, marker, recursive, endWalkCh)
-			if err != nil {
-				// Disk walk returned error, ignore it.
-				continue
-			}
-			entryChs = append(entryChs, FileInfoCh{
-				Ch: entryCh,
-			})
-			success--
-			if success == 0 {
-				break
-			}
+		disks := set.getLoadBalancedDisks()
+		g := errgroup.WithOpts(errgroup.GroupOpts{NErrs: len(disks), Min: ndisks/2 + 1})
+		// success = ndisks
+		for i, d := range disks {
+			disk := d
+			index := i
+			g.Go(func() error {
+				if disk == nil {
+					// Disk can be offline
+					return errDiskNotFound
+				}
+				entryCh, err := disk.Walk(bucket, prefix, marker, recursive, endWalkCh)
+				if err != nil {
+					// Disk walk returned error, ignore it.
+					return err
+				}
+				entryChsMu.Lock()
+				entryChs = append(entryChs, FileInfoCh{
+					Ch: entryCh,
+				})
+				entryChsMu.Unlock()
+				return nil
+			}, index)
 		}
+		g.Wait()
 	}
 	return entryChs
 }
