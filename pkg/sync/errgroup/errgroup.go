@@ -1,5 +1,5 @@
 /*
- * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
+ * MinIO Cloud Storage, (C) 2017-2020 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,8 @@
 package errgroup
 
 import (
-	"sync"
+	"errors"
+	"time"
 )
 
 // A Group is a collection of goroutines working on subtasks that are part of
@@ -25,20 +26,75 @@ import (
 //
 // A zero Group is valid and does not cancel on error.
 type Group struct {
-	wg   sync.WaitGroup
 	errs []error
+
+	total      int
+	updateCh   chan time.Duration
+	failFactor int
+
+	quitting bool
 }
+
+type GroupOpts struct {
+	Min   int
+	NErrs int
+}
+
+var ErrTaskAborted = errors.New("task aborted")
 
 // WithNErrs returns a new Group with length of errs slice upto nerrs,
 // upon Wait() errors are returned collected from all tasks.
 func WithNErrs(nerrs int) *Group {
-	return &Group{errs: make([]error, nerrs)}
+	return New(nerrs, 0)
+
+}
+
+func New(nerrs, failFactor int) *Group {
+	g := &Group{
+		errs:       make([]error, nerrs),
+		failFactor: failFactor,
+		updateCh:   make(chan time.Duration),
+	}
+	return g
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the slice of errors from all function calls.
 func (g *Group) Wait() []error {
-	g.wg.Wait()
+	maxDuration := time.Duration(0)
+	totalGoRoutines := 0
+
+	var abortTimer <-chan time.Time
+
+	// Wait for at least N/2 functions to return
+	// to calculate the median execution time and
+	// abort everything if trigger fail factor is
+	// reached
+	for {
+		if g.failFactor > 0 {
+			waitBeforeAbort := 5 * time.Minute
+			if totalGoRoutines >= g.total/2+1 {
+				waitBeforeAbort = maxDuration * time.Duration(g.failFactor)
+			}
+			abortTimer = time.NewTimer(waitBeforeAbort).C
+		}
+
+		select {
+		case d := <-g.updateCh:
+			totalGoRoutines++
+			if totalGoRoutines == g.total {
+				goto quit
+			}
+			if d > maxDuration {
+				maxDuration = d
+			}
+		case <-abortTimer:
+			goto quit
+		}
+	}
+
+quit:
+	g.quitting = true
 	return g.errs
 }
 
@@ -47,13 +103,18 @@ func (g *Group) Wait() []error {
 // The first call to return a non-nil error will be
 // collected in errs slice and returned by Wait().
 func (g *Group) Go(f func() error, index int) {
-	g.wg.Add(1)
+	if g.quitting {
+		return
+	}
 
+	g.total++
 	go func() {
-		defer g.wg.Done()
-
-		if err := f(); err != nil {
+		start := time.Now()
+		err := f()
+		callDuration := time.Now().Sub(start)
+		if err != nil {
 			g.errs[index] = err
 		}
+		g.updateCh <- callDuration
 	}()
 }

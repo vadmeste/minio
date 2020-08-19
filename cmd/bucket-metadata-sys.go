@@ -33,7 +33,6 @@ import (
 	"github.com/minio/minio/pkg/bucket/versioning"
 	"github.com/minio/minio/pkg/event"
 	"github.com/minio/minio/pkg/madmin"
-	"github.com/minio/minio/pkg/sync/errgroup"
 )
 
 // BucketMetadataSys captures all bucket metadata for a given cluster.
@@ -424,21 +423,27 @@ func (sys *BucketMetadataSys) Init(ctx context.Context, buckets []BucketInfo, ob
 
 // concurrently load bucket metadata to speed up loading bucket metadata.
 func (sys *BucketMetadataSys) concurrentLoad(ctx context.Context, buckets []BucketInfo, objAPI ObjectLayer) error {
-	g := errgroup.WithNErrs(len(buckets))
+	// g := errgroup.WithNErrs(len(buckets))
+	var wg sync.WaitGroup
+	var errs = make([]error, len(buckets))
 	for index := range buckets {
+		wg.Add(1)
 		index := index
-		g.Go(func() error {
+		go func() {
+			defer wg.Done()
 			meta, err := loadBucketMetadata(ctx, objAPI, buckets[index].Name)
 			if err != nil {
-				return err
+				errs[index] = err
+				return
 			}
 			sys.Lock()
 			sys.metadataMap[buckets[index].Name] = meta
 			sys.Unlock()
-			return nil
-		}, index)
+			return
+		}()
 	}
-	for _, err := range g.Wait() {
+
+	for _, err := range errs {
 		if err != nil {
 			return err
 		}
