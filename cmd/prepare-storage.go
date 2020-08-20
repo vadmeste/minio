@@ -74,12 +74,13 @@ var printEndpointError = func() func(Endpoint, error, bool) {
 // Migrates backend format of local disks.
 func formatErasureMigrateLocalEndpoints(endpoints Endpoints) error {
 	g := errgroup.WithNErrs(len(endpoints))
-	for index, endpoint := range endpoints {
-		if !endpoint.IsLocal {
-			continue
-		}
-		index := index
+	for i, e := range endpoints {
+		index := i
+		endpoint := e
 		g.Go(func() error {
+			if !endpoint.IsLocal {
+				return nil
+			}
 			epPath := endpoints[index].Path
 			formatPath := pathJoin(epPath, minioMetaBucket, formatConfigFile)
 			if _, err := os.Stat(formatPath); err != nil {
@@ -102,12 +103,13 @@ func formatErasureMigrateLocalEndpoints(endpoints Endpoints) error {
 // Cleans up tmp directory of local disks.
 func formatErasureCleanupTmpLocalEndpoints(endpoints Endpoints) error {
 	g := errgroup.WithNErrs(len(endpoints))
-	for index, endpoint := range endpoints {
-		if !endpoint.IsLocal {
-			continue
-		}
-		index := index
+	for i, e := range endpoints {
+		index := i
+		endpoint := e
 		g.Go(func() error {
+			if !endpoint.IsLocal {
+				return nil
+			}
 			epPath := endpoints[index].Path
 			// If disk is not formatted there is nothing to be cleaned up.
 			formatPath := pathJoin(epPath, minioMetaBucket, formatConfigFile)

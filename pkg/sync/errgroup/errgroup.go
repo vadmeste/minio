@@ -17,6 +17,8 @@
 package errgroup
 
 import (
+	"errors"
+	"runtime/debug"
 	"sync"
 )
 
@@ -29,16 +31,27 @@ type Group struct {
 	errs []error
 }
 
+var ErrTaskIgnored = errors.New("task ignored")
+
 // WithNErrs returns a new Group with length of errs slice upto nerrs,
 // upon Wait() errors are returned collected from all tasks.
 func WithNErrs(nerrs int) *Group {
-	return &Group{errs: make([]error, nerrs)}
+	errs := make([]error, nerrs)
+	for i := range errs {
+		errs[i] = ErrTaskIgnored
+	}
+	return &Group{errs: errs}
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the slice of errors from all function calls.
 func (g *Group) Wait() []error {
 	g.wg.Wait()
+	for i := range g.errs {
+		if g.errs[i] == ErrTaskIgnored {
+			debug.PrintStack()
+		}
+	}
 	return g.errs
 }
 
@@ -51,9 +64,6 @@ func (g *Group) Go(f func() error, index int) {
 
 	go func() {
 		defer g.wg.Done()
-
-		if err := f(); err != nil {
-			g.errs[index] = err
-		}
+		g.errs[index] = f()
 	}()
 }
