@@ -19,6 +19,7 @@ package errgroup
 import (
 	"errors"
 	"sync/atomic"
+	"time"
 )
 
 // A Group is a collection of goroutines working on subtasks that are part of
@@ -26,9 +27,10 @@ import (
 //
 // A zero Group is valid and does not cancel on error.
 type Group struct {
-	errs   []error
-	doneCh chan struct{}
-	total  int64
+	errs     []error
+	doneCh   chan struct{}
+	total    int64
+	quitting int64
 }
 
 var ErrTaskIgnored = errors.New("task ignored")
@@ -51,12 +53,20 @@ func (g *Group) Wait() []error {
 	}
 
 	var done int64
-	for range g.doneCh {
-		done++
-		if done == atomic.LoadInt64(&g.total) {
-			break
+	for {
+		select {
+		case <-g.doneCh:
+			done++
+			if done == atomic.LoadInt64(&g.total) {
+				goto quit
+			}
+		case <-time.NewTimer(5 * time.Minute).C:
+			goto quit
 		}
 	}
+
+quit:
+	atomic.StoreInt64(&g.quitting, 1)
 	return g.errs
 }
 
@@ -65,6 +75,9 @@ func (g *Group) Wait() []error {
 // The first call to return a non-nil error will be
 // collected in errs slice and returned by Wait().
 func (g *Group) Go(f func() error, index int) {
+	if atomic.LoadInt64(&g.quitting) > 0 {
+		return
+	}
 	atomic.AddInt64(&g.total, 1)
 	go func() {
 		g.errs[index] = f()
