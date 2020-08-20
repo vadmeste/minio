@@ -31,6 +31,8 @@ type Group struct {
 	doneCh   chan struct{}
 	total    int64
 	quitting int64
+
+	failFactor int
 }
 
 var ErrTaskIgnored = errors.New("task ignored")
@@ -54,13 +56,18 @@ func (g *Group) Wait() []error {
 
 	var done int64
 	for {
+		var abortTimer <-chan time.Time
+		if g.failFactor != 0 {
+			abortTimer = time.NewTimer(10 * time.Second * time.Duration(g.failFactor)).C
+		}
+
 		select {
 		case <-g.doneCh:
 			done++
 			if done == atomic.LoadInt64(&g.total) {
 				goto quit
 			}
-		case <-time.NewTimer(5 * time.Minute).C:
+		case <-abortTimer:
 			goto quit
 		}
 	}
