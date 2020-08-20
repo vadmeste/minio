@@ -28,7 +28,7 @@ import (
 // A zero Group is valid and does not cancel on error.
 type Group struct {
 	errs     []error
-	doneCh   chan struct{}
+	doneCh   chan time.Duration
 	total    int64
 	quitting int64
 
@@ -44,7 +44,7 @@ func WithNErrs(nerrs int) *Group {
 	for i := range errs {
 		errs[i] = ErrTaskIgnored
 	}
-	return &Group{errs: errs, doneCh: make(chan struct{})}
+	return &Group{errs: errs, doneCh: make(chan time.Duration)}
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
@@ -55,17 +55,22 @@ func (g *Group) Wait() []error {
 	}
 
 	var done int64
+	var maxTaskDuration time.Duration
+
 	for {
 		var abortTimer <-chan time.Time
-		if g.failFactor != 0 {
-			abortTimer = time.NewTimer(10 * time.Second * time.Duration(g.failFactor)).C
+		if g.failFactor != 0 && done >= atomic.LoadInt64(&g.total)/2+1 {
+			abortTimer = time.NewTimer(maxTaskDuration * time.Duration(g.failFactor)).C
 		}
 
 		select {
-		case <-g.doneCh:
+		case d := <-g.doneCh:
 			done++
 			if done == atomic.LoadInt64(&g.total) {
 				goto quit
+			}
+			if d > maxTaskDuration {
+				maxTaskDuration = d
 			}
 		case <-abortTimer:
 			goto quit
@@ -87,7 +92,9 @@ func (g *Group) Go(f func() error, index int) {
 	}
 	atomic.AddInt64(&g.total, 1)
 	go func() {
+		now := time.Now()
 		g.errs[index] = f()
-		g.doneCh <- struct{}{}
+		d := time.Now().Sub(now)
+		g.doneCh <- d
 	}()
 }
