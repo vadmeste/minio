@@ -18,8 +18,7 @@ package errgroup
 
 import (
 	"errors"
-	"runtime/debug"
-	"sync"
+	"sync/atomic"
 )
 
 // A Group is a collection of goroutines working on subtasks that are part of
@@ -27,8 +26,9 @@ import (
 //
 // A zero Group is valid and does not cancel on error.
 type Group struct {
-	wg   sync.WaitGroup
-	errs []error
+	errs   []error
+	doneCh chan struct{}
+	total  int64
 }
 
 var ErrTaskIgnored = errors.New("task ignored")
@@ -40,16 +40,21 @@ func WithNErrs(nerrs int) *Group {
 	for i := range errs {
 		errs[i] = ErrTaskIgnored
 	}
-	return &Group{errs: errs}
+	return &Group{errs: errs, doneCh: make(chan struct{})}
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the slice of errors from all function calls.
 func (g *Group) Wait() []error {
-	g.wg.Wait()
-	for i := range g.errs {
-		if g.errs[i] == ErrTaskIgnored {
-			debug.PrintStack()
+	if atomic.LoadInt64(&g.total) == 0 {
+		return g.errs
+	}
+
+	var done int64
+	for range g.doneCh {
+		done++
+		if done == atomic.LoadInt64(&g.total) {
+			break
 		}
 	}
 	return g.errs
@@ -60,10 +65,9 @@ func (g *Group) Wait() []error {
 // The first call to return a non-nil error will be
 // collected in errs slice and returned by Wait().
 func (g *Group) Go(f func() error, index int) {
-	g.wg.Add(1)
-
+	atomic.AddInt64(&g.total, 1)
 	go func() {
-		defer g.wg.Done()
 		g.errs[index] = f()
+		g.doneCh <- struct{}{}
 	}()
 }
