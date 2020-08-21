@@ -39,7 +39,7 @@ type Group struct {
 var ErrTaskIgnored = errors.New("task ignored")
 
 // New returns a new Group upon Wait() errors are returned collected from all tasks.
-func New(nerrs, failFactor int) *Group {
+func New(nerrs, failFactor int, minWaitTime time.Duration) *Group {
 	errs := make([]error, nerrs)
 	for i := range errs {
 		errs[i] = ErrTaskIgnored
@@ -48,12 +48,12 @@ func New(nerrs, failFactor int) *Group {
 		errs:        errs,
 		doneCh:      make(chan time.Duration),
 		failFactor:  failFactor,
-		minWaitTime: 3 * time.Second,
+		minWaitTime: minWaitTime,
 	}
 }
 
 func WithNErrs(nerrs int) *Group {
-	return New(nerrs, 10)
+	return New(nerrs, 0, 0)
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
@@ -73,6 +73,7 @@ func (g *Group) Wait() []error {
 			if abortTime < g.minWaitTime {
 				abortTime = g.minWaitTime
 			}
+			// fmt.Println("decided to wait", abortTime)
 			abortTimer = time.NewTimer(abortTime).C
 		}
 
