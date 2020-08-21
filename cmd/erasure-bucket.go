@@ -42,7 +42,7 @@ func (er erasureObjects) MakeBucketWithLocation(ctx context.Context, bucket stri
 
 	storageDisks := er.getDisks()
 
-	g := errgroup.WithNErrs(len(storageDisks))
+	g := errgroup.New(len(storageDisks), 10, 0)
 
 	// Make a volume entry on all underlying storage disks.
 	for index := range storageDisks {
@@ -199,7 +199,7 @@ func (er erasureObjects) DeleteBucket(ctx context.Context, bucket string, forceD
 	// Collect if all disks report volume not found.
 	storageDisks := er.getDisks()
 
-	g := errgroup.WithNErrs(len(storageDisks))
+	g := errgroup.New(len(storageDisks), 10, 0)
 
 	for index := range storageDisks {
 		index := index

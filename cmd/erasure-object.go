@@ -522,7 +522,7 @@ func rename(ctx context.Context, disks []StorageAPI, srcBucket, srcEntry, dstBuc
 		srcEntry = retainSlash(srcEntry)
 	}
 
-	g := errgroup.WithNErrs(len(disks))
+	g := errgroup.New(len(disks), 10, 0)
 
 	// Rename file on all underlying storage disks.
 	for index := range disks {
@@ -767,7 +767,7 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 func (er erasureObjects) deleteObjectVersion(ctx context.Context, bucket, object string, writeQuorum int, fi FileInfo) error {
 	disks := er.getDisks()
 
-	g := errgroup.WithNErrs(len(disks))
+	g := errgroup.New(len(disks), 10, 0)
 
 	for index := range disks {
 		index := index
@@ -810,7 +810,7 @@ func (er erasureObjects) deleteObject(ctx context.Context, bucket, object string
 		}
 	}
 
-	g := errgroup.WithNErrs(len(disks))
+	g := errgroup.New(len(disks), 10, 0)
 
 	for index := range disks {
 		index := index

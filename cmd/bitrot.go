@@ -122,11 +122,11 @@ func closeBitrotReaders(rs []io.ReaderAt) {
 
 // Close all the writers.
 func closeBitrotWriters(ws []io.Writer) {
-	g := errgroup.WithNErrs(len(ws))
+	g := errgroup.New(len(ws), 10, 0)
 	for i, w := range ws {
-		i := i
+		writer := w
 		g.Go(func() error {
-			if bw, ok := w.(io.Closer); ok {
+			if bw, ok := writer.(io.Closer); ok {
 				bw.Close()
 			}
 			return nil

@@ -18,6 +18,10 @@ package errgroup
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -59,6 +63,23 @@ func WithNErrs(nerrs int) *Group {
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the slice of errors from all function calls.
 func (g *Group) Wait() []error {
+	debugCh := make(chan struct{})
+	defer func() {
+		debugCh <- struct{}{}
+	}()
+
+	var stack strings.Builder
+	stack.Write(debug.Stack())
+	go func() {
+		select {
+		case <-time.NewTimer(5 * time.Second).C:
+			fmt.Println(stack.String())
+			os.Exit(-1)
+		case <-debugCh:
+			return
+		}
+	}()
+
 	if atomic.LoadInt64(&g.total) == 0 {
 		return g.errs
 	}

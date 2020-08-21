@@ -293,7 +293,7 @@ func renameFileInfo(ctx context.Context, disks []StorageAPI, srcBucket, srcEntry
 
 // writeUniqueFileInfo - writes unique `xl.meta` content for each disk concurrently.
 func writeUniqueFileInfo(ctx context.Context, disks []StorageAPI, bucket, prefix string, files []FileInfo, quorum int) ([]StorageAPI, error) {
-	g := errgroup.WithNErrs(len(disks))
+	g := errgroup.New(len(disks), 10, 0)
 
 	// Start writing `xl.meta` to all disks in parallel.
 	for index := range disks {
