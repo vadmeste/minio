@@ -23,6 +23,7 @@ import (
 
 	"github.com/minio/highwayhash"
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/sync/errgroup"
 	sha256 "github.com/minio/sha256-simd"
 	"golang.org/x/crypto/blake2b"
 )
@@ -121,11 +122,17 @@ func closeBitrotReaders(rs []io.ReaderAt) {
 
 // Close all the writers.
 func closeBitrotWriters(ws []io.Writer) {
-	for _, w := range ws {
-		if bw, ok := w.(io.Closer); ok {
-			bw.Close()
-		}
+	g := errgroup.WithNErrs(len(ws))
+	for i, w := range ws {
+		i := i
+		g.Go(func() error {
+			if bw, ok := w.(io.Closer); ok {
+				bw.Close()
+			}
+			return nil
+		}, i)
 	}
+	g.Wait()
 }
 
 // Returns hash sum for whole-bitrot, nil for streaming-bitrot.

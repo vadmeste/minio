@@ -32,7 +32,8 @@ type Group struct {
 	total    int64
 	quitting int64
 
-	failFactor int
+	minWaitTime time.Duration
+	failFactor  int
 }
 
 var ErrTaskIgnored = errors.New("task ignored")
@@ -44,14 +45,15 @@ func New(nerrs, failFactor int) *Group {
 		errs[i] = ErrTaskIgnored
 	}
 	return &Group{
-		errs:       errs,
-		doneCh:     make(chan time.Duration),
-		failFactor: failFactor,
+		errs:        errs,
+		doneCh:      make(chan time.Duration),
+		failFactor:  failFactor,
+		minWaitTime: 3 * time.Second,
 	}
 }
 
 func WithNErrs(nerrs int) *Group {
-	return New(nerrs, 0)
+	return New(nerrs, 10)
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
@@ -67,7 +69,11 @@ func (g *Group) Wait() []error {
 	for {
 		var abortTimer <-chan time.Time
 		if g.failFactor != 0 && done >= atomic.LoadInt64(&g.total)/2+1 {
-			abortTimer = time.NewTimer(maxTaskDuration * time.Duration(g.failFactor)).C
+			abortTime := maxTaskDuration * time.Duration(g.failFactor)
+			if abortTime < g.minWaitTime {
+				abortTime = g.minWaitTime
+			}
+			abortTimer = time.NewTimer(abortTime).C
 		}
 
 		select {
