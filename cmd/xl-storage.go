@@ -85,6 +85,25 @@ func isValidVolname(volname string) bool {
 	return true
 }
 
+type latency struct {
+	mu      sync.Mutex
+	value   int64
+	updated time.Time
+}
+
+func (l *latency) store(val int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.value = val
+	l.updated = time.Now()
+}
+
+func (l *latency) load() (int64, time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.value, l.updated
+}
+
 // xlStorage - implements StorageAPI interface.
 type xlStorage struct {
 	maxActiveIOCount int32
@@ -107,6 +126,8 @@ type xlStorage struct {
 
 	ctx context.Context
 	sync.RWMutex
+
+	latency latency
 }
 
 // checkPathLength - returns error if given path name length more than 255
@@ -329,6 +350,23 @@ func (s *xlStorage) IsOnline() bool {
 
 func (s *xlStorage) IsLocal() bool {
 	return true
+}
+
+func (s *xlStorage) Latency() int64 {
+	now := time.Now()
+	val, timestamp := s.latency.load()
+	if now.Sub(timestamp) < time.Minute {
+		return val
+	}
+
+	err := s.WriteAll(minioMetaTmpBucket, ".ping", bytes.NewReader([]byte("ping")))
+	if err == nil {
+		newLatency := int64(time.Now().Sub(now))
+		s.latency.store(newLatency)
+		return newLatency
+	}
+
+	return -1
 }
 
 func (s *xlStorage) waitForLowActiveIO() {

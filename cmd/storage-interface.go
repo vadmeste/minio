@@ -35,6 +35,9 @@ type StorageAPI interface {
 	GetDiskID() (string, error)
 	SetDiskID(id string)
 
+	// Lower is better
+	Latency() int64
+
 	DiskInfo() (info DiskInfo, err error)
 	CrawlAndGetDataUsage(ctx context.Context, cache dataUsageCache) (dataUsageCache, error)
 

@@ -62,6 +62,10 @@ func (d *naughtyDisk) Hostname() string {
 	return d.disk.Hostname()
 }
 
+func (d *naughtyDisk) Latency() int64 {
+	return d.disk.Latency()
+}
+
 func (d *naughtyDisk) Close() (err error) {
 	if err = d.calcError(); err != nil {
 		return err

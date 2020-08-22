@@ -19,6 +19,7 @@ package cmd
 import (
 	"context"
 	"path"
+	"sort"
 
 	"github.com/minio/minio/pkg/sync/errgroup"
 )
@@ -26,11 +27,16 @@ import (
 // getLoadBalancedDisks - fetches load balanced (sufficiently randomized) disk slice.
 func (er erasureObjects) getLoadBalancedDisks() (newDisks []StorageAPI) {
 	disks := er.getDisks()
-	// Based on the random shuffling return back randomized disks.
-	for _, i := range hashOrder(UTCNow().String(), len(disks)) {
-		newDisks = append(newDisks, disks[i-1])
-	}
-	return newDisks
+	sort.Slice(disks, func(i, j int) bool {
+		switch {
+		case disks[i] == nil || disks[i].Latency() < 0:
+			return false
+		case disks[j] == nil || disks[j].Latency() < 0:
+			return true
+		}
+		return disks[i].Latency() < disks[j].Latency()
+	})
+	return disks
 }
 
 // This function does the following check, suppose

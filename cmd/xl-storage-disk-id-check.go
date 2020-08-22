@@ -47,6 +47,13 @@ func (p *xlStorageDiskIDCheck) Hostname() string {
 	return p.storage.Hostname()
 }
 
+func (p *xlStorageDiskIDCheck) Latency() int64 {
+	if err := p.checkDiskStale(); err != nil {
+		return -1
+	}
+	return p.storage.Latency()
+}
+
 func (p *xlStorageDiskIDCheck) CrawlAndGetDataUsage(ctx context.Context, cache dataUsageCache) (dataUsageCache, error) {
 	if err := p.checkDiskStale(); err != nil {
 		return dataUsageCache{}, err
