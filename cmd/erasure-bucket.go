@@ -41,8 +41,9 @@ func (er erasureObjects) MakeBucketWithLocation(ctx context.Context, bucket stri
 	}
 
 	storageDisks := er.getDisks()
+	writeQuorum := getWriteQuorum(len(storageDisks))
 
-	g := errgroup.New(len(storageDisks), 10, 0)
+	g := errgroup.New(errgroup.Opts{NErrs: len(storageDisks), FailFactor: 10, Quorum: writeQuorum})
 
 	// Make a volume entry on all underlying storage disks.
 	for index := range storageDisks {
@@ -61,7 +62,6 @@ func (er erasureObjects) MakeBucketWithLocation(ctx context.Context, bucket stri
 		}, index)
 	}
 
-	writeQuorum := getWriteQuorum(len(storageDisks))
 	err := reduceWriteQuorumErrs(ctx, g.Wait(), bucketOpIgnoredErrs, writeQuorum)
 	return toObjectErr(err, bucket)
 }
@@ -209,8 +209,8 @@ func deleteDanglingBucket(ctx context.Context, storageDisks []StorageAPI, dErrs 
 func (er erasureObjects) DeleteBucket(ctx context.Context, bucket string, forceDelete bool) error {
 	// Collect if all disks report volume not found.
 	storageDisks := er.getDisks()
-
-	g := errgroup.New(len(storageDisks), 10, 0)
+	writeQuorum := getWriteQuorum(len(storageDisks))
+	g := errgroup.New(errgroup.Opts{NErrs: len(storageDisks), FailFactor: 10, Quorum: writeQuorum})
 
 	for index := range storageDisks {
 		index := index
@@ -243,7 +243,6 @@ func (er erasureObjects) DeleteBucket(ctx context.Context, bucket string, forceD
 		return nil
 	}
 
-	writeQuorum := getWriteQuorum(len(storageDisks))
 	err := reduceWriteQuorumErrs(ctx, dErrs, bucketOpIgnoredErrs, writeQuorum)
 	if err == errErasureWriteQuorum {
 		undoDeleteBucket(storageDisks, bucket)

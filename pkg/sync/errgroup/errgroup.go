@@ -18,13 +18,11 @@ package errgroup
 
 import (
 	"errors"
-	"fmt"
-	"os"
-	"runtime/debug"
-	"strings"
 	"sync/atomic"
 	"time"
 )
+
+var ErrTaskIgnored = errors.New("task ignored")
 
 type taskStatus struct {
 	failed   bool
@@ -43,47 +41,57 @@ type Group struct {
 
 	minWaitTime time.Duration
 	failFactor  int
+	quorum      int64
 }
 
-var ErrTaskIgnored = errors.New("task ignored")
+type Opts struct {
+	NErrs      int
+	Quorum     int
+	FailFactor int
+
+	MinWaitTime time.Duration
+}
 
 // New returns a new Group upon Wait() errors are returned collected from all tasks.
-func New(nerrs, failFactor int, minWaitTime time.Duration) *Group {
-	errs := make([]error, nerrs)
+func New(opts Opts) *Group {
+	errs := make([]error, opts.NErrs)
 	for i := range errs {
 		errs[i] = ErrTaskIgnored
 	}
 	return &Group{
 		errs:        errs,
 		doneCh:      make(chan taskStatus),
-		failFactor:  failFactor,
-		minWaitTime: minWaitTime,
+		failFactor:  opts.FailFactor,
+		minWaitTime: opts.MinWaitTime,
+		quorum:      int64(opts.Quorum),
 	}
 }
 
 func WithNErrs(nerrs int) *Group {
-	return New(nerrs, 0, 0)
+	return New(Opts{NErrs: nerrs})
 }
 
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the slice of errors from all function calls.
 func (g *Group) Wait() []error {
-	// TODO: remove the following debug code
-	debugCh := make(chan struct{})
-	defer func() {
-		debugCh <- struct{}{}
-	}()
-	var stack strings.Builder
-	stack.Write(debug.Stack())
-	go func() {
-		select {
-		case <-time.NewTimer(5 * time.Second).C:
-			fmt.Println(stack.String())
-			os.Exit(-1)
-		case <-debugCh:
-			return
-		}
-	}()
+	/*
+		// TODO: remove the following debug code
+		debugCh := make(chan struct{})
+		defer func() {
+			debugCh <- struct{}{}
+		}()
+		var stack strings.Builder
+		stack.Write(debug.Stack())
+		go func() {
+			select {
+			case <-time.NewTimer(5 * time.Second).C:
+				fmt.Println(stack.String())
+				os.Exit(-1)
+			case <-debugCh:
+				return
+			}
+		}()
+	*/
 
 	if atomic.LoadInt64(&g.total) == 0 {
 		return g.errs
@@ -94,13 +102,18 @@ func (g *Group) Wait() []error {
 
 	for {
 		var abortTimer <-chan time.Time
-		quorum := atomic.LoadInt64(&g.total)/2 + 1
-		if g.failFactor != 0 && (success >= quorum || failed >= quorum) {
-			abortTime := maxTaskDuration * time.Duration(g.failFactor)
-			if abortTime < g.minWaitTime {
-				abortTime = g.minWaitTime
+		if g.failFactor != 0 {
+			quorum := g.quorum
+			if quorum == 0 {
+				quorum = atomic.LoadInt64(&g.total)/2 + 1
 			}
-			abortTimer = time.NewTimer(abortTime).C
+			if success >= quorum || failed >= quorum {
+				abortTime := maxTaskDuration * time.Duration(g.failFactor)
+				if abortTime < g.minWaitTime {
+					abortTime = g.minWaitTime
+				}
+				abortTimer = time.NewTimer(abortTime).C
+			}
 		}
 
 		select {

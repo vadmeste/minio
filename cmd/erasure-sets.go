@@ -1020,7 +1020,7 @@ func (s *erasureSets) startMergeWalksN(ctx context.Context, bucket, prefix, mark
 	var entryChsMu sync.Mutex
 	for _, set := range s.sets {
 		disks := set.getLoadBalancedDisks()
-		g := errgroup.New(len(disks), 10, 0)
+		g := errgroup.New(errgroup.Opts{NErrs: len(disks), FailFactor: 10})
 		for i, d := range disks {
 			disk := d
 			index := i

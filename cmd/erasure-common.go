@@ -63,7 +63,7 @@ func (er erasureObjects) parentDirIsObject(ctx context.Context, bucket, parent s
 func (er erasureObjects) isObject(ctx context.Context, bucket, prefix string) (ok bool) {
 	storageDisks := er.getDisks()
 
-	g := errgroup.New(len(storageDisks), 10, 0)
+	g := errgroup.New(errgroup.Opts{NErrs: len(storageDisks), FailFactor: 10})
 
 	for index := range storageDisks {
 		index := index

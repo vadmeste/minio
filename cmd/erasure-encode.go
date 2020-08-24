@@ -32,7 +32,7 @@ type parallelWriter struct {
 
 // Write writes data to writers in parallel.
 func (p *parallelWriter) Write(ctx context.Context, blocks [][]byte) error {
-	g := errgroup.New(len(p.writers), 20, 0)
+	g := errgroup.New(errgroup.Opts{NErrs: len(p.writers), FailFactor: 20, Quorum: p.writeQuorum})
 	for i := range p.writers {
 		i := i
 		g.Go(func() error {

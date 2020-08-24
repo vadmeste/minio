@@ -39,7 +39,7 @@ var objectOpIgnoredErrs = append(baseIgnoredErrs, errDiskAccessDenied, errUnform
 func (er erasureObjects) putObjectDir(ctx context.Context, bucket, object string, writeQuorum int) error {
 	storageDisks := er.getDisks()
 
-	g := errgroup.WithNErrs(len(storageDisks))
+	g := errgroup.New(errgroup.Opts{NErrs: len(storageDisks), FailFactor: 10, Quorum: writeQuorum})
 
 	// Prepare object creation in all disks
 	for index := range storageDisks {
@@ -351,7 +351,7 @@ func (er erasureObjects) getObject(ctx context.Context, bucket, object string, s
 func (er erasureObjects) getObjectInfoDir(ctx context.Context, bucket, object string) (ObjectInfo, error) {
 	storageDisks := er.getDisks()
 
-	g := errgroup.WithNErrs(len(storageDisks))
+	g := errgroup.New(errgroup.Opts{NErrs: len(storageDisks), FailFactor: 10})
 
 	// Prepare object creation in a all disks
 	for index, disk := range storageDisks {
@@ -469,7 +469,7 @@ func undoRename(disks []StorageAPI, srcBucket, srcEntry, dstBucket, dstEntry str
 // Similar to rename but renames data from srcEntry to dstEntry at dataDir
 func renameData(ctx context.Context, disks []StorageAPI, srcBucket, srcEntry, dataDir, dstBucket, dstEntry string, writeQuorum int, ignoredErr []error) ([]StorageAPI, error) {
 	dataDir = retainSlash(dataDir)
-	g := errgroup.WithNErrs(len(disks))
+	g := errgroup.New(errgroup.Opts{NErrs: len(disks), FailFactor: 10, Quorum: writeQuorum})
 
 	// Rename file on all underlying storage disks.
 	for index := range disks {
@@ -522,7 +522,7 @@ func rename(ctx context.Context, disks []StorageAPI, srcBucket, srcEntry, dstBuc
 		srcEntry = retainSlash(srcEntry)
 	}
 
-	g := errgroup.New(len(disks), 10, 0)
+	g := errgroup.New(errgroup.Opts{NErrs: len(disks), FailFactor: 10, Quorum: writeQuorum})
 
 	// Rename file on all underlying storage disks.
 	for index := range disks {
@@ -767,7 +767,7 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 func (er erasureObjects) deleteObjectVersion(ctx context.Context, bucket, object string, writeQuorum int, fi FileInfo) error {
 	disks := er.getDisks()
 
-	g := errgroup.New(len(disks), 10, 0)
+	g := errgroup.New(errgroup.Opts{NErrs: len(disks), FailFactor: 10, Quorum: writeQuorum})
 
 	for index := range disks {
 		index := index
@@ -810,7 +810,7 @@ func (er erasureObjects) deleteObject(ctx context.Context, bucket, object string
 		}
 	}
 
-	g := errgroup.New(len(disks), 10, 0)
+	g := errgroup.New(errgroup.Opts{NErrs: len(disks), FailFactor: 10, Quorum: writeQuorum})
 
 	for index := range disks {
 		index := index
