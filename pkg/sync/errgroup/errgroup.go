@@ -107,7 +107,7 @@ func (g *Group) Wait() []error {
 			if quorum == 0 {
 				quorum = atomic.LoadInt64(&g.total)/2 + 1
 			}
-			if success >= quorum || failed >= quorum {
+			if success >= quorum {
 				abortTime := maxTaskDuration * time.Duration(g.failFactor)
 				if abortTime < g.minWaitTime {
 					abortTime = g.minWaitTime

@@ -121,8 +121,12 @@ func closeBitrotReaders(rs []io.ReaderAt) {
 }
 
 // Close all the writers.
-func closeBitrotWriters(ws []io.Writer) {
-	g := errgroup.New(errgroup.Opts{NErrs: len(ws), FailFactor: 10})
+func closeBitrotWriters(ws []io.Writer, waitForAll bool) {
+	failFactor := 0
+	if !waitForAll {
+		failFactor = 10
+	}
+	g := errgroup.New(errgroup.Opts{NErrs: len(ws), FailFactor: failFactor})
 	for i, w := range ws {
 		writer := w
 		g.Go(func() error {

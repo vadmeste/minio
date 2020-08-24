@@ -25,8 +25,10 @@ import (
 )
 
 // getLoadBalancedDisks - fetches load balanced (sufficiently randomized) disk slice.
-func (er erasureObjects) getLoadBalancedDisks() (newDisks []StorageAPI) {
-	disks := er.getDisks()
+func (er erasureObjects) getLoadBalancedDisks() (disks []StorageAPI) {
+	for _, d := range er.getDisks() {
+		disks = append(disks, d)
+	}
 	sort.Slice(disks, func(i, j int) bool {
 		switch {
 		case disks[i] == nil || disks[i].Latency() < 0:
@@ -36,7 +38,7 @@ func (er erasureObjects) getLoadBalancedDisks() (newDisks []StorageAPI) {
 		}
 		return disks[i].Latency() < disks[j].Latency()
 	})
-	return disks
+	return
 }
 
 // This function does the following check, suppose

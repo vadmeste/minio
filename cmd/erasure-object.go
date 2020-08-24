@@ -686,7 +686,7 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 	}
 
 	n, erasureErr := erasure.Encode(ctx, data, writers, buffer, writeQuorum)
-	closeBitrotWriters(writers)
+	closeBitrotWriters(writers, false)
 	if erasureErr != nil {
 		return ObjectInfo{}, toObjectErr(erasureErr, minioMetaTmpBucket, tempErasureObj)
 	}
