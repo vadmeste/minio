@@ -87,7 +87,10 @@ func undoDeleteBucket(storageDisks []StorageAPI, bucket string) {
 // getBucketInfo - returns the BucketInfo from one of the load balanced disks.
 func (er erasureObjects) getBucketInfo(ctx context.Context, bucketName string) (bucketInfo BucketInfo, err error) {
 	var bucketErrs []error
-	for _, disk := range er.getLoadBalancedDisks() {
+	var bucketNotFoundCount int
+
+	disks := er.getLoadBalancedDisks()
+	for _, disk := range disks {
 		if disk == nil {
 			bucketErrs = append(bucketErrs, errDiskNotFound)
 			continue
@@ -100,6 +103,14 @@ func (er erasureObjects) getBucketInfo(ctx context.Context, bucketName string) (
 		// For any reason disk went offline continue and pick the next one.
 		if IsErrIgnored(err, bucketMetadataOpIgnoredErrs...) {
 			bucketErrs = append(bucketErrs, err)
+			if err == errVolumeNotFound {
+				bucketNotFoundCount++
+				// Early exit when the bucket does not exist
+				// in quoru disks
+				if bucketNotFoundCount >= len(disks)/2+1 {
+					break
+				}
+			}
 			continue
 		}
 		// Any error which cannot be ignored, we return quickly.

@@ -26,13 +26,18 @@ import (
 	"time"
 )
 
+type taskStatus struct {
+	failed   bool
+	duration time.Duration
+}
+
 // A Group is a collection of goroutines working on subtasks that are part of
 // the same overall task.
 //
 // A zero Group is valid and does not cancel on error.
 type Group struct {
 	errs     []error
-	doneCh   chan time.Duration
+	doneCh   chan taskStatus
 	total    int64
 	quitting int64
 
@@ -50,7 +55,7 @@ func New(nerrs, failFactor int, minWaitTime time.Duration) *Group {
 	}
 	return &Group{
 		errs:        errs,
-		doneCh:      make(chan time.Duration),
+		doneCh:      make(chan taskStatus),
 		failFactor:  failFactor,
 		minWaitTime: minWaitTime,
 	}
@@ -63,11 +68,11 @@ func WithNErrs(nerrs int) *Group {
 // Wait blocks until all function calls from the Go method have returned, then
 // returns the slice of errors from all function calls.
 func (g *Group) Wait() []error {
+	// TODO: remove the following debug code
 	debugCh := make(chan struct{})
 	defer func() {
 		debugCh <- struct{}{}
 	}()
-
 	var stack strings.Builder
 	stack.Write(debug.Stack())
 	go func() {
@@ -84,28 +89,33 @@ func (g *Group) Wait() []error {
 		return g.errs
 	}
 
-	var done int64
+	var done, success, failed int64
 	var maxTaskDuration time.Duration
 
 	for {
 		var abortTimer <-chan time.Time
-		if g.failFactor != 0 && done >= atomic.LoadInt64(&g.total)/2+1 {
+		quorum := atomic.LoadInt64(&g.total)/2 + 1
+		if g.failFactor != 0 && (success >= quorum || failed >= quorum) {
 			abortTime := maxTaskDuration * time.Duration(g.failFactor)
 			if abortTime < g.minWaitTime {
 				abortTime = g.minWaitTime
 			}
-			// fmt.Println("decided to wait", abortTime)
 			abortTimer = time.NewTimer(abortTime).C
 		}
 
 		select {
-		case d := <-g.doneCh:
+		case st := <-g.doneCh:
 			done++
 			if done == atomic.LoadInt64(&g.total) {
 				goto quit
 			}
-			if d > maxTaskDuration {
-				maxTaskDuration = d
+			if st.failed {
+				failed++
+			} else {
+				success++
+			}
+			if st.duration > maxTaskDuration {
+				maxTaskDuration = st.duration
 			}
 		case <-abortTimer:
 			goto quit
@@ -130,6 +140,6 @@ func (g *Group) Go(f func() error, index int) {
 		now := time.Now()
 		g.errs[index] = f()
 		d := time.Now().Sub(now)
-		g.doneCh <- d
+		g.doneCh <- taskStatus{duration: d, failed: g.errs[index] != nil}
 	}()
 }
