@@ -58,6 +58,7 @@ func New(opts Opts) *Group {
 	for i := range errs {
 		errs[i] = ErrTaskIgnored
 	}
+
 	return &Group{
 		errs:        errs,
 		doneCh:      make(chan taskStatus),
@@ -102,18 +103,17 @@ func (g *Group) Wait() []error {
 
 	for {
 		var abortTimer <-chan time.Time
-		if g.failFactor != 0 {
-			quorum := g.quorum
-			if quorum == 0 {
-				quorum = atomic.LoadInt64(&g.total)/2 + 1
+		quorum := g.total
+		if g.quorum != 0 {
+			quorum = g.quorum
+		}
+
+		if success >= quorum {
+			abortTime := maxTaskDuration * time.Duration(g.failFactor)
+			if abortTime < g.minWaitTime {
+				abortTime = g.minWaitTime
 			}
-			if success >= quorum {
-				abortTime := maxTaskDuration * time.Duration(g.failFactor)
-				if abortTime < g.minWaitTime {
-					abortTime = g.minWaitTime
-				}
-				abortTimer = time.NewTimer(abortTime).C
-			}
+			abortTimer = time.NewTimer(abortTime).C
 		}
 
 		select {
