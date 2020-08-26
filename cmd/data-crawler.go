@@ -40,8 +40,8 @@ import (
 const (
 	dataCrawlSleepPerFolder  = time.Millisecond // Time to wait between folders.
 	dataCrawlSleepDefMult    = 10.0             // Default multiplier for waits between operations.
-	dataCrawlStartDelay      = 5 * time.Minute  // Time to wait on startup and between cycles.
-	dataUsageUpdateDirCycles = 16               // Visit all folders every n cycles.
+	dataCrawlStartDelay      = 5 * time.Second  // Time to wait on startup and between cycles.
+	dataUsageUpdateDirCycles = 3                // Visit all folders every n cycles.
 
 )
 
