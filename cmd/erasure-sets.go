@@ -315,7 +315,7 @@ func newErasureSets(ctx context.Context, endpoints Endpoints, storageDisks []Sto
 		endpointStrings:     endpointStrings,
 		setCount:            setCount,
 		setDriveCount:       setDriveCount,
-		listTolerancePerSet: setDriveCount / 2,
+		listTolerancePerSet: setDriveCount/2 + 1,
 		format:              format,
 		disksConnectEvent:   make(chan diskConnectInfo),
 		disksConnectDoneCh:  make(chan struct{}),
