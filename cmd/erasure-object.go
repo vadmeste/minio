@@ -375,6 +375,13 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 		return fi, nil, nil, err
 	}
 
+	if !fi.Deleted {
+		dataErrs := statAllDisks(ctx, disks, bucket, pathJoin(object, fi.DataDir, "part.1"))
+		if reducedErr := reduceReadQuorumErrs(ctx, dataErrs, objectOpIgnoredErrs, readQuorum); reducedErr != nil {
+			return fi, nil, nil, toObjectErr(reducedErr, bucket, object)
+		}
+	}
+
 	return fi, metaArr, onlineDisks, nil
 }
 

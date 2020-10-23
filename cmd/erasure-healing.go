@@ -505,7 +505,7 @@ func (er erasureObjects) healObjectDir(ctx context.Context, bucket, object strin
 	hr.Before.Drives = make([]madmin.HealDriveInfo, len(storageDisks))
 	hr.After.Drives = make([]madmin.HealDriveInfo, len(storageDisks))
 
-	errs := statAllDirs(ctx, storageDisks, bucket, object)
+	errs := checkNotEmptyAllDirs(ctx, storageDisks, bucket, object)
 	danglingObject := isObjectDirDangling(errs)
 	if danglingObject {
 		if !dryRun && remove {
@@ -627,7 +627,7 @@ func defaultHealResult(latestFileInfo FileInfo, storageDisks []StorageAPI, stora
 }
 
 // Stat all directories.
-func statAllDirs(ctx context.Context, storageDisks []StorageAPI, bucket, prefix string) []error {
+func checkNotEmptyAllDirs(ctx context.Context, storageDisks []StorageAPI, bucket, prefix string) []error {
 	g := errgroup.WithNErrs(len(storageDisks))
 	for index, disk := range storageDisks {
 		if disk == nil {
@@ -643,6 +643,25 @@ func statAllDirs(ctx context.Context, storageDisks []StorageAPI, bucket, prefix 
 				return errVolumeNotEmpty
 			}
 			return nil
+		}, index)
+	}
+
+	return g.Wait()
+}
+
+func statAllDisks(ctx context.Context, storageDisks []StorageAPI, bucket, prefix string) []error {
+	g := errgroup.WithNErrs(len(storageDisks))
+	for index, disk := range storageDisks {
+		if disk == nil {
+			continue
+		}
+		index := index
+		g.Go(func() error {
+			_, err := storageDisks[index].StatVol(ctx, pathJoin(bucket, prefix))
+			if err == errVolumeNotFound {
+				return errFileNotFound
+			}
+			return err
 		}, index)
 	}
 
