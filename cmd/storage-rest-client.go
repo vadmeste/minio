@@ -357,11 +357,12 @@ func (client *storageRESTClient) RenameData(srcVolume, srcPath, dataDir, dstVolu
 	return err
 }
 
-func (client *storageRESTClient) ReadVersion(volume, path, versionID string) (fi FileInfo, err error) {
+func (client *storageRESTClient) ReadVersion(volume, path, versionID string, checkDataDir bool) (fi FileInfo, err error) {
 	values := make(url.Values)
 	values.Set(storageRESTVolume, volume)
 	values.Set(storageRESTFilePath, path)
 	values.Set(storageRESTVersionID, versionID)
+	values.Set(storageRESTCheckDataDir, strconv.FormatBool(checkDataDir))
 
 	respBody, err := client.call(storageRESTMethodReadVersion, values, nil, -1)
 	if err != nil {

@@ -56,7 +56,7 @@ type StorageAPI interface {
 	DeleteVersion(volume, path string, fi FileInfo) error
 	DeleteVersions(volume string, versions []FileInfo) []error
 	WriteMetadata(volume, path string, fi FileInfo) error
-	ReadVersion(volume, path, versionID string) (FileInfo, error)
+	ReadVersion(volume, path, versionID string, checkDataDir bool) (FileInfo, error)
 	RenameData(srcVolume, srcPath, dataDir, dstVolume, dstPath string) error
 
 	// File operations.

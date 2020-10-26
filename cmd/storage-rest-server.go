@@ -319,8 +319,13 @@ func (s *storageRESTServer) ReadVersionHandler(w http.ResponseWriter, r *http.Re
 	volume := vars[storageRESTVolume]
 	filePath := vars[storageRESTFilePath]
 	versionID := vars[storageRESTVersionID]
+	checkDataDir, err := strconv.ParseBool(vars[storageRESTCheckDataDir])
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
 
-	fi, err := s.storage.ReadVersion(volume, filePath, versionID)
+	fi, err := s.storage.ReadVersion(volume, filePath, versionID, checkDataDir)
 	if err != nil {
 		s.writeErrorResponse(w, err)
 		return
@@ -867,7 +872,7 @@ func registerStorageRESTHandlers(router *mux.Router, endpointZones EndpointZones
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodDeleteVersion).HandlerFunc(httpTraceHdrs(server.DeleteVersionHandler)).
 				Queries(restQueries(storageRESTVolume, storageRESTFilePath)...)
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodReadVersion).HandlerFunc(httpTraceHdrs(server.ReadVersionHandler)).
-				Queries(restQueries(storageRESTVolume, storageRESTFilePath, storageRESTVersionID)...)
+				Queries(restQueries(storageRESTVolume, storageRESTFilePath, storageRESTVersionID, storageRESTCheckDataDir)...)
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodRenameData).HandlerFunc(httpTraceHdrs(server.RenameDataHandler)).
 				Queries(restQueries(storageRESTSrcVolume, storageRESTSrcPath, storageRESTDataDir,
 					storageRESTDstVolume, storageRESTDstPath)...)

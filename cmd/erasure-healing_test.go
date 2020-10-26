@@ -66,7 +66,7 @@ func TestHealing(t *testing.T) {
 	}
 
 	disk := er.getDisks()[0]
-	fileInfoPreHeal, err := disk.ReadVersion(bucket, object, "")
+	fileInfoPreHeal, err := disk.ReadVersion(bucket, object, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestHealing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fileInfoPostHeal, err := disk.ReadVersion(bucket, object, "")
+	fileInfoPostHeal, err := disk.ReadVersion(bucket, object, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestHealing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fileInfoPostHeal, err = disk.ReadVersion(bucket, object, "")
+	fileInfoPostHeal, err = disk.ReadVersion(bucket, object, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

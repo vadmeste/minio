@@ -280,12 +280,12 @@ func (p *xlStorageDiskIDCheck) WriteMetadata(volume, path string, fi FileInfo) (
 	return p.storage.WriteMetadata(volume, path, fi)
 }
 
-func (p *xlStorageDiskIDCheck) ReadVersion(volume, path, versionID string) (fi FileInfo, err error) {
+func (p *xlStorageDiskIDCheck) ReadVersion(volume, path, versionID string, checkDataDir bool) (fi FileInfo, err error) {
 	if err = p.checkDiskStale(); err != nil {
 		return fi, err
 	}
 
-	return p.storage.ReadVersion(volume, path, versionID)
+	return p.storage.ReadVersion(volume, path, versionID, checkDataDir)
 }
 
 func (p *xlStorageDiskIDCheck) ReadAll(volume string, path string) (buf []byte, err error) {

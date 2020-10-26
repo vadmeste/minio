@@ -251,11 +251,11 @@ func (d *naughtyDisk) DeleteVersion(volume string, path string, fi FileInfo) (er
 	return d.disk.DeleteVersion(volume, path, fi)
 }
 
-func (d *naughtyDisk) ReadVersion(volume string, path string, versionID string) (fi FileInfo, err error) {
+func (d *naughtyDisk) ReadVersion(volume string, path string, versionID string, checkDataDir bool) (fi FileInfo, err error) {
 	if err := d.calcError(); err != nil {
 		return FileInfo{}, err
 	}
-	return d.disk.ReadVersion(volume, path, versionID)
+	return d.disk.ReadVersion(volume, path, versionID, checkDataDir)
 }
 
 func (d *naughtyDisk) WriteAll(volume string, path string, reader io.Reader) (err error) {
