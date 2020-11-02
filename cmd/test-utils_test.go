@@ -2216,9 +2216,15 @@ func generateTLSCertKey(host string) ([]byte, []byte, error) {
 
 func mustGetZoneEndpoints(args ...string) EndpointZones {
 	endpoints := mustGetNewEndpoints(args...)
+	drivesPerSet := len(args)
+	setCount := 1
+	if len(args) >= 16 {
+		drivesPerSet = 16
+		setCount = len(args) / 16
+	}
 	return []ZoneEndpoints{{
-		SetCount:     1,
-		DrivesPerSet: len(args),
+		SetCount:     setCount,
+		DrivesPerSet: drivesPerSet,
 		Endpoints:    endpoints,
 	}}
 }
