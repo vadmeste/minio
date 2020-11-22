@@ -15,6 +15,24 @@
 # limitations under the License.
 #
 
+
+change_neterror() {
+    sleep 30
+
+    echo "----------"
+    echo "Reduce network errors simulation"
+    echo "----------"
+
+    tc qdisc change dev eth0 root netem delay 100ms 20ms distribution normal loss 1%
+}
+
+add_neterror() {
+    tc qdisc add dev eth0 root netem delay 60ms 20ms distribution normal loss 20%
+}
+
+add_neterror
+change_neterror &
+
 # If command starts with an option, prepend minio.
 if [ "${1}" != "minio" ]; then
     if [ -n "${1}" ]; then
@@ -102,3 +120,4 @@ docker_sse_encryption_env
 
 ## Switch to user if applicable.
 docker_switch_user "$@"
+
