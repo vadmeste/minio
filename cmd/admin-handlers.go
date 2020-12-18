@@ -1497,20 +1497,11 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 
 	defer logger.AuditLog(w, r, "ServerInfo", mustGetClaimsFromToken(r))
 
-	objectAPI, _ := validateAdminReq(ctx, w, r, iampolicy.ServerInfoAdminAction)
-	if objectAPI == nil {
+	// Validate request signature.
+	_, adminAPIErr := checkAdminRequestAuth(ctx, r, iampolicy.ServerInfoAdminAction, "")
+	if adminAPIErr != ErrNone {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(adminAPIErr), r.URL)
 		return
-	}
-
-	buckets := madmin.Buckets{}
-	objects := madmin.Objects{}
-	usage := madmin.Usage{}
-
-	dataUsageInfo, err := loadDataUsageFromBackend(ctx, objectAPI)
-	if err == nil {
-		buckets = madmin.Buckets{Count: dataUsageInfo.BucketsCount}
-		objects = madmin.Objects{Count: dataUsageInfo.ObjectsTotalCount}
-		usage = madmin.Usage{Size: dataUsageInfo.ObjectsTotalSize}
 	}
 
 	vault := fetchVaultStatus()
@@ -1534,10 +1525,55 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	// Get the notification target info
 	notifyTarget := fetchLambdaInfo()
 
-	// Fetching the Storage information, ignore any errors.
-	storageInfo, _ := objectAPI.StorageInfo(ctx, false)
+	domain := globalDomainNames
+	services := madmin.Services{
+		Vault:         vault,
+		LDAP:          ldap,
+		Logger:        log,
+		Audit:         audit,
+		Notifications: notifyTarget,
+	}
 
+	server := getLocalServerProperty(globalEndpoints, r)
+	servers := globalNotificationSys.ServerInfo()
+	servers = append(servers, server)
+
+	mode := "not-initialized"
 	var backend interface{}
+	var storageInfo StorageInfo
+	buckets := madmin.Buckets{}
+	objects := madmin.Objects{}
+	usage := madmin.Usage{}
+
+	objectAPI := newObjectLayerFn()
+	if objectAPI != nil {
+		// The object layer is ready means the cluster is ready
+		mode = "online"
+		// Fetch data usage
+		dataUsageInfo, err := loadDataUsageFromBackend(ctx, objectAPI)
+		if err == nil {
+			buckets = madmin.Buckets{Count: dataUsageInfo.BucketsCount}
+			objects = madmin.Objects{Count: dataUsageInfo.ObjectsTotalCount}
+			usage = madmin.Usage{Size: dataUsageInfo.ObjectsTotalSize}
+		}
+		// Fetching the Storage information, ignore any errors.
+		storageInfo, _ = objectAPI.StorageInfo(ctx, false)
+	} else {
+		// Object layer not ready, we still can get storage info of local disks
+		var localEndpoints Endpoints
+		for _, ep := range globalEndpoints {
+			for _, e := range ep.Endpoints {
+				if e.IsLocal {
+					localEndpoints = append(localEndpoints, e)
+				}
+			}
+		}
+		localDisks, _ := initStorageDisksWithErrors(localEndpoints)
+		defer closeStorageDisks(localDisks)
+
+		storageInfo, _ = getStorageInfo(localDisks, localEndpoints.GetAllStrings())
+	}
+
 	if storageInfo.Backend.Type == BackendType(madmin.Erasure) {
 		backend = madmin.ErasureBackend{
 			Type:             madmin.ErasureType,
@@ -1552,20 +1588,6 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 		backend = madmin.FSBackend{
 			Type: madmin.FsType,
 		}
-	}
-
-	mode := "online"
-	server := getLocalServerProperty(globalEndpoints, r)
-	servers := globalNotificationSys.ServerInfo()
-	servers = append(servers, server)
-
-	domain := globalDomainNames
-	services := madmin.Services{
-		Vault:         vault,
-		LDAP:          ldap,
-		Logger:        log,
-		Audit:         audit,
-		Notifications: notifyTarget,
 	}
 
 	// find all disks which belong to each respective endpoints
@@ -1596,8 +1618,8 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 		Buckets:      buckets,
 		Objects:      objects,
 		Usage:        usage,
-		Services:     services,
 		Backend:      backend,
+		Services:     services,
 		Servers:      servers,
 	}
 
