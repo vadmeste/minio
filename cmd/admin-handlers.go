@@ -461,8 +461,10 @@ func (a adminAPIHandlers) StartProfilingHandler(w http.ResponseWriter, r *http.R
 
 	defer logger.AuditLog(w, r, "StartProfiling", mustGetClaimsFromToken(r))
 
-	objectAPI, _ := validateAdminReq(ctx, w, r, iampolicy.ProfilingAdminAction)
-	if objectAPI == nil {
+	// Validate request signature.
+	_, adminAPIErr := checkAdminRequestAuthType(ctx, r, iampolicy.ProfilingAdminAction, "")
+	if adminAPIErr != ErrNone {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(adminAPIErr), r.URL)
 		return
 	}
 
@@ -559,8 +561,10 @@ func (a adminAPIHandlers) DownloadProfilingHandler(w http.ResponseWriter, r *htt
 
 	defer logger.AuditLog(w, r, "DownloadProfiling", mustGetClaimsFromToken(r))
 
-	objectAPI, _ := validateAdminReq(ctx, w, r, iampolicy.ProfilingAdminAction)
-	if objectAPI == nil {
+	// Validate request signature.
+	_, adminAPIErr := checkAdminRequestAuthType(ctx, r, iampolicy.ProfilingAdminAction, "")
+	if adminAPIErr != ErrNone {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(adminAPIErr), r.URL)
 		return
 	}
 
