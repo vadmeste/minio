@@ -34,6 +34,10 @@ import (
 // GatewayUnsupported list of unsupported call stubs for gateway.
 type GatewayUnsupported struct{}
 
+func (a GatewayUnsupported) BackendInfo() BackendInfo {
+	return BackendInfo{Type: BackendGateway}
+}
+
 // CrawlAndGetDataUsage - crawl is not implemented for gateway
 func (a GatewayUnsupported) CrawlAndGetDataUsage(ctx context.Context, bf *bloomFilter, updates chan<- DataUsageInfo) error {
 	logger.CriticalIf(ctx, errors.New("not implemented"))

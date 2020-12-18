@@ -273,6 +273,20 @@ func (z *erasureServerPools) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+func (z *erasureServerPools) BackendInfo() (b BackendInfo) {
+	scParity := globalStorageClass.GetParityForSC(storageclass.STANDARD)
+	if scParity == 0 {
+		scParity = z.SetDriveCount() / 2
+	}
+
+	b.StandardSCData = z.SetDriveCount() - scParity
+	b.StandardSCParity = scParity
+	rrSCParity := globalStorageClass.GetParityForSC(storageclass.RRS)
+	b.RRSCData = z.SetDriveCount() - rrSCParity
+	b.RRSCParity = rrSCParity
+	return
+}
+
 func (z *erasureServerPools) StorageInfo(ctx context.Context, local bool) (StorageInfo, []error) {
 	var storageInfo StorageInfo
 	storageInfo.Backend.Type = BackendErasure
@@ -291,22 +305,12 @@ func (z *erasureServerPools) StorageInfo(ctx context.Context, local bool) (Stora
 	// Wait for the go routines.
 	g.Wait()
 
+	storageInfo.Backend = z.BackendInfo()
 	for _, lstorageInfo := range storageInfos {
 		storageInfo.Disks = append(storageInfo.Disks, lstorageInfo.Disks...)
 		storageInfo.Backend.OnlineDisks = storageInfo.Backend.OnlineDisks.Merge(lstorageInfo.Backend.OnlineDisks)
 		storageInfo.Backend.OfflineDisks = storageInfo.Backend.OfflineDisks.Merge(lstorageInfo.Backend.OfflineDisks)
 	}
-
-	scParity := globalStorageClass.GetParityForSC(storageclass.STANDARD)
-	if scParity == 0 {
-		scParity = z.SetDriveCount() / 2
-	}
-
-	storageInfo.Backend.StandardSCData = z.SetDriveCount() - scParity
-	storageInfo.Backend.StandardSCParity = scParity
-	rrSCParity := globalStorageClass.GetParityForSC(storageclass.RRS)
-	storageInfo.Backend.RRSCData = z.SetDriveCount() - rrSCParity
-	storageInfo.Backend.RRSCParity = rrSCParity
 
 	var errs []error
 	for i := range z.serverPools {
