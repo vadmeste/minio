@@ -35,6 +35,8 @@ type Metrics struct {
 	bytesReceived uint64
 	bytesSent     uint64
 	requestStats  RequestStats
+
+	disksLatency map[string]map[string]int64
 }
 
 // IncBytesReceived - Increase total bytes received from gateway backend

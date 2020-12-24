@@ -184,6 +184,8 @@ type InfoMessage struct {
 	Services     Services           `json:"services,omitempty"`
 	Backend      interface{}        `json:"backend,omitempty"`
 	Servers      []ServerProperties `json:"servers,omitempty"`
+
+	DisksMetrics map[string]map[string]int64 `json:"disksLatency"`
 }
 
 // Services contains different services information

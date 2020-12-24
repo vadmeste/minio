@@ -236,6 +236,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 }
 
 func (p *xlStorageDiskIDCheck) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) error {
+	defer p.storageMetrics("WalkDir")()
 	if err := p.checkDiskStale(); err != nil {
 		return err
 	}

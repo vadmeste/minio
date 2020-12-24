@@ -1376,8 +1376,36 @@ func (z *erasureServerPools) HealObject(ctx context.Context, bucket, object, ver
 
 // GetMetrics - no op
 func (z *erasureServerPools) GetMetrics(ctx context.Context) (*Metrics, error) {
-	logger.LogIf(ctx, NotImplemented{})
-	return &Metrics{}, NotImplemented{}
+
+	var m Metrics
+	m.disksLatency = make(map[string]map[string]int64)
+
+	var localDisks []*xlStorageDiskIDCheck
+	for _, pool := range z.serverPools {
+		for _, set := range pool.sets {
+			for _, d := range set.getDisks() {
+				if d == nil || !d.IsLocal() {
+					continue
+				}
+				xlDisk, ok := d.(*xlStorageDiskIDCheck)
+				if ok {
+					localDisks = append(localDisks, xlDisk)
+				}
+			}
+		}
+	}
+
+	for _, disk := range localDisks {
+		latency := make(map[string]int64)
+		disk.apisLatencyMu.Lock()
+		for k, v := range disk.apisLatency {
+			latency[k] = int64(v.Avg())
+		}
+		disk.apisLatencyMu.Unlock()
+		m.disksLatency[disk.String()] = latency
+	}
+
+	return &m, nil
 }
 
 func (z *erasureServerPools) getZoneAndSet(id string) (int, int, error) {
