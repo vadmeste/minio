@@ -1527,10 +1527,34 @@ func (z *erasureServerPools) HealObject(ctx context.Context, bucket, object, ver
 	}
 }
 
-// GetMetrics - no op
+// GetMetrics - returns metrics of local disks
 func (z *erasureServerPools) GetMetrics(ctx context.Context) (*BackendMetrics, error) {
-	logger.LogIf(ctx, NotImplemented{})
-	return &BackendMetrics{}, NotImplemented{}
+
+	var localDisks []*xlStorageDiskIDCheck
+	for _, pool := range z.serverPools {
+		for _, set := range pool.sets {
+			for _, d := range set.getDisks() {
+				if d == nil || !d.IsLocal() {
+					continue
+				}
+				xlDisk, ok := d.(*xlStorageDiskIDCheck)
+				if ok {
+					localDisks = append(localDisks, xlDisk)
+				}
+			}
+		}
+	}
+
+	disksLatency := make(map[string]map[string]int64)
+	for _, disk := range localDisks {
+		diskLatency := make(map[string]int64)
+		for i, v := range disk.apisLatency {
+			diskLatency[storageMetric(i).String()] = int64(v.Avg())
+		}
+		disksLatency[disk.String()] = diskLatency
+	}
+
+	return &BackendMetrics{disksLatency: disksLatency}, nil
 }
 
 func (z *erasureServerPools) getPoolAndSet(id string) (int, int, error) {

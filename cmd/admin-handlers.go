@@ -1569,6 +1569,8 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	servers := globalNotificationSys.ServerInfo()
 	servers = append(servers, server)
 
+	var disksMetrics map[string]map[string]int64
+
 	var backend interface{}
 	mode := madmin.ObjectLayerInitializing
 
@@ -1579,6 +1581,12 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	objectAPI := newObjectLayerFn()
 	if objectAPI != nil {
 		mode = madmin.ObjectLayerOnline
+
+		m, err := objectAPI.GetMetrics(ctx)
+		if err == nil {
+			disksMetrics = m.disksLatency
+		}
+
 		// Load data usage
 		dataUsageInfo, err := loadDataUsageFromBackend(ctx, objectAPI)
 		if err == nil {
@@ -1636,6 +1644,7 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 		Services:     services,
 		Backend:      backend,
 		Servers:      servers,
+		DisksMetrics: disksMetrics,
 	}
 
 	// Marshal API response
