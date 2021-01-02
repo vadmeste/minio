@@ -675,6 +675,11 @@ func (er *erasureObjects) listPath(ctx context.Context, o listPathOptions) (entr
 				if len(b.data) == 0 && b.n == 0 && o.Transient {
 					return nil
 				}
+				// We do not really have to save the last listing elements
+				// at this point the user received all data.
+				if b.EOS {
+					return nil
+				}
 				o.debugln(color.Green("listPath:")+" saving block", b.n, "to", o.objectPath(b.n))
 				r, err := hash.NewReader(bytes.NewReader(b.data), int64(len(b.data)), "", "", int64(len(b.data)), false)
 				logger.LogIf(ctx, err)
