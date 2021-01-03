@@ -79,6 +79,8 @@ var globalHandlers = []MiddlewareFunc{
 	// filters HTTP headers which are treated as metadata and are reserved
 	// for internal use only.
 	filterReservedMetadata,
+	// Gather request context
+	newRequestContext,
 	// Add new handlers here.
 }
 

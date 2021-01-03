@@ -86,8 +86,9 @@ func setRequestHeaderSizeLimitHandler(h http.Handler) http.Handler {
 // ServeHTTP restricts the size of the http header to 8 KB and the size
 // of the user-defined metadata to 2 KB.
 func (h requestHeaderSizeLimitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
 	if isHTTPHeaderSizeTooLarge(r.Header) {
-		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrMetadataTooLarge), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrMetadataTooLarge), r.URL, reqInfo.isBrowser)
 		return
 	}
 	h.Handler.ServeHTTP(w, r)
@@ -114,6 +115,42 @@ func isHTTPHeaderSizeTooLarge(header http.Header) bool {
 	return false
 }
 
+const reqInfoKey = "reqInfo"
+
+type requestInfo struct {
+	bucket   string
+	object   string
+	authType authType
+
+	isRPC, isBrowser, isHealthCheck, isMetrics, isAdmin, isLoginSTS bool
+}
+
+type requestContext struct {
+	http.Handler
+}
+
+func newRequestContext(h http.Handler) http.Handler {
+	return requestContext{h}
+}
+
+func (h requestContext) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	bucket, object := request2BucketObjectName(r)
+	reqInfo := &requestInfo{
+		bucket:        bucket,
+		object:        object,
+		authType:      getRequestAuthType(r),
+		isRPC:         guessIsRPCReq(r),
+		isBrowser:     guessIsBrowserReq(r),
+		isHealthCheck: guessIsHealthCheckReq(r),
+		isMetrics:     guessIsMetricsReq(r),
+		isAdmin:       isAdminReq(r),
+		isLoginSTS:    guessIsLoginSTSReq(r),
+	}
+
+	ctx := context.WithValue(r.Context(), reqInfoKey, reqInfo)
+	h.Handler.ServeHTTP(w, r.WithContext(ctx))
+}
+
 // ReservedMetadataPrefix is the prefix of a metadata key which
 // is reserved and for internal use only.
 const (
@@ -132,8 +169,9 @@ func filterReservedMetadata(h http.Handler) http.Handler {
 // ServeHTTP fails if the request contains at least one reserved header which
 // would be treated as metadata.
 func (h reservedMetadataHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
 	if containsReservedMetadata(r.Header) {
-		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrUnsupportedMetadata), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrUnsupportedMetadata), r.URL, reqInfo.isBrowser)
 		return
 	}
 	h.Handler.ServeHTTP(w, r)
@@ -183,8 +221,9 @@ func shouldProxy() bool {
 }
 
 func (h redirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if guessIsRPCReq(r) || guessIsBrowserReq(r) ||
-		guessIsHealthCheckReq(r) || guessIsMetricsReq(r) || isAdminReq(r) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
+	if reqInfo.isRPC || reqInfo.isBrowser ||
+		reqInfo.isHealthCheck || reqInfo.isMetrics || reqInfo.isAdmin {
 		h.handler.ServeHTTP(w, r)
 		return
 	}
@@ -271,8 +310,9 @@ func guessIsRPCReq(req *http.Request) bool {
 }
 
 func (h browserRedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
 	// Re-direction is handled specifically for browser requests.
-	if guessIsBrowserReq(r) {
+	if reqInfo.isBrowser {
 		// Fetch the redirect location if any.
 		redirectLocation := getRedirectLocation(r.URL.Path)
 		if redirectLocation != "" {
@@ -294,7 +334,8 @@ func setBrowserCacheControlHandler(h http.Handler) http.Handler {
 }
 
 func (h cacheControlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && guessIsBrowserReq(r) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
+	if r.Method == http.MethodGet && reqInfo.isBrowser {
 		// For all browser requests set appropriate Cache-Control policies
 		if HasPrefix(r.URL.Path, minioReservedBucketPath+SlashSeparator) {
 			if HasSuffix(r.URL.Path, ".js") || r.URL.Path == minioReservedBucketPath+"/favicon.ico" {
@@ -337,14 +378,15 @@ func setReservedBucketHandler(h http.Handler) http.Handler {
 }
 
 func (h minioReservedBucketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
 	switch {
-	case guessIsRPCReq(r), guessIsBrowserReq(r), guessIsHealthCheckReq(r), guessIsMetricsReq(r), isAdminReq(r):
+	case reqInfo.isRPC, reqInfo.isBrowser, reqInfo.isHealthCheck, reqInfo.isMetrics, reqInfo.isAdmin:
 		// Allow access to reserved buckets
 	default:
 		// For all other requests reject access to reserved buckets
-		bucketName, _ := request2BucketObjectName(r)
+		bucketName := reqInfo.bucket
 		if isMinioReservedBucket(bucketName) || isMinioMetaBucket(bucketName) {
-			browser := guessIsBrowserReq(r)
+			browser := reqInfo.isBrowser
 			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrAllAccessDisabled), r.URL, browser)
 			return
 		}
@@ -400,7 +442,8 @@ func parseAmzDateHeader(req *http.Request) (time.Time, APIErrorCode) {
 }
 
 func (h timeValidityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	aType := getRequestAuthType(r)
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
+	aType := reqInfo.authType
 	if aType == authTypeSigned || aType == authTypeSignedV2 || aType == authTypeStreamingSigned {
 		// Verify if date headers are set, if not reject the request
 		amzDate, errCode := parseAmzDateHeader(r)
@@ -408,14 +451,14 @@ func (h timeValidityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// All our internal APIs are sensitive towards Date
 			// header, for all requests where Date header is not
 			// present we will reject such clients.
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(errCode), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(errCode), r.URL, reqInfo.isBrowser)
 			return
 		}
 		// Verify if the request date header is shifted by less than globalMaxSkewTime parameter in the past
 		// or in the future, reject request otherwise.
 		curTime := UTCNow()
 		if curTime.Sub(amzDate) > globalMaxSkewTime || amzDate.Sub(curTime) > globalMaxSkewTime {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrRequestTimeTooSkewed), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrRequestTimeTooSkewed), r.URL, reqInfo.isBrowser)
 			return
 		}
 	}
@@ -502,19 +545,21 @@ func ignoreNotImplementedObjectResources(req *http.Request) bool {
 
 // Resource handler ServeHTTP() wrapper
 func (h resourceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	bucketName, objectName := request2BucketObjectName(r)
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
+
+	bucketName, objectName := reqInfo.bucket, reqInfo.object
 
 	// If bucketName is present and not objectName check for bucket level resource queries.
 	if bucketName != "" && objectName == "" {
 		if ignoreNotImplementedBucketResources(r) {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, reqInfo.isBrowser)
 			return
 		}
 	}
 	// If bucketName and objectName are present check for its resource queries.
 	if bucketName != "" && objectName != "" {
 		if ignoreNotImplementedObjectResources(r) {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, reqInfo.isBrowser)
 			return
 		}
 	}
@@ -594,22 +639,23 @@ func hasMultipleAuth(r *http.Request) bool {
 }
 
 func (h requestValidityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
 	// Check for bad components in URL path.
 	if hasBadPathComponent(r.URL.Path) {
-		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidResourceName), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidResourceName), r.URL, reqInfo.isBrowser)
 		return
 	}
 	// Check for bad components in URL query values.
 	for _, vv := range r.URL.Query() {
 		for _, v := range vv {
 			if hasBadPathComponent(v) {
-				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidResourceName), r.URL, guessIsBrowserReq(r))
+				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidResourceName), r.URL, reqInfo.isBrowser)
 				return
 			}
 		}
 	}
 	if hasMultipleAuth(r) {
-		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL, reqInfo.isBrowser)
 		return
 	}
 	h.handler.ServeHTTP(w, r)
@@ -624,9 +670,10 @@ type bucketForwardingHandler struct {
 }
 
 func (f bucketForwardingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
 	if globalDNSConfig == nil || len(globalDomainNames) == 0 ||
-		guessIsHealthCheckReq(r) || guessIsMetricsReq(r) ||
-		guessIsRPCReq(r) || guessIsLoginSTSReq(r) || isAdminReq(r) ||
+		reqInfo.isHealthCheck || reqInfo.isMetrics ||
+		reqInfo.isRPC || reqInfo.isLoginSTS || reqInfo.isAdmin ||
 		!globalBucketFederation {
 		f.handler.ServeHTTP(w, r)
 		return
@@ -634,18 +681,18 @@ func (f bucketForwardingHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	// For browser requests, when federation is setup we need to
 	// specifically handle download and upload for browser requests.
-	if globalDNSConfig != nil && len(globalDomainNames) > 0 && guessIsBrowserReq(r) {
+	if globalDNSConfig != nil && len(globalDomainNames) > 0 && reqInfo.isBrowser {
 		var bucket, _ string
 		switch r.Method {
 		case http.MethodPut:
-			if getRequestAuthType(r) == authTypeJWT {
+			if reqInfo.authType == authTypeJWT {
 				bucket, _ = path2BucketObjectWithBasePath(minioReservedBucketPath+"/upload", r.URL.Path)
 			}
 		case http.MethodGet:
 			if t := r.URL.Query().Get("token"); t != "" {
 				bucket, _ = path2BucketObjectWithBasePath(minioReservedBucketPath+"/download", r.URL.Path)
-			} else if getRequestAuthType(r) != authTypeJWT && !strings.HasPrefix(r.URL.Path, minioReservedBucketPath) {
-				bucket, _ = request2BucketObjectName(r)
+			} else if reqInfo.authType != authTypeJWT && !strings.HasPrefix(r.URL.Path, minioReservedBucketPath) {
+				bucket = reqInfo.bucket
 			}
 		}
 		if bucket == "" {
@@ -656,10 +703,10 @@ func (f bucketForwardingHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			if err == dns.ErrNoEntriesFound {
 				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrNoSuchBucket),
-					r.URL, guessIsBrowserReq(r))
+					r.URL, reqInfo.isBrowser)
 			} else {
 				writeErrorResponse(r.Context(), w, toAPIError(r.Context(), err),
-					r.URL, guessIsBrowserReq(r))
+					r.URL, reqInfo.isBrowser)
 			}
 			return
 		}
@@ -676,7 +723,7 @@ func (f bucketForwardingHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	bucket, object := request2BucketObjectName(r)
+	bucket, object := reqInfo.bucket, reqInfo.object
 
 	// Requests in federated setups for STS type calls which are
 	// performed at '/' resource should be routed by the muxer,
@@ -707,9 +754,9 @@ func (f bucketForwardingHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	sr, err := globalDNSConfig.Get(bucket)
 	if err != nil {
 		if err == dns.ErrNoEntriesFound {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrNoSuchBucket), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrNoSuchBucket), r.URL, reqInfo.isBrowser)
 		} else {
-			writeErrorResponse(r.Context(), w, toAPIError(r.Context(), err), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, toAPIError(r.Context(), err), r.URL, reqInfo.isBrowser)
 		}
 		return
 	}
@@ -797,12 +844,13 @@ func setSSETLSHandler(h http.Handler) http.Handler { return sseTLSHandler{h} }
 type sseTLSHandler struct{ handler http.Handler }
 
 func (h sseTLSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
 	// Deny SSE-C requests if not made over TLS
 	if !globalIsTLS && (crypto.SSEC.IsRequested(r.Header) || crypto.SSECopy.IsRequested(r.Header)) {
 		if r.Method == http.MethodHead {
 			writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrInsecureSSECustomerRequest))
 		} else {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInsecureSSECustomerRequest), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInsecureSSECustomerRequest), r.URL, reqInfo.isBrowser)
 		}
 		return
 	}

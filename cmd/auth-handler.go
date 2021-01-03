@@ -497,12 +497,13 @@ func isSupportedS3AuthType(aType authType) bool {
 
 // handler for validating incoming authorization headers.
 func (a authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	aType := getRequestAuthType(r)
-	if isSupportedS3AuthType(aType) {
+	reqInfo := r.Context().Value(reqInfoKey).(*requestInfo)
+
+	if isSupportedS3AuthType(reqInfo.authType) {
 		// Let top level caller validate for anonymous and known signed requests.
 		a.handler.ServeHTTP(w, r)
 		return
-	} else if aType == authTypeJWT {
+	} else if reqInfo.authType == authTypeJWT {
 		// Validate Authorization header if its valid for JWT request.
 		if _, _, authErr := webRequestAuthenticate(r); authErr != nil {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -510,11 +511,11 @@ func (a authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		a.handler.ServeHTTP(w, r)
 		return
-	} else if aType == authTypeSTS {
+	} else if reqInfo.authType == authTypeSTS {
 		a.handler.ServeHTTP(w, r)
 		return
 	}
-	writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrSignatureVersionNotSupported), r.URL, guessIsBrowserReq(r))
+	writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrSignatureVersionNotSupported), r.URL, reqInfo.isBrowser)
 }
 
 func validateSignature(atype authType, r *http.Request) (auth.Credentials, bool, map[string]interface{}, APIErrorCode) {

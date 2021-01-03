@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -236,6 +237,7 @@ func TestSSETLSHandler(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		r := new(http.Request)
+		r = r.WithContext(context.WithValue(r.Context(), reqInfoKey, &requestInfo{}))
 		r.Header = test.Header
 		r.URL = test.URL
 
