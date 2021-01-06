@@ -105,6 +105,20 @@ func (r *ReqInfo) GetTags() []KeyVal {
 	return append([]KeyVal(nil), r.tags...)
 }
 
+// GetTags - returns the user defined tags
+func (r *ReqInfo) GetTagsMap() map[string]string {
+	if r == nil {
+		return nil
+	}
+	r.RLock()
+	defer r.RUnlock()
+	m := make(map[string]string, len(r.tags))
+	for _, t := range r.tags {
+		m[t.Key] = t.Val
+	}
+	return m
+}
+
 // SetReqInfo sets ReqInfo in the context.
 func SetReqInfo(ctx context.Context, req *ReqInfo) context.Context {
 	if ctx == nil {
