@@ -1077,7 +1077,7 @@ func (web *webAPIHandlers) Upload(w http.ResponseWriter, r *http.Request) {
 	// obtain the claims here if possible, for audit logging.
 	claims, owner, authErr := webRequestAuthenticate(r)
 
-	defer logger.AuditLog(w, r, ctx, claims.Map())
+	defer logger.AuditLog(ctx, w, r, claims.Map())
 
 	objectAPI := web.ObjectAPI()
 	if objectAPI == nil {
@@ -1318,7 +1318,7 @@ func (web *webAPIHandlers) Download(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "WebDownload")
 
 	claims, owner, authErr := webTokenAuthenticate(r.URL.Query().Get("token"))
-	defer logger.AuditLog(w, r, ctx, claims.Map())
+	defer logger.AuditLog(ctx, w, r, claims.Map())
 
 	objectAPI := web.ObjectAPI()
 	if objectAPI == nil {
@@ -1517,7 +1517,7 @@ func (web *webAPIHandlers) DownloadZip(w http.ResponseWriter, r *http.Request) {
 	claims, owner, authErr := webTokenAuthenticate(r.URL.Query().Get("token"))
 
 	ctx := newContext(r, w, "WebDownloadZip")
-	defer logger.AuditLog(w, r, ctx, claims.Map())
+	defer logger.AuditLog(ctx, w, r, claims.Map())
 
 	objectAPI := web.ObjectAPI()
 	if objectAPI == nil {
