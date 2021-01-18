@@ -153,6 +153,9 @@ type FileInfo struct {
 	VersionPurgeStatus            VersionPurgeStatusType
 
 	Data []byte // optionally carries object data
+
+	parallelVersions int
+	successorModTime time.Time
 }
 
 // VersionPurgeStatusKey denotes purge status in metadata

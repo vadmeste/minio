@@ -435,6 +435,16 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 
 	objInfo := gr.ObjInfo
 
+	// Automatically remove the object/version is an expiry lifecycle rule can be applied
+	if lc, err := globalLifecycleSys.Get(bucket); err == nil {
+		_, ruleApplied := applyLifecycleRules(ctx, *lc, []lifecycle.Action{lifecycle.DeleteAction, lifecycle.DeleteVersionAction}, objectAPI, objInfo, false)
+		if ruleApplied {
+			w.Header().Set("X-Minio-Notice", "Removed-By-ILM")
+			writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrNoSuchKey))
+			return
+		}
+	}
+
 	// filter object lock metadata if permission does not permit
 	getRetPerms := checkRequestAuthType(ctx, r, policy.GetObjectRetentionAction, bucket, object)
 	legalHoldPerms := checkRequestAuthType(ctx, r, policy.GetObjectLegalHoldAction, bucket, object)
@@ -592,6 +602,16 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 		}
 		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
 		return
+	}
+
+	// Automatically remove the object/version is an expiry lifecycle rule can be applied
+	if lc, err := globalLifecycleSys.Get(bucket); err == nil {
+		_, ruleApplied := applyLifecycleRules(ctx, *lc, []lifecycle.Action{lifecycle.DeleteAction, lifecycle.DeleteVersionAction}, objectAPI, objInfo, false)
+		if ruleApplied {
+			w.Header().Set("X-Minio-Notice", "Removed-By-ILM")
+			writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrNoSuchKey))
+			return
+		}
 	}
 
 	// filter object lock metadata if permission does not permit
