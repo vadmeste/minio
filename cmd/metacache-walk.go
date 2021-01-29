@@ -96,6 +96,12 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 	var scanDir func(path string) error
 	scanDir = func(current string) error {
 		entries, err := s.ListDir(ctx, opts.Bucket, current, -1)
+		// Retry listing if that path has a leading slash because the request
+		// could meant to list current__XL_DIR in the first place.
+		if err == errFileNotFound && strings.HasSuffix(current, slashSeparator) {
+			current = strings.TrimSuffix(current, slashSeparator) + globalDirSuffixWithSlash
+			entries, err = s.ListDir(ctx, opts.Bucket, current, -1)
+		}
 		if err != nil {
 			// Folder could have gone away in-between
 			if err != errVolumeNotFound && err != errFileNotFound {
