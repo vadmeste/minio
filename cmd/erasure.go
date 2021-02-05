@@ -254,7 +254,12 @@ func (er erasureObjects) StorageInfo(ctx context.Context, local bool) (StorageIn
 
 // CrawlAndGetDataUsage will start crawling buckets and send updated totals as they are traversed.
 // Updates are sent on a regular basis and the caller *must* consume them.
-func (er erasureObjects) crawlAndGetDataUsage(ctx context.Context, buckets []BucketInfo, bf *bloomFilter, updates chan<- dataUsageCache) error {
+func (er erasureObjects) crawlAndGetDataUsage(ctx context.Context, buckets []BucketInfo, bf *bloomFilter, updates chan<- dataUsageCache) (ret error) {
+	fmt.Println("erasureObjects.crawlAndGetDataUsage enter")
+	defer func() {
+		fmt.Println("erasureObjects.crawlAndGetDataUsage quit, ret =", ret)
+	}()
+
 	if len(buckets) == 0 {
 		return nil
 	}
@@ -289,6 +294,7 @@ func (er erasureObjects) crawlAndGetDataUsage(ctx context.Context, buckets []Buc
 	}
 	if len(disks) == 0 {
 		logger.Info(color.Green("data-crawl:") + " No disks found, skipping crawl")
+		fmt.Println("erasureObjects.crawlAndGetDataUsage quitting early")
 		return nil
 	}
 
@@ -296,6 +302,7 @@ func (er erasureObjects) crawlAndGetDataUsage(ctx context.Context, buckets []Buc
 	oldCache := dataUsageCache{}
 	err = oldCache.load(ctx, er, dataUsageCacheName)
 	if err != nil {
+		fmt.Println("old cache loading returned an error:", err)
 		return err
 	}
 
@@ -378,6 +385,7 @@ func (er erasureObjects) crawlAndGetDataUsage(ctx context.Context, buckets []Buc
 			disk := disks[i]
 
 			for bucket := range bucketCh {
+				fmt.Println("crawl", bucket, "needs to be crawled")
 				select {
 				case <-ctx.Done():
 					return

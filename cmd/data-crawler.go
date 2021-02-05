@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"strconv"
@@ -43,8 +44,8 @@ import (
 const (
 	dataCrawlSleepPerFolder  = time.Millisecond // Time to wait between folders.
 	dataCrawlSleepDefMult    = 10.0             // Default multiplier for waits between operations.
-	dataCrawlStartDelay      = 5 * time.Minute  // Time to wait on startup and between cycles.
-	dataUsageUpdateDirCycles = 16               // Visit all folders every n cycles.
+	dataCrawlStartDelay      = 1 * time.Minute  // Time to wait on startup and between cycles.
+	dataUsageUpdateDirCycles = 3                // Visit all folders every n cycles.
 
 	healDeleteDangling    = true
 	healFolderIncludeProb = 32  // Include a clean folder one in n cycles.
@@ -67,6 +68,8 @@ func initDataCrawler(ctx context.Context, objAPI ObjectLayer) {
 // The function will block until the context is canceled.
 // There should only ever be one crawler running per cluster.
 func runDataCrawler(ctx context.Context, objAPI ObjectLayer) {
+	fmt.Println("Run data crawler")
+
 	// Load current bloom cycle
 	nextBloomCycle := intDataUpdateTracker.current() + 1
 	var buf bytes.Buffer
@@ -81,11 +84,14 @@ func runDataCrawler(ctx context.Context, objAPI ObjectLayer) {
 		}
 	}
 
+	fmt.Println("Reading bloom cycle from the object API")
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.NewTimer(dataCrawlStartDelay).C:
+			fmt.Println("data crawler kick in")
 			// Wait before starting next cycle and wait on startup.
 			results := make(chan DataUsageInfo, 1)
 			go storeDataUsageInBackend(ctx, objAPI, results)
@@ -343,6 +349,8 @@ func (f *folderScanner) scanQueuedLevels(ctx context.Context, folders []cachedFo
 				activeLifeCycle = f.oldCache.Info.lifeCycle
 				filter = nil
 			}
+		} else {
+			fmt.Println("scanQueuedLevels: lifecycle is null")
 		}
 		if _, ok := f.oldCache.Cache[thisHash.Key()]; filter != nil && ok {
 			// If folder isn't in filter and we have data, skip it completely.
@@ -547,6 +555,8 @@ func (f *folderScanner) deepScanFolder(ctx context.Context, folder cachedFolder)
 				}
 				activeLifeCycle = f.oldCache.Info.lifeCycle
 			}
+		} else {
+			fmt.Println("deep scan folder: lifecycle is null")
 		}
 
 		size, err := f.getSize(

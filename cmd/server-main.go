@@ -367,6 +367,8 @@ func initAllSubsystems(ctx context.Context, newObject ObjectLayer) (err error) {
 }
 
 func startBackgroundOps(ctx context.Context, objAPI ObjectLayer) {
+	fmt.Println(globalMinioPort, "starting background ops")
+
 	// Make sure only 1 crawler is running on the cluster.
 	locker := objAPI.NewNSLock(ctx, minioMetaBucket, "leader")
 	for {

@@ -347,8 +347,15 @@ func (s *xlStorage) waitForLowActiveIO() {
 }
 
 func (s *xlStorage) CrawlAndGetDataUsage(ctx context.Context, cache dataUsageCache) (dataUsageCache, error) {
+	fmt.Println("xlStorage.CrawlAndGetDataUsage enter")
+	defer func() {
+		fmt.Println("xlStorage.CrawlAndGetDataUsage end")
+	}()
+
 	// Check if the current bucket has a configured lifecycle policy
 	lc, err := globalLifecycleSys.Get(cache.Info.Name)
+	activeLC := err == nil && lc.HasActiveRules("", true)
+	fmt.Println("xlStorage.CrawlAndGetDataUsage", err, activeLC)
 	if err == nil && lc.HasActiveRules("", true) {
 		cache.Info.lifeCycle = lc
 	}

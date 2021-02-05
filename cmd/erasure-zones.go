@@ -286,6 +286,10 @@ func (z *erasureZones) StorageInfo(ctx context.Context, local bool) (StorageInfo
 }
 
 func (z *erasureZones) CrawlAndGetDataUsage(ctx context.Context, bf *bloomFilter, updates chan<- DataUsageInfo) error {
+	fmt.Println("erasureZones.CrawlAndGetDataUsage enter")
+	defer func() {
+		fmt.Println("erasureZones.CrawlAndGetDataUsage exit")
+	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
