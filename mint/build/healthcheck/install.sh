@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-#  Mint (C) 2019 Minio, Inc.
+#  Mint (C) 2019-2021 Minio, Inc.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -16,4 +16,4 @@
 #
 
 test_run_dir="$MINT_RUN_CORE_DIR/healthcheck"
-(cd "$test_run_dir" && GO111MODULE=on CGO_ENABLED=0 go build)
+(cd "$test_run_dir" && GO111MODULE=on CGO_ENABLED=0 go build --ldflags "-s -w")

@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-#  Mint (C) 2017 Minio, Inc.
+#  Mint (C) 2017-2021 Minio, Inc.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -23,4 +23,4 @@ fi
 
 test_run_dir="$MINT_RUN_CORE_DIR/minio-go"
 curl -sL -o "${test_run_dir}/main.go" "https://raw.githubusercontent.com/minio/minio-go/${MINIO_GO_VERSION}/functional_tests.go"
-(cd "$test_run_dir" && GO111MODULE=on CGO_ENABLED=0 go build -o minio-go main.go)
+(cd "$test_run_dir" && GO111MODULE=on CGO_ENABLED=0 go build --ldflags "-s -w" -o tests main.go)

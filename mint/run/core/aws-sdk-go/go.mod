@@ -1,4 +1,4 @@
-module mint.minio.io/aws-sdk-go
+module mint.minio.io/aws-sdk-go/tests
 
 go 1.14
 

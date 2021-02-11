@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#  Mint (C) 2017 Minio, Inc.
+#  Mint (C) 2017-2021 Minio, Inc.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -25,4 +25,4 @@ output_log_file="$1"
 error_log_file="$2"
 
 # run tests
-/mint/run/core/minio-go/minio-go 1>>"$output_log_file" 2>"$error_log_file"
+/mint/run/core/minio-go/tests 1>>"$output_log_file" 2>"$error_log_file"

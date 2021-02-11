@@ -1,4 +1,4 @@
-module mint.minio.io/security
+module mint.minio.io/security/tests
 
 go 1.14
 

@@ -25,4 +25,4 @@ output_log_file="$1"
 error_log_file="$2"
 
 # run tests
-/mint/run/core/healthcheck/healthcheck 1>>"$output_log_file" 2>"$error_log_file"
+/mint/run/core/healthcheck/tests 1>>"$output_log_file" 2>"$error_log_file"

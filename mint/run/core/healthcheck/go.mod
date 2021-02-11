@@ -1,4 +1,4 @@
-module mint.minio.io/healthcheck
+module mint.minio.io/healthcheck/tests
 
 go 1.14
 

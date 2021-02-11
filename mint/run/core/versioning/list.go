@@ -506,7 +506,7 @@ func testListObjectVersionsVersionIDContinuation() {
 	}
 
 	if !reflect.DeepEqual(expectedResult, gotResult) {
-		failureLog(function, args, startTime, "", "ListObjectVersions returned unexected listing result", nil).Fatal()
+		failureLog(function, args, startTime, "", "ListObjectVersions returned unexpected listing result", nil).Fatal()
 		return
 	}
 
