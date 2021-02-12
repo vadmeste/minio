@@ -54,6 +54,7 @@ type WalkDirOptions struct {
 // WalkDir will traverse a directory and return all entries found.
 // On success a sorted meta cache stream will be returned.
 func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) error {
+
 	atomic.AddInt32(&s.activeIOCount, 1)
 	defer func() {
 		atomic.AddInt32(&s.activeIOCount, -1)
@@ -127,6 +128,11 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 				continue
 			}
 			if strings.HasSuffix(entry, slashSeparator) {
+				if entry == globalDirSuffixWithSlash {
+					entry = slashSeparator
+					entries[i] = entry
+					continue
+				}
 				if strings.HasSuffix(entry, globalDirSuffixWithSlash) {
 					// Add without extension so it is sorted correctly.
 					entry = strings.TrimSuffix(entry, globalDirSuffixWithSlash) + slashSeparator
@@ -186,7 +192,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 			// If directory entry on stack before this, pop it now.
 			for len(dirStack) > 0 && dirStack[len(dirStack)-1] < meta.name {
 				pop := dirStack[len(dirStack)-1]
-				out <- metaCacheEntry{name: pop}
+				out <- metaCacheEntry{name: decodeDirObject(pop)}
 				if opts.Recursive {
 					// Scan folder we found. Should be in correct sort order where we are.
 					err := scanDir(pop)
@@ -200,6 +206,10 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 			_, isDirObj := dirObjects[entry]
 			if isDirObj {
 				meta.name = meta.name[:len(meta.name)-1] + globalDirSuffixWithSlash
+			}
+
+			if entry == slashSeparator {
+				meta.name = globalDirSuffix
 			}
 
 			meta.metadata, err = ioutil.ReadFile(pathJoin(volumeDir, meta.name, xlStorageFormatFile))
@@ -236,7 +246,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 		// If directory entry left on stack, pop it now.
 		for len(dirStack) > 0 {
 			pop := dirStack[len(dirStack)-1]
-			out <- metaCacheEntry{name: pop}
+			out <- metaCacheEntry{name: decodeDirObject(pop)}
 			if opts.Recursive {
 				// Scan folder we found. Should be in correct sort order where we are.
 				err := scanDir(pop)
