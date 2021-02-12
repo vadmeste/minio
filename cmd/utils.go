@@ -805,7 +805,10 @@ func (t *timedValue) Invalidate() {
 // For ex. "prefix/" is stored as "prefix__XLDIR__"
 func encodeDirObject(object string) string {
 	if HasSuffix(object, slashSeparator) {
-		return strings.TrimSuffix(object, slashSeparator) + globalDirSuffix
+		object = strings.TrimSuffix(object, slashSeparator) + globalDirSuffix
+	}
+	if HasPrefix(object, slashSeparator) {
+		object = globalDirSuffix + strings.TrimPrefix(object, slashSeparator)
 	}
 	return object
 }
@@ -813,7 +816,10 @@ func encodeDirObject(object string) string {
 // Reverse process of encodeDirObject()
 func decodeDirObject(object string) string {
 	if HasSuffix(object, globalDirSuffix) {
-		return strings.TrimSuffix(object, globalDirSuffix) + slashSeparator
+		object = strings.TrimSuffix(object, globalDirSuffix) + slashSeparator
+	}
+	if HasPrefix(object, globalDirSuffix) {
+		object = slashSeparator + strings.TrimPrefix(object, globalDirSuffix)
 	}
 	return object
 }

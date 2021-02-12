@@ -179,13 +179,6 @@ func checkObjectNameForLengthAndSlash(bucket, object string) error {
 			Object: object,
 		}
 	}
-	// Check for slash as prefix in object name
-	if HasPrefix(object, SlashSeparator) {
-		return ObjectNamePrefixAsSlash{
-			Bucket: bucket,
-			Object: object,
-		}
-	}
 	if runtime.GOOS == globalWindowsOSName {
 		// Explicitly disallowed characters on windows.
 		// Avoids most problematic names.
