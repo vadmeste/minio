@@ -51,6 +51,16 @@ type WalkDirOptions struct {
 	FilterPrefix string
 }
 
+func pathLess(s1, s2 string) bool {
+	if s1 == globalDirSuffixWithSlash {
+		s1 = slashSeparator
+	}
+	if s2 == globalDirSuffixWithSlash {
+		s2 = slashSeparator
+	}
+	return s1 < s2
+}
+
 // WalkDir will traverse a directory and return all entries found.
 // On success a sorted meta cache stream will be returned.
 func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) error {
@@ -181,6 +191,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 
 		// Process in sort order.
 		sort.Strings(entries)
+
 		dirStack := make([]string, 0, 5)
 		prefix = "" // Remove prefix after first level.
 		for _, entry := range entries {
@@ -190,7 +201,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 			meta := metaCacheEntry{name: PathJoin(current, entry)}
 
 			// If directory entry on stack before this, pop it now.
-			for len(dirStack) > 0 && dirStack[len(dirStack)-1] < meta.name {
+			for len(dirStack) > 0 && pathLess(dirStack[len(dirStack)-1], meta.name) {
 				pop := dirStack[len(dirStack)-1]
 				out <- metaCacheEntry{name: decodeDirObject(pop)}
 				if opts.Recursive {
