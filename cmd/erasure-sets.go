@@ -1081,6 +1081,7 @@ func (s *erasureSets) CopyObjectPart(ctx context.Context, srcBucket, srcObject, 
 
 // PutObjectPart - writes part of an object to hashedSet based on the object name.
 func (s *erasureSets) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *PutObjReader, opts ObjectOptions) (info PartInfo, err error) {
+	object = encodeDirObject(object)
 	set := s.getHashedSet(object)
 	auditObjectErasureSet(ctx, object, set, s.poolNumber)
 	return set.PutObjectPart(ctx, bucket, object, uploadID, partID, data, opts)
@@ -1088,6 +1089,7 @@ func (s *erasureSets) PutObjectPart(ctx context.Context, bucket, object, uploadI
 
 // GetMultipartInfo - return multipart metadata info uploaded at hashedSet.
 func (s *erasureSets) GetMultipartInfo(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) (result MultipartInfo, err error) {
+	object = encodeDirObject(object)
 	set := s.getHashedSet(object)
 	auditObjectErasureSet(ctx, object, set, s.poolNumber)
 	return set.GetMultipartInfo(ctx, bucket, object, uploadID, opts)
@@ -1095,6 +1097,7 @@ func (s *erasureSets) GetMultipartInfo(ctx context.Context, bucket, object, uplo
 
 // ListObjectParts - lists all uploaded parts to an object in hashedSet.
 func (s *erasureSets) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker int, maxParts int, opts ObjectOptions) (result ListPartsInfo, err error) {
+	object = encodeDirObject(object)
 	set := s.getHashedSet(object)
 	auditObjectErasureSet(ctx, object, set, s.poolNumber)
 	return set.ListObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts, opts)

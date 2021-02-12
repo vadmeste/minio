@@ -825,6 +825,8 @@ func (z *erasureServerPools) ListObjects(ctx context.Context, bucket, prefix, ma
 }
 
 func (z *erasureServerPools) ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (ListMultipartsInfo, error) {
+	prefix = encodeDirObject(prefix)
+
 	if err := checkListMultipartArgs(ctx, bucket, prefix, keyMarker, uploadIDMarker, delimiter, z); err != nil {
 		return ListMultipartsInfo{}, err
 	}
@@ -851,6 +853,7 @@ func (z *erasureServerPools) ListMultipartUploads(ctx context.Context, bucket, p
 
 // Initiate a new multipart upload on a hashedSet based on object name.
 func (z *erasureServerPools) NewMultipartUpload(ctx context.Context, bucket, object string, opts ObjectOptions) (string, error) {
+	object = encodeDirObject(object)
 	if err := checkNewMultipartArgs(ctx, bucket, object, z); err != nil {
 		return "", err
 	}
@@ -880,6 +883,7 @@ func (z *erasureServerPools) CopyObjectPart(ctx context.Context, srcBucket, srcO
 
 // PutObjectPart - writes part of an object to hashedSet based on the object name.
 func (z *erasureServerPools) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *PutObjReader, opts ObjectOptions) (PartInfo, error) {
+	object = encodeDirObject(object)
 	if err := checkPutObjectPartArgs(ctx, bucket, object, z); err != nil {
 		return PartInfo{}, err
 	}
@@ -967,6 +971,7 @@ func (z *erasureServerPools) ListObjectParts(ctx context.Context, bucket, object
 
 // Aborts an in-progress multipart operation on hashedSet based on the object name.
 func (z *erasureServerPools) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) error {
+	object = encodeDirObject(object)
 	if err := checkAbortMultipartArgs(ctx, bucket, object, z); err != nil {
 		return err
 	}
@@ -996,6 +1001,8 @@ func (z *erasureServerPools) AbortMultipartUpload(ctx context.Context, bucket, o
 
 // CompleteMultipartUpload - completes a pending multipart transaction, on hashedSet based on object name.
 func (z *erasureServerPools) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []CompletePart, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	object = encodeDirObject(object)
+
 	if err = checkCompleteMultipartArgs(ctx, bucket, object, z); err != nil {
 		return objInfo, err
 	}
