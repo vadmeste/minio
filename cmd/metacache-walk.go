@@ -120,6 +120,10 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 	prefix := opts.FilterPrefix
 	var scanDir func(path string) error
 	scanDir = func(current string) error {
+		if strings.HasPrefix(current, slashSeparator) {
+			current = globalDirSuffixWithSlash + strings.TrimPrefix(current, slashSeparator)
+		}
+
 		entries, err := s.ListDir(ctx, opts.Bucket, current, -1)
 		if err != nil {
 			// Folder could have gone away in-between
@@ -229,6 +233,9 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 				// It was an object
 				if isDirObj {
 					meta.name = strings.TrimSuffix(meta.name, globalDirSuffixWithSlash) + slashSeparator
+				}
+				if strings.HasPrefix(meta.name, globalDirSuffixWithSlash) {
+					meta.name = slashSeparator + strings.TrimPrefix(meta.name, globalDirSuffixWithSlash)
 				}
 				out <- meta
 			case osIsNotExist(err):

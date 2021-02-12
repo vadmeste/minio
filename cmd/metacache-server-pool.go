@@ -23,7 +23,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -70,14 +69,6 @@ func (z *erasureServerPools) listPath(ctx context.Context, o listPathOptions) (e
 
 	// With max keys of zero we have reached eof, return right here.
 	if o.Limit == 0 {
-		return entries, io.EOF
-	}
-
-	// For delimiter and prefix as '/' we do not list anything at all
-	// along // with the prefix. On a flat namespace with 'prefix'
-	// as '/' we don't have any entries, since all the keys are
-	// of form 'keyName/...'
-	if strings.HasPrefix(o.Prefix, SlashSeparator) {
 		return entries, io.EOF
 	}
 

@@ -197,8 +197,11 @@ func (m *metacache) canBeReplacedBy(other *metacache) bool {
 // baseDirFromPrefix will return the base directory given an object path.
 // For example an object with name prefix/folder/object.ext will return `prefix/folder/`.
 func baseDirFromPrefix(prefix string) string {
+	if prefix == "/" {
+		return "/"
+	}
 	b := path.Dir(prefix)
-	if b == "." || b == "./" || b == "/" {
+	if b == "." || b == "./" {
 		b = ""
 	}
 	if !strings.Contains(prefix, slashSeparator) {
