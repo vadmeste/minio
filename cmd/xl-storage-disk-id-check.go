@@ -18,8 +18,11 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
+
+	"github.com/minio/minio/cmd/logger"
 )
 
 //go:generate stringer -type=storageMetric -trimprefix=storageMetric $GOFILE
@@ -66,14 +69,28 @@ type xlStorageDiskIDCheck struct {
 	storage *xlStorage
 	diskID  string
 
-	apisLatency [metricLast]movingAverage
+	historyInterval    time.Duration
+	historyLength      int
+	apisLatencyHistory [metricLast][]float64 // a day contains 1440 minutes
+	storageMetricsCh   chan storageMetricValue
 }
 
+const (
+	historyInterval = time.Minute
+	historyLength   = 1440 // historyLength x historyInterval = 24 hours
+)
+
 func newXLStorageDiskIDCheck(storage *xlStorage) *xlStorageDiskIDCheck {
-	xl := xlStorageDiskIDCheck{storage: storage}
-	for i := range xl.apisLatency[:] {
-		xl.apisLatency[i] = newMovingAverage(1000, time.Second)
+	xl := xlStorageDiskIDCheck{
+		storage:          storage,
+		storageMetricsCh: make(chan storageMetricValue, 1000),
+		historyInterval:  historyInterval,
+		historyLength:    historyLength, // historyLength x historyInterval = 24 hours
 	}
+	for i := range xl.apisLatencyHistory[:] {
+		xl.apisLatencyHistory[i] = make([]float64, historyLength)
+	}
+	xl.startStorageMetricsMonitoring()
 	return &xl
 }
 
@@ -366,11 +383,46 @@ func (p *xlStorageDiskIDCheck) ReadAll(ctx context.Context, volume string, path 
 	return p.storage.ReadAll(ctx, volume, path)
 }
 
+// Contains one single duration measurement an xl-storage API call
+type storageMetricValue struct {
+	callDuration  time.Duration
+	storageMetric storageMetric
+}
+
+func (p *xlStorageDiskIDCheck) startStorageMetricsMonitoring() {
+	var apisLatency [metricLast]movingAverage
+	// Initialize exponantial moving average for each Storage API call
+	for i := range apisLatency[:] {
+		apisLatency[i] = newMovingAverage(1000)
+	}
+
+	go func() {
+		for {
+			select {
+			case sm, ok := <-p.storageMetricsCh:
+				if !ok {
+					return
+				}
+				apisLatency[sm.storageMetric].Add(float64(sm.callDuration))
+			case <-time.NewTimer(1 * time.Minute).C:
+				for metric := range p.apisLatencyHistory[:] {
+					p.apisLatencyHistory[metric] = append(p.apisLatencyHistory[metric][1:], apisLatency[metric].Avg())
+
+				}
+			}
+		}
+	}()
+}
+
+// Update storage metrics
 func (p *xlStorageDiskIDCheck) storageMetrics(s storageMetric) func() {
 	startTime := time.Now()
 	return func() {
 		callDuration := time.Since(startTime)
-		m := &p.apisLatency[s]
-		m.Add(float64(callDuration))
+		select {
+		case p.storageMetricsCh <- storageMetricValue{callDuration: callDuration, storageMetric: s}:
+		default:
+			logger.LogIf(context.Background(), errors.New("Disk metrics is being overflown"))
+		}
 	}
 }

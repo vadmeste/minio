@@ -22,17 +22,13 @@ type movingAverage struct {
 
 // NewMovingAverage constructs new Simple Moving Average calculator.
 // Window arg must be >= 1.
-func newMovingAverage(window int, frequency time.Duration) movingAverage {
+func newMovingAverage(window int) movingAverage {
 	if window <= 0 {
 		panic("movavg.NewSMA: window should be > 0")
 	}
-	if frequency == 0 {
-		frequency = time.Second
-	}
 	return movingAverage{
-		window:    window,
-		frequency: frequency,
-		vals:      make([]float64, window),
+		window: window,
+		vals:   make([]float64, window),
 	}
 }
 
@@ -40,12 +36,6 @@ func newMovingAverage(window int, frequency time.Duration) movingAverage {
 func (a *movingAverage) Add(v float64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	now := time.Now()
-	if now.Sub(a.lastUpdate) < a.frequency {
-		return
-	}
-	a.lastUpdate = now
 
 	if a.n == a.window {
 		// filled window - most frequent case:

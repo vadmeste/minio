@@ -1548,8 +1548,8 @@ func (z *erasureServerPools) GetMetrics(ctx context.Context) (*BackendMetrics, e
 	disksLatency := make(map[string]map[string]int64)
 	for _, disk := range localDisks {
 		diskLatency := make(map[string]int64)
-		for i, v := range disk.apisLatency {
-			diskLatency[storageMetric(i).String()] = int64(v.Avg())
+		for i, v := range disk.apisLatencyHistory {
+			diskLatency[storageMetric(i).String()] = int64(v[len(v)-1])
 		}
 		disksLatency[disk.String()] = diskLatency
 	}
