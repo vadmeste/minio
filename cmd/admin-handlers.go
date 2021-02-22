@@ -1569,7 +1569,7 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	servers := globalNotificationSys.ServerInfo()
 	servers = append(servers, server)
 
-	var disksMetrics map[string]map[string]int64
+	var disksMetrics map[string]map[string][]float64
 
 	var backend interface{}
 	mode := madmin.ObjectLayerInitializing

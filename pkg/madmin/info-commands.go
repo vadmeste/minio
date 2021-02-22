@@ -183,7 +183,7 @@ type InfoMessage struct {
 	Backend      interface{}        `json:"backend,omitempty"`
 	Servers      []ServerProperties `json:"servers,omitempty"`
 
-	DisksMetrics map[string]map[string]int64 `json:"disksLatency"`
+	DisksMetrics map[string]map[string][]float64 `json:"disksLatency"`
 }
 
 // Services contains different services information

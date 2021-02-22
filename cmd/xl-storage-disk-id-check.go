@@ -71,7 +71,7 @@ type xlStorageDiskIDCheck struct {
 
 	historyInterval    time.Duration
 	historyLength      int
-	apisLatencyHistory [metricLast][]float64 // a day contains 1440 minutes
+	apisLatencyHistory [metricLast][]float64
 	storageMetricsCh   chan storageMetricValue
 }
 
@@ -404,10 +404,9 @@ func (p *xlStorageDiskIDCheck) startStorageMetricsMonitoring() {
 					return
 				}
 				apisLatency[sm.storageMetric].Add(float64(sm.callDuration))
-			case <-time.NewTimer(1 * time.Minute).C:
+			case <-time.NewTimer(historyInterval).C:
 				for metric := range p.apisLatencyHistory[:] {
 					p.apisLatencyHistory[metric] = append(p.apisLatencyHistory[metric][1:], apisLatency[metric].Avg())
-
 				}
 			}
 		}
