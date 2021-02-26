@@ -39,6 +39,7 @@ func registerDistErasureRouters(router *mux.Router, endpointServerPools Endpoint
 
 // List of some generic handlers which are applied for all incoming requests.
 var globalHandlers = []mux.MiddlewareFunc{
+	stdoutLogger,
 	// filters HTTP headers which are treated as metadata and are reserved
 	// for internal use only.
 	filterReservedMetadata,

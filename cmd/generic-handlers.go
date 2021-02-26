@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -88,6 +89,21 @@ func isHTTPHeaderSizeTooLarge(header http.Header) bool {
 		}
 	}
 	return false
+}
+
+func stdoutLogger(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		var s strings.Builder
+		fmt.Fprintf(&s, "%s REQ: method=%s path=%s source=%s\n", now.Format(time.RFC3339Nano), r.Method, r.URL.Path, r.RemoteAddr)
+		for k := range r.Header {
+			fmt.Fprintf(&s, "%s: %s\n", k, r.Header.Get(k))
+		}
+		fmt.Fprintf(&s, "\n")
+		fmt.Printf(s.String())
+
+		h.ServeHTTP(w, r)
+	})
 }
 
 // ReservedMetadataPrefix is the prefix of a metadata key which
