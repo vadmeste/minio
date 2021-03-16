@@ -203,15 +203,31 @@ func GetNewCredentialsWithMetadata(m map[string]interface{}, tokenSecret string)
 	for i := 0; i < accessKeyMaxLen; i++ {
 		keyBytes[i] = alphaNumericTable[keyBytes[i]%alphaNumericTableLen]
 	}
-	cred.AccessKey = string(keyBytes)
+	accessKey := string(keyBytes)
 
 	// Generate secret key.
 	keyBytes, err = readBytes(secretKeyMaxLen)
 	if err != nil {
 		return cred, err
 	}
-	cred.SecretKey = strings.Replace(string([]byte(base64.StdEncoding.EncodeToString(keyBytes))[:secretKeyMaxLen]),
+
+	secretKey := strings.Replace(string([]byte(base64.StdEncoding.EncodeToString(keyBytes))[:secretKeyMaxLen]),
 		"/", "+", -1)
+
+	return CreateNewCredentialsWithMetadata(accessKey, secretKey, m, tokenSecret)
+}
+
+func CreateNewCredentialsWithMetadata(accessKey, secretKey string, m map[string]interface{}, tokenSecret string) (cred Credentials, err error) {
+	if len(accessKey) < accessKeyMinLen || len(accessKey) > accessKeyMaxLen {
+		return Credentials{}, fmt.Errorf("access key length should be between %d and %d", accessKeyMinLen, accessKeyMaxLen)
+	}
+
+	if len(secretKey) < secretKeyMinLen || len(secretKey) > secretKeyMaxLen {
+		return Credentials{}, fmt.Errorf("secret key length should be between %d and %d", secretKeyMinLen, secretKeyMaxLen)
+	}
+
+	cred.AccessKey = accessKey
+	cred.SecretKey = secretKey
 	cred.Status = "on"
 
 	if tokenSecret == "" {

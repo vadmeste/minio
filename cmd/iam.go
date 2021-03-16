@@ -1079,19 +1079,25 @@ func (sys *IAMSys) SetUserStatus(accessKey string, status madmin.AccountStatus) 
 	return nil
 }
 
+type newServiceAccountOpts struct {
+	sessionPolicy *iampolicy.Policy
+	accessKey     string
+	secretKey     string
+}
+
 // NewServiceAccount - create a new service account
-func (sys *IAMSys) NewServiceAccount(ctx context.Context, parentUser string, groups []string, sessionPolicy *iampolicy.Policy) (auth.Credentials, error) {
+func (sys *IAMSys) NewServiceAccount(ctx context.Context, parentUser string, groups []string, opts newServiceAccountOpts) (auth.Credentials, error) {
 	if !sys.Initialized() {
 		return auth.Credentials{}, errServerNotInitialized
 	}
 
 	var policyBuf []byte
-	if sessionPolicy != nil {
-		err := sessionPolicy.Validate()
+	if opts.sessionPolicy != nil {
+		err := opts.sessionPolicy.Validate()
 		if err != nil {
 			return auth.Credentials{}, err
 		}
-		policyBuf, err = json.Marshal(sessionPolicy)
+		policyBuf, err = json.Marshal(opts.sessionPolicy)
 		if err != nil {
 			return auth.Credentials{}, err
 		}
@@ -1144,13 +1150,22 @@ func (sys *IAMSys) NewServiceAccount(ctx context.Context, parentUser string, gro
 		m[iamPolicyClaimNameSA()] = "inherited-policy"
 	}
 
-	secret := globalActiveCred.SecretKey
-	cred, err := auth.GetNewCredentialsWithMetadata(m, secret)
+	var (
+		cred auth.Credentials
+		err  error
+	)
+
+	if len(opts.accessKey) > 0 {
+		cred, err = auth.CreateNewCredentialsWithMetadata(opts.accessKey, opts.secretKey, m, globalActiveCred.SecretKey)
+	} else {
+		cred, err = auth.GetNewCredentialsWithMetadata(m, globalActiveCred.SecretKey)
+	}
 	if err != nil {
 		return auth.Credentials{}, err
 	}
 	cred.ParentUser = parentUser
 	cred.Groups = groups
+	cred.Status = string(madmin.AccountEnabled)
 
 	u := newUserIdentity(cred)
 
@@ -1164,7 +1179,7 @@ func (sys *IAMSys) NewServiceAccount(ctx context.Context, parentUser string, gro
 }
 
 // ListServiceAccounts - lists all services accounts associated to a specific user
-func (sys *IAMSys) ListServiceAccounts(ctx context.Context, accessKey string) ([]string, error) {
+func (sys *IAMSys) ListServiceAccounts(ctx context.Context, accessKey string) ([]auth.Credentials, error) {
 	if !sys.Initialized() {
 		return nil, errServerNotInitialized
 	}
@@ -1174,20 +1189,23 @@ func (sys *IAMSys) ListServiceAccounts(ctx context.Context, accessKey string) ([
 	sys.store.rlock()
 	defer sys.store.runlock()
 
-	var serviceAccounts []string
-	for k, v := range sys.iamUsersMap {
+	var serviceAccounts []auth.Credentials
+	for _, v := range sys.iamUsersMap {
 		if v.IsServiceAccount() && v.ParentUser == accessKey {
-			serviceAccounts = append(serviceAccounts, k)
+			// Hide secret key & session key here
+			v.SecretKey = ""
+			v.SessionToken = ""
+			serviceAccounts = append(serviceAccounts, v)
 		}
 	}
 
 	return serviceAccounts, nil
 }
 
-// GetServiceAccountParent - gets information about a service account
-func (sys *IAMSys) GetServiceAccountParent(ctx context.Context, accessKey string) (string, error) {
+// GetServiceAccount - gets information about a service account
+func (sys *IAMSys) GetServiceAccount(ctx context.Context, accessKey string) (auth.Credentials, error) {
 	if !sys.Initialized() {
-		return "", errServerNotInitialized
+		return auth.Credentials{}, errServerNotInitialized
 	}
 
 	sys.store.rlock()
@@ -1195,9 +1213,13 @@ func (sys *IAMSys) GetServiceAccountParent(ctx context.Context, accessKey string
 
 	sa, ok := sys.iamUsersMap[accessKey]
 	if ok && sa.IsServiceAccount() {
-		return sa.ParentUser, nil
+		// Hide secret & session keys
+		sa.SecretKey = ""
+		sa.SessionToken = ""
+		return sa, nil
 	}
-	return "", nil
+
+	return auth.Credentials{}, errNoSuchServiceAccount
 }
 
 // DeleteServiceAccount - delete a service account

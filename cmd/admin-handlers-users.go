@@ -467,7 +467,7 @@ func (a adminAPIHandlers) AddServiceAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	cred, _, owner, s3Err := validateAdminSignature(ctx, r, "")
+	cred, claims, owner, s3Err := validateAdminSignature(ctx, r, "")
 	if s3Err != ErrNone {
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
 		return
@@ -492,12 +492,47 @@ func (a adminAPIHandlers) AddServiceAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	parentUser := cred.AccessKey
-	if cred.ParentUser != "" {
-		parentUser = cred.ParentUser
+	var (
+		targetUser   string
+		targetGroups []string
+	)
+
+	if globalLDAPConfig.Enabled {
+		// If LDAP enabled, service accounts need
+		// to be created only for LDAP users.
+		if !globalIAMSys.IsAllowed(iampolicy.Args{
+			AccountName:     cred.AccessKey,
+			Action:          iampolicy.CreateUserAdminAction,
+			ConditionValues: getConditionValues(r, "", cred.AccessKey, claims),
+			IsOwner:         false,
+			Claims:          claims,
+		}) {
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAccessDenied), r.URL)
+			return
+		}
+
+		var err error
+		var userDn string
+		targetUser = createReq.ParentUser
+		userDn, targetGroups, err = globalLDAPConfig.LookupUserDN(targetUser)
+		if err != nil {
+			writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+			return
+		}
+		if userDn != targetUser {
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminNoSuchUser), r.URL)
+			return
+		}
+	} else {
+		targetUser = cred.AccessKey
+		if cred.ParentUser != "" {
+			targetUser = cred.ParentUser
+		}
+		targetGroups = cred.Groups
 	}
 
-	newCred, err := globalIAMSys.NewServiceAccount(ctx, parentUser, cred.Groups, createReq.Policy)
+	opts := newServiceAccountOpts{sessionPolicy: createReq.Policy, accessKey: createReq.AccessKey, secretKey: createReq.SecretKey}
+	newCred, err := globalIAMSys.NewServiceAccount(ctx, targetUser, targetGroups, opts)
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
@@ -533,6 +568,81 @@ func (a adminAPIHandlers) AddServiceAccount(w http.ResponseWriter, r *http.Reque
 	writeSuccessResponseJSON(w, encryptedData)
 }
 
+// InfoServiceAccount - GET /minio/admin/v3/info-service-account
+func (a adminAPIHandlers) InfoServiceAccount(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "InfoServiceAccount")
+
+	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
+
+	// Get current object layer instance.
+	objectAPI := newObjectLayerFn()
+	if objectAPI == nil || globalNotificationSys == nil {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
+		return
+	}
+
+	cred, claims, owner, s3Err := validateAdminSignature(ctx, r, "")
+	if s3Err != ErrNone {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
+		return
+	}
+
+	// Disallow creating service accounts by root user.
+	if owner {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminAccountNotEligible), r.URL)
+		return
+	}
+
+	accessKey := mux.Vars(r)["accessKey"]
+	if accessKey == "" {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL)
+		return
+	}
+
+	svcAccount, err := globalIAMSys.GetServiceAccount(ctx, accessKey)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	if !globalIAMSys.IsAllowed(iampolicy.Args{
+		AccountName:     cred.AccessKey,
+		Action:          iampolicy.ListUsersAdminAction,
+		ConditionValues: getConditionValues(r, "", cred.AccessKey, claims),
+		IsOwner:         owner,
+		Claims:          claims,
+	}) {
+		requestUser := cred.AccessKey
+		if cred.ParentUser != "" {
+			requestUser = cred.ParentUser
+		}
+
+		if requestUser != svcAccount.ParentUser {
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAccessDenied), r.URL)
+			return
+		}
+	}
+
+	var infoResp = madmin.InfoServiceAccountResp{
+		ParentUser:    svcAccount.ParentUser,
+		AccountStatus: svcAccount.Status,
+	}
+
+	data, err := json.Marshal(infoResp)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	encryptedData, err := madmin.EncryptData(cred.SecretKey, data)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	writeSuccessResponseJSON(w, encryptedData)
+}
+
 // ListServiceAccounts - GET /minio/admin/v3/list-service-accounts
 func (a adminAPIHandlers) ListServiceAccounts(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "ListServiceAccounts")
@@ -546,7 +656,7 @@ func (a adminAPIHandlers) ListServiceAccounts(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	cred, _, owner, s3Err := validateAdminSignature(ctx, r, "")
+	cred, claims, owner, s3Err := validateAdminSignature(ctx, r, "")
 	if s3Err != ErrNone {
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
 		return
@@ -558,19 +668,42 @@ func (a adminAPIHandlers) ListServiceAccounts(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	parentUser := cred.AccessKey
-	if cred.ParentUser != "" {
-		parentUser = cred.ParentUser
+	var targetAccount string
+
+	user := mux.Vars(r)["user"]
+	if user != "" {
+		if !globalIAMSys.IsAllowed(iampolicy.Args{
+			AccountName:     cred.AccessKey,
+			Action:          iampolicy.ListUsersAdminAction,
+			ConditionValues: getConditionValues(r, "", cred.AccessKey, claims),
+			IsOwner:         owner,
+			Claims:          claims,
+		}) {
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAccessDenied), r.URL)
+			return
+		}
+		targetAccount = user
+	} else {
+		targetAccount = cred.AccessKey
+		if cred.ParentUser != "" {
+			targetAccount = cred.ParentUser
+		}
 	}
 
-	serviceAccounts, err := globalIAMSys.ListServiceAccounts(ctx, parentUser)
+	serviceAccounts, err := globalIAMSys.ListServiceAccounts(ctx, targetAccount)
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
+	var serviceAccountsNames []string
+
+	for _, svc := range serviceAccounts {
+		serviceAccountsNames = append(serviceAccountsNames, svc.AccessKey)
+	}
+
 	var listResp = madmin.ListServiceAccountsResp{
-		Accounts: serviceAccounts,
+		Accounts: serviceAccountsNames,
 	}
 
 	data, err := json.Marshal(listResp)
@@ -601,7 +734,7 @@ func (a adminAPIHandlers) DeleteServiceAccount(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	cred, _, owner, s3Err := validateAdminSignature(ctx, r, "")
+	cred, claims, owner, s3Err := validateAdminSignature(ctx, r, "")
 	if s3Err != ErrNone {
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
 		return
@@ -619,23 +752,32 @@ func (a adminAPIHandlers) DeleteServiceAccount(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	user, err := globalIAMSys.GetServiceAccountParent(ctx, serviceAccount)
+	svcAccount, err := globalIAMSys.GetServiceAccount(ctx, serviceAccount)
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
-	parentUser := cred.AccessKey
-	if cred.ParentUser != "" {
-		parentUser = cred.ParentUser
-	}
+	adminPrivilege := globalIAMSys.IsAllowed(iampolicy.Args{
+		AccountName:     cred.AccessKey,
+		Action:          iampolicy.ListUsersAdminAction,
+		ConditionValues: getConditionValues(r, "", cred.AccessKey, claims),
+		IsOwner:         owner,
+		Claims:          claims,
+	})
 
-	if parentUser != user || user == "" {
-		// The service account belongs to another user but return not
-		// found error to mitigate brute force attacks. or the
-		// serviceAccount doesn't exist.
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServiceAccountNotFound), r.URL)
-		return
+	if !adminPrivilege {
+		parentUser := cred.AccessKey
+		if cred.ParentUser != "" {
+			parentUser = cred.ParentUser
+		}
+		if parentUser != svcAccount.ParentUser {
+			// The service account belongs to another user but return not
+			// found error to mitigate brute force attacks. or the
+			// serviceAccount doesn't exist.
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminServiceAccountNotFound), r.URL)
+			return
+		}
 	}
 
 	err = globalIAMSys.DeleteServiceAccount(ctx, serviceAccount)

@@ -266,9 +266,12 @@ func (adm *AdminClient) SetUserStatus(ctx context.Context, accessKey string, sta
 	return nil
 }
 
-// AddServiceAccountReq is the request body of the add service account admin call
+// AddServiceAccountopts is the request body of the add service account admin call
 type AddServiceAccountReq struct {
-	Policy *iampolicy.Policy `json:"policy,omitempty"`
+	Policy     *iampolicy.Policy `json:"policy,omitempty"`
+	ParentUser string            `json:"parentUser,omitempty"`
+	AccessKey  string            `json:"accessKey"`
+	SecretKey  string            `json:"secretKey"`
 }
 
 // AddServiceAccountResp is the response body of the add service account admin call
@@ -278,16 +281,14 @@ type AddServiceAccountResp struct {
 
 // AddServiceAccount - creates a new service account belonging to the user sending
 // the request while restricting the service account permission by the given policy document.
-func (adm *AdminClient) AddServiceAccount(ctx context.Context, policy *iampolicy.Policy) (auth.Credentials, error) {
-	if policy != nil {
-		if err := policy.Validate(); err != nil {
+func (adm *AdminClient) AddServiceAccount(ctx context.Context, opts AddServiceAccountReq) (auth.Credentials, error) {
+	if opts.Policy != nil {
+		if err := opts.Policy.Validate(); err != nil {
 			return auth.Credentials{}, err
 		}
 	}
 
-	data, err := json.Marshal(AddServiceAccountReq{
-		Policy: policy,
-	})
+	data, err := json.Marshal(opts)
 	if err != nil {
 		return auth.Credentials{}, err
 	}
@@ -331,9 +332,13 @@ type ListServiceAccountsResp struct {
 }
 
 // ListServiceAccounts - list service accounts belonging to the specified user
-func (adm *AdminClient) ListServiceAccounts(ctx context.Context) (ListServiceAccountsResp, error) {
+func (adm *AdminClient) ListServiceAccounts(ctx context.Context, user string) (ListServiceAccountsResp, error) {
+	queryValues := url.Values{}
+	queryValues.Set("user", user)
+
 	reqData := requestData{
-		relPath: adminAPIPrefix + "/list-service-accounts",
+		relPath:     adminAPIPrefix + "/list-service-accounts",
+		queryValues: queryValues,
 	}
 
 	// Execute GET on /minio/admin/v3/list-service-accounts
@@ -357,6 +362,45 @@ func (adm *AdminClient) ListServiceAccounts(ctx context.Context) (ListServiceAcc
 		return ListServiceAccountsResp{}, err
 	}
 	return listResp, nil
+}
+
+// InfoServiceAccountResp is the response body of the info service account call
+type InfoServiceAccountResp struct {
+	ParentUser    string `json:"parentUser"`
+	AccountStatus string `json:"accountStatus"`
+}
+
+// InfoServiceAccount - returns the info of service account belonging to the specified user
+func (adm *AdminClient) InfoServiceAccount(ctx context.Context, accessKey string) (InfoServiceAccountResp, error) {
+	queryValues := url.Values{}
+	queryValues.Set("accessKey", accessKey)
+
+	reqData := requestData{
+		relPath:     adminAPIPrefix + "/info-service-account",
+		queryValues: queryValues,
+	}
+
+	// Execute GET on /minio/admin/v3/info-service-account
+	resp, err := adm.executeMethod(ctx, http.MethodGet, reqData)
+	defer closeResponse(resp)
+	if err != nil {
+		return InfoServiceAccountResp{}, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return InfoServiceAccountResp{}, httpRespToErrorResponse(resp)
+	}
+
+	data, err := DecryptData(adm.getSecretKey(), resp.Body)
+	if err != nil {
+		return InfoServiceAccountResp{}, err
+	}
+
+	var infoResp InfoServiceAccountResp
+	if err = json.Unmarshal(data, &infoResp); err != nil {
+		return InfoServiceAccountResp{}, err
+	}
+	return infoResp, nil
 }
 
 // DeleteServiceAccount - delete a specified service account. The server will reject
