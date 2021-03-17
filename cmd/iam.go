@@ -1202,6 +1202,17 @@ func (sys *IAMSys) ListServiceAccounts(ctx context.Context, accessKey string) ([
 	return serviceAccounts, nil
 }
 
+// SetServiceAccount - gets information about a service account
+func (sys *IAMSys) SetServiceAccount(ctx context.Context, accessKey string, status string) error {
+	if !sys.Initialized() {
+		return auth.Credentials{}, errServerNotInitialized
+	}
+
+	sys.store.lock()
+	defer sys.store.unlock()
+
+}
+
 // GetServiceAccount - gets information about a service account
 func (sys *IAMSys) GetServiceAccount(ctx context.Context, accessKey string) (auth.Credentials, error) {
 	if !sys.Initialized() {
