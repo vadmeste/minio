@@ -326,6 +326,54 @@ func (adm *AdminClient) AddServiceAccount(ctx context.Context, opts AddServiceAc
 	return serviceAccountResp.Credentials, nil
 }
 
+// EditServiceAccountopts is the request body of the edit service account admin call
+type EditServiceAccountReq struct {
+	NewPolicy    *iampolicy.Policy `json:"newPolicy,omitempty"`
+	NewSecretKey string            `json:"newSecretKey,omitempty"`
+	NewStatus    string            `json:"newStatus,omityempty"`
+}
+
+// EditServiceAccount - edit an existing service account
+func (adm *AdminClient) EditServiceAccount(ctx context.Context, accessKey string, opts EditServiceAccountReq) error {
+	if opts.NewPolicy != nil {
+		if err := opts.NewPolicy.Validate(); err != nil {
+			return err
+		}
+	}
+
+	data, err := json.Marshal(opts)
+	if err != nil {
+		return err
+	}
+
+	econfigBytes, err := EncryptData(adm.getSecretKey(), data)
+	if err != nil {
+		return err
+	}
+
+	queryValues := url.Values{}
+	queryValues.Set("accessKey", accessKey)
+
+	reqData := requestData{
+		relPath:     adminAPIPrefix + "/edit-service-account",
+		content:     econfigBytes,
+		queryValues: queryValues,
+	}
+
+	// Execute POST on /minio/admin/v3/edit-service-account to edit a service account
+	resp, err := adm.executeMethod(ctx, http.MethodPost, reqData)
+	defer closeResponse(resp)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusNoContent {
+		return httpRespToErrorResponse(resp)
+	}
+
+	return nil
+}
+
 // ListServiceAccountsResp is the response body of the list service accounts call
 type ListServiceAccountsResp struct {
 	Accounts []string `json:"accounts"`

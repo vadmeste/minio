@@ -568,9 +568,9 @@ func (a adminAPIHandlers) AddServiceAccount(w http.ResponseWriter, r *http.Reque
 	writeSuccessResponseJSON(w, encryptedData)
 }
 
-// SetServiceAccountStatus - POST /minio/admin/v3/set-service-account-status
-func (a adminAPIHandlers) SetServiceAccountStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := newContext(r, w, "SetServiceAccountStatus")
+// EditServiceAccount - POST /minio/admin/v3/edit-service-account
+func (a adminAPIHandlers) EditServiceAccount(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "EditServiceAccount")
 
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
 
@@ -587,16 +587,15 @@ func (a adminAPIHandlers) SetServiceAccountStatus(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Disallow creating service accounts by root user.
-	if owner {
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminAccountNotEligible), r.URL)
+	accessKey := mux.Vars(r)["accessKey"]
+	if accessKey == "" {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL)
 		return
 	}
 
-	accessKey := mux.Vars(r)["accessKey"]
-	status := mux.Vars(r)["status"]
-	if accessKey == "" {
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL)
+	// Disallow editing service accounts by root user.
+	if owner {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminAccountNotEligible), r.URL)
 		return
 	}
 
@@ -608,7 +607,7 @@ func (a adminAPIHandlers) SetServiceAccountStatus(w http.ResponseWriter, r *http
 
 	if !globalIAMSys.IsAllowed(iampolicy.Args{
 		AccountName:     cred.AccessKey,
-		Action:          iampolicy.ListUsersAdminAction,
+		Action:          iampolicy.CreateUserAdminAction,
 		ConditionValues: getConditionValues(r, "", cred.AccessKey, claims),
 		IsOwner:         owner,
 		Claims:          claims,
@@ -624,24 +623,35 @@ func (a adminAPIHandlers) SetServiceAccountStatus(w http.ResponseWriter, r *http
 		}
 	}
 
-	var infoResp = madmin.InfoServiceAccountResp{
-		ParentUser:    svcAccount.ParentUser,
-		AccountStatus: svcAccount.Status,
+	password := cred.SecretKey
+	reqBytes, err := madmin.DecryptData(password, io.LimitReader(r.Body, r.ContentLength))
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErrWithErr(ErrAdminConfigBadJSON, err), r.URL)
+		return
 	}
 
-	data, err := json.Marshal(infoResp)
+	var editReq madmin.EditServiceAccountReq
+	if err = json.Unmarshal(reqBytes, &editReq); err != nil {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErrWithErr(ErrAdminConfigBadJSON, err), r.URL)
+		return
+	}
+
+	opts := editServiceAccountOpts{sessionPolicy: editReq.NewPolicy, secretKey: editReq.NewSecretKey, status: editReq.NewStatus}
+	err = globalIAMSys.EditServiceAccount(ctx, accessKey, opts)
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
-	encryptedData, err := madmin.EncryptData(cred.SecretKey, data)
-	if err != nil {
-		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
-		return
+	// Notify all other Minio peers to reload user the service account
+	for _, nerr := range globalNotificationSys.LoadServiceAccount(accessKey) {
+		if nerr.Err != nil {
+			logger.GetReqInfo(ctx).SetTags("peerAddress", nerr.Host.String())
+			logger.LogIf(ctx, nerr.Err)
+		}
 	}
 
-	writeSuccessResponseJSON(w, encryptedData)
+	writeSuccessNoContent(w)
 }
 
 // InfoServiceAccount - GET /minio/admin/v3/info-service-account

@@ -239,17 +239,20 @@ func CreateNewCredentialsWithMetadata(accessKey, secretKey string, m map[string]
 	if err != nil {
 		return cred, err
 	}
-
-	m["accessKey"] = cred.AccessKey
-	jwt := jwtgo.NewWithClaims(jwtgo.SigningMethodHS512, jwtgo.MapClaims(m))
-
 	cred.Expiration = time.Unix(expiry, 0).UTC()
-	cred.SessionToken, err = jwt.SignedString([]byte(tokenSecret))
+
+	cred.SessionToken, err = JWTSignWithAccessKey(cred.AccessKey, m, tokenSecret)
 	if err != nil {
 		return cred, err
 	}
 
 	return cred, nil
+}
+
+func JWTSignWithAccessKey(accessKey string, m map[string]interface{}, tokenSecret string) (string, error) {
+	m["accessKey"] = accessKey
+	jwt := jwtgo.NewWithClaims(jwtgo.SigningMethodHS512, jwtgo.MapClaims(m))
+	return jwt.SignedString([]byte(tokenSecret))
 }
 
 // GetNewCredentials generates and returns new credential.

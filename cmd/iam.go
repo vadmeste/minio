@@ -1178,6 +1178,67 @@ func (sys *IAMSys) NewServiceAccount(ctx context.Context, parentUser string, gro
 	return cred, nil
 }
 
+type editServiceAccountOpts struct {
+	sessionPolicy *iampolicy.Policy
+	secretKey     string
+	status        string
+}
+
+// EditServiceAccount - edit a service account
+func (sys *IAMSys) EditServiceAccount(ctx context.Context, accessKey string, opts editServiceAccountOpts) error {
+	if !sys.Initialized() {
+		return errServerNotInitialized
+	}
+
+	sys.store.lock()
+	defer sys.store.unlock()
+
+	cr, ok := sys.iamUsersMap[accessKey]
+	if !ok || !cr.IsServiceAccount() {
+		return errNoSuchServiceAccount
+	}
+
+	if opts.secretKey != "" {
+		cr.SecretKey = opts.secretKey
+	}
+
+	if opts.status != "" {
+		cr.Status = opts.status
+	}
+
+	if opts.sessionPolicy != nil {
+		m := make(map[string]interface{})
+		err := opts.sessionPolicy.Validate()
+		if err != nil {
+			return err
+		}
+		policyBuf, err := json.Marshal(opts.sessionPolicy)
+		if err != nil {
+			return err
+		}
+		if len(policyBuf) > 16*humanize.KiByte {
+			return fmt.Errorf("Session policy should not exceed 16 KiB characters")
+		}
+
+		m[iampolicy.SessionPolicyName] = base64.StdEncoding.EncodeToString(policyBuf)
+		m[iamPolicyClaimNameSA()] = "embedded-policy"
+		m[parentClaim] = cr.ParentUser
+		cr.SessionToken, err = auth.JWTSignWithAccessKey(accessKey, m, globalActiveCred.SecretKey)
+		if err != nil {
+			return err
+		}
+	}
+
+	u := newUserIdentity(cr)
+	if err := sys.store.saveUserIdentity(context.Background(), u.Credentials.AccessKey, srvAccUser, u); err != nil {
+		return err
+	}
+
+	sys.iamUsersMap[u.Credentials.AccessKey] = u.Credentials
+
+	return nil
+}
+
 // ListServiceAccounts - lists all services accounts associated to a specific user
 func (sys *IAMSys) ListServiceAccounts(ctx context.Context, accessKey string) ([]auth.Credentials, error) {
 	if !sys.Initialized() {
@@ -1200,17 +1261,6 @@ func (sys *IAMSys) ListServiceAccounts(ctx context.Context, accessKey string) ([
 	}
 
 	return serviceAccounts, nil
-}
-
-// SetServiceAccount - gets information about a service account
-func (sys *IAMSys) SetServiceAccount(ctx context.Context, accessKey string, status string) error {
-	if !sys.Initialized() {
-		return auth.Credentials{}, errServerNotInitialized
-	}
-
-	sys.store.lock()
-	defer sys.store.unlock()
-
 }
 
 // GetServiceAccount - gets information about a service account
