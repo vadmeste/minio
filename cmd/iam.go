@@ -30,7 +30,6 @@ import (
 
 	humanize "github.com/dustin/go-humanize"
 	"github.com/minio/minio-go/v7/pkg/set"
-	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	iampolicy "github.com/minio/minio/pkg/iam/policy"
@@ -1041,15 +1040,14 @@ func (sys *IAMSys) SetUserStatus(accessKey string, status madmin.AccountStatus) 
 		return errIAMActionNotAllowed
 	}
 
+	if status != madmin.AccountEnabled && status != madmin.AccountDisabled {
+		return errors.New("invalid status value")
+	}
+
 	uinfo := newUserIdentity(auth.Credentials{
 		AccessKey: accessKey,
 		SecretKey: cred.SecretKey,
-		Status: func() string {
-			if status == madmin.AccountEnabled {
-				return config.EnableOn
-			}
-			return config.EnableOff
-		}(),
+		Status:    string(status),
 	})
 
 	if err := sys.store.saveUserIdentity(context.Background(), accessKey, regularUser, uinfo); err != nil {
@@ -1226,6 +1224,10 @@ func (sys *IAMSys) CreateUser(accessKey string, uinfo madmin.UserInfo) error {
 	cr, ok := sys.iamUsersMap[accessKey]
 	if cr.IsTemp() && ok {
 		return errIAMActionNotAllowed
+	}
+
+	if uinfo.Status != madmin.AccountEnabled && uinfo.Status != madmin.AccountDisabled {
+		return errors.New("invalid user status")
 	}
 
 	u := newUserIdentity(auth.Credentials{
