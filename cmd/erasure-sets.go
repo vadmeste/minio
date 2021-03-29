@@ -404,10 +404,12 @@ func newErasureSets(ctx context.Context, endpoints Endpoints, storageDisks []Sto
 			}
 			diskID, derr := disk.GetDiskID()
 			if derr != nil {
+				logger.LogIf(context.Background(), derr)
 				continue
 			}
 			m, n, err := findDiskIndexByDiskID(format, diskID)
 			if err != nil {
+				logger.LogIf(context.Background(), err)
 				continue
 			}
 			disk.SetDiskLoc(s.poolIndex, m, n)

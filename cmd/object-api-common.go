@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	humanize "github.com/dustin/go-humanize"
+	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/sync/errgroup"
 )
 
@@ -78,6 +79,7 @@ func newStorageAPI(endpoint Endpoint) (storage StorageAPI, err error) {
 	if endpoint.IsLocal {
 		storage, err := newXLStorage(endpoint)
 		if err != nil {
+			logger.LogIf(context.Background(), err)
 			return nil, err
 		}
 		return newXLStorageDiskIDCheck(storage), nil
