@@ -216,6 +216,9 @@ func registerAPIRouter(router *mux.Router) {
 	for _, router := range routers {
 		rejectUnsupportedAPIs(router)
 		// Object operations
+		// HeadObjectWithTar
+		router.Methods(http.MethodHead).Path("/{object:.*\\.zip/.*}").HandlerFunc(
+			collectAPIStats("headobjectinzip", maxClients(httpTraceHdrs(api.HeadObjectInZIPHandler))))
 		// HeadObject
 		router.Methods(http.MethodHead).Path("/{object:.+}").HandlerFunc(
 			collectAPIStats("headobject", maxClients(httpTraceAll(api.HeadObjectHandler))))
@@ -263,9 +266,13 @@ func registerAPIRouter(router *mux.Router) {
 		// GetObjectLegalHold
 		router.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(
 			collectAPIStats("getobjectlegalhold", maxClients(httpTraceAll(api.GetObjectLegalHoldHandler)))).Queries("legal-hold", "")
+		// GetObject with zip file
+		router.Methods(http.MethodGet).Path("/{object:.*\\.zip/.*}").HandlerFunc(
+			collectAPIStats("getobjectinzip", maxClients(httpTraceHdrs(api.GetObjectFromZIPHandler))))
 		// GetObject
 		router.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(
 			collectAPIStats("getobject", maxClients(httpTraceHdrs(api.GetObjectHandler))))
+
 		// CopyObject
 		router.Methods(http.MethodPut).Path("/{object:.+}").HeadersRegexp(xhttp.AmzCopySource, ".*?(\\/|%2F).*?").HandlerFunc(
 			collectAPIStats("copyobject", maxClients(httpTraceAll(api.CopyObjectHandler))))
@@ -359,6 +366,9 @@ func registerAPIRouter(router *mux.Router) {
 		// ListObjectsV2M
 		router.Methods(http.MethodGet).HandlerFunc(
 			collectAPIStats("listobjectsv2M", maxClients(httpTraceAll(api.ListObjectsV2MHandler)))).Queries("list-type", "2", "metadata", "true")
+		// ListObjectsInZIP
+		router.Methods(http.MethodGet).HandlerFunc(
+			collectAPIStats("listobjectsinzip", maxClients(httpTraceAll(api.ListObjectsInZIPHandler)))).Queries("prefix", "{prefix:.*\\.zip/.*}")
 		// ListObjectsV2
 		router.Methods(http.MethodGet).HandlerFunc(
 			collectAPIStats("listobjectsv2", maxClients(httpTraceAll(api.ListObjectsV2Handler)))).Queries("list-type", "2")

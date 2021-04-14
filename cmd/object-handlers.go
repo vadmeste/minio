@@ -19,10 +19,13 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
+	stdioutil "io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -57,6 +60,7 @@ import (
 	"github.com/minio/minio/pkg/ioutil"
 	xnet "github.com/minio/minio/pkg/net"
 	"github.com/minio/minio/pkg/s3select"
+	"github.com/minio/minio/pkg/zipindex"
 	"github.com/minio/sio"
 )
 
@@ -78,6 +82,8 @@ const (
 	encryptBufferThreshold = 1 << 20
 	// add an input buffer of this size.
 	encryptBufferSize = 1 << 20
+
+	archivePattern = ".zip/"
 )
 
 // setHeadGetRespHeaders - set any requested parameters as response headers.
@@ -299,6 +305,195 @@ func (api objectAPIHandlers) SelectObjectContentHandler(w http.ResponseWriter, r
 		UserAgent:    r.UserAgent(),
 		Host:         handlers.GetSourceIP(r),
 	})
+}
+
+// GetObjectFromZIP - GET Object in a zip archive
+func (api objectAPIHandlers) GetObjectFromZIPHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "GetObjectFromZIP")
+
+	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
+
+	objectAPI := api.ObjectAPI()
+	if objectAPI == nil {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	if crypto.S3.IsRequested(r.Header) || crypto.S3KMS.IsRequested(r.Header) { // If SSE-S3 or SSE-KMS present -> AWS fails with undefined error
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), r.URL, guessIsBrowserReq(r))
+		return
+	}
+	if _, ok := crypto.IsRequested(r.Header); !objectAPI.IsEncryptionSupported() && ok {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	object, err := unescapePath(vars["object"])
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	idx := strings.Index(object, archivePattern)
+	zipPath := object[:idx+len(archivePattern)-1]
+	object = object[idx+len(archivePattern):]
+
+	// get gateway encryption options
+	opts, err := getOpts(ctx, r, bucket, zipPath)
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	getObjectInfo := objectAPI.GetObjectInfo
+	if api.CacheAPI() != nil {
+		getObjectInfo = api.CacheAPI().GetObjectInfo
+	}
+
+	// Check for auth type to return S3 compatible error.
+	// type to return the correct error (NoSuchKey vs AccessDenied)
+	if s3Error := checkRequestAuthType(ctx, r, policy.GetObjectAction, bucket, zipPath); s3Error != ErrNone {
+		if getRequestAuthType(r) == authTypeAnonymous {
+			// As per "Permission" section in
+			// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectGET.html
+			// If the object you request does not exist,
+			// the error Amazon S3 returns depends on
+			// whether you also have the s3:ListBucket
+			// permission.
+			// * If you have the s3:ListBucket permission
+			//   on the bucket, Amazon S3 will return an
+			//   HTTP status code 404 ("no such key")
+			//   error.
+			// * if you don’t have the s3:ListBucket
+			//   permission, Amazon S3 will return an HTTP
+			//   status code 403 ("access denied") error.`
+			if globalPolicySys.IsAllowed(policy.Args{
+				Action:          policy.ListBucketAction,
+				BucketName:      bucket,
+				ConditionValues: getConditionValues(r, "", "", nil),
+				IsOwner:         false,
+			}) {
+				_, err = getObjectInfo(ctx, bucket, zipPath, opts)
+				if toAPIError(ctx, err).Code == "NoSuchKey" {
+					s3Error = ErrNoSuchKey
+				}
+			}
+		}
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	// Validate pre-conditions if any.
+	opts.CheckPrecondFn = func(oi ObjectInfo) bool {
+		if objectAPI.IsEncryptionSupported() {
+			if _, err := DecryptObjectInfo(&oi, r); err != nil {
+				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+				return true
+			}
+		}
+
+		return checkPreconditions(ctx, w, r, oi, opts)
+	}
+
+	zipInfo, err := getObjectInfo(ctx, bucket, zipPath, ObjectOptions{})
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	b, err := base64.StdEncoding.DecodeString(zipInfo.UserDefined["x-minio-zip-info"])
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	file, err := zipindex.FindSerialized(b, object)
+	if err != nil {
+		if err == io.EOF {
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNoSuchKey), r.URL, guessIsBrowserReq(r))
+		} else {
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		}
+		return
+	}
+
+	// New object info
+	fileObjInfo := ObjectInfo{
+		Bucket:  bucket,
+		Name:    object,
+		Size:    int64(file.UncompressedSize64),
+		ModTime: zipInfo.ModTime,
+	}
+
+	rs := &HTTPRangeSpec{Start: int64(file.Offset)}
+	gr, err := objectAPI.GetObjectNInfo(ctx, bucket, zipPath, rs, nil, readLock, ObjectOptions{})
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+	defer gr.Close()
+
+	rc, err := file.Open(gr)
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+	defer rc.Close()
+
+	if err = setObjectHeaders(w, fileObjInfo, nil /* rs */, opts); err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	setHeadGetRespHeaders(w, r.URL.Query())
+
+	statusCodeWritten := false
+	httpWriter := ioutil.WriteOnClose(w)
+	/*
+		if rs != nil || opts.PartNumber > 0 {
+			statusCodeWritten = true
+			w.WriteHeader(http.StatusPartialContent)
+		}
+	*/
+
+	// Write object content to response body
+	if _, err = io.Copy(httpWriter, rc); err != nil {
+		if !httpWriter.HasWritten() && !statusCodeWritten {
+			// write error response only if no data or headers has been written to client yet
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+			return
+		}
+		if !xnet.IsNetworkOrHostDown(err, true) { // do not need to log disconnected clients
+			logger.LogIf(ctx, fmt.Errorf("Unable to write all the data to client %w", err))
+		}
+		return
+	}
+
+	if err = httpWriter.Close(); err != nil {
+		if !httpWriter.HasWritten() && !statusCodeWritten { // write error response only if no data or headers has been written to client yet
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+			return
+		}
+		if !xnet.IsNetworkOrHostDown(err, true) { // do not need to log disconnected clients
+			logger.LogIf(ctx, fmt.Errorf("Unable to write all the data to client %w", err))
+		}
+		return
+	}
+
+	/*
+		// Notify object accessed via a GET request.
+		sendEvent(eventArgs{
+			EventName:    event.ObjectAccessedGet,
+			BucketName:   bucket,
+			Object:       objInfo,
+			ReqParams:    extractReqParams(r),
+			RespElements: extractRespElements(w),
+			UserAgent:    r.UserAgent(),
+			Host:         handlers.GetSourceIP(r),
+		})
+	*/
 }
 
 // GetObjectHandler - GET Object
@@ -539,6 +734,194 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 		UserAgent:    r.UserAgent(),
 		Host:         handlers.GetSourceIP(r),
 	})
+}
+
+func getZIPContentsList(ctx context.Context, getRangeStream func(rs *HTTPRangeSpec) (*GetObjectReader, error)) (zipindex.Files, ObjectInfo, error) {
+	var size = 10 << 10
+	for {
+		rs := &HTTPRangeSpec{IsSuffixLength: true, Start: int64(-size)}
+		gr, err := getRangeStream(rs)
+		if err != nil {
+			return nil, ObjectInfo{}, err
+		}
+		b, err := stdioutil.ReadAll(gr)
+		if err != nil {
+			gr.Close()
+			return nil, ObjectInfo{}, err
+		}
+		gr.Close()
+		if size > len(b) {
+			size = len(b)
+		}
+		files, err := zipindex.ReadDir(b[len(b)-size:], gr.ObjInfo.Size)
+		if err == nil {
+			return files, gr.ObjInfo, nil
+		}
+		var terr zipindex.ErrNeedMoreData
+		if errors.As(err, &terr) {
+			size = int(terr.FromEnd)
+		} else {
+			return nil, ObjectInfo{}, err
+		}
+	}
+}
+
+// HeadObjectInZIPHandler - HEAD Object in zip file
+func (api objectAPIHandlers) HeadObjectInZIPHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "HeadObject")
+
+	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
+
+	objectAPI := api.ObjectAPI()
+	if objectAPI == nil {
+		writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrServerNotInitialized))
+		return
+	}
+	if crypto.S3.IsRequested(r.Header) || crypto.S3KMS.IsRequested(r.Header) { // If SSE-S3 or SSE-KMS present -> AWS fails with undefined error
+		writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrBadRequest))
+		return
+	}
+	if _, ok := crypto.IsRequested(r.Header); !objectAPI.IsEncryptionSupported() && ok {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), r.URL, guessIsBrowserReq(r))
+		return
+	}
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	object, err := unescapePath(vars["object"])
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	idx := strings.Index(object, archivePattern)
+	zipPath := object[:idx+len(archivePattern)-1]
+	object = object[idx+len(archivePattern):]
+
+	getObjectInfo := objectAPI.GetObjectInfo
+	if api.CacheAPI() != nil {
+		getObjectInfo = api.CacheAPI().GetObjectInfo
+	}
+
+	opts, err := getOpts(ctx, r, bucket, zipPath)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
+		return
+	}
+
+	if s3Error := checkRequestAuthType(ctx, r, policy.GetObjectAction, bucket, zipPath); s3Error != ErrNone {
+		if getRequestAuthType(r) == authTypeAnonymous {
+			// As per "Permission" section in
+			// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectHEAD.html
+			// If the object you request does not exist,
+			// the error Amazon S3 returns depends on
+			// whether you also have the s3:ListBucket
+			// permission.
+			// * If you have the s3:ListBucket permission
+			//   on the bucket, Amazon S3 will return an
+			//   HTTP status code 404 ("no such key")
+			//   error.
+			// * if you don’t have the s3:ListBucket
+			//   permission, Amazon S3 will return an HTTP
+			//   status code 403 ("access denied") error.`
+			if globalPolicySys.IsAllowed(policy.Args{
+				Action:          policy.ListBucketAction,
+				BucketName:      bucket,
+				ConditionValues: getConditionValues(r, "", "", nil),
+				IsOwner:         false,
+			}) {
+				_, err = getObjectInfo(ctx, bucket, zipPath, opts)
+				if toAPIError(ctx, err).Code == "NoSuchKey" {
+					s3Error = ErrNoSuchKey
+				}
+			}
+		}
+		writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(s3Error))
+		return
+	}
+
+	var rs *HTTPRangeSpec
+
+	/*
+		// Get request range.
+		var rangeErr error
+		rangeHeader := r.Header.Get(xhttp.Range)
+		if rangeHeader != "" {
+			rs, rangeErr = parseRequestRangeSpec(rangeHeader)
+			// Handle only errInvalidRange. Ignore other
+			// parse error and treat it as regular Get
+			// request like Amazon S3.
+			if rangeErr == errInvalidRange {
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidRange), r.URL, guessIsBrowserReq(r))
+				return
+			}
+			if rangeErr != nil {
+				logger.LogIf(ctx, rangeErr, logger.Application)
+			}
+		}
+	*/
+
+	// Validate pre-conditions if any.
+	opts.CheckPrecondFn = func(oi ObjectInfo) bool {
+		return checkPreconditions(ctx, w, r, oi, opts)
+	}
+
+	zipInfo, err := getObjectInfo(ctx, bucket, zipPath, ObjectOptions{})
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	b, err := base64.StdEncoding.DecodeString(zipInfo.UserDefined["x-minio-zip-info"])
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	file, err := zipindex.FindSerialized(b, object)
+	if err != nil {
+		if err == io.EOF {
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNoSuchKey), r.URL, guessIsBrowserReq(r))
+		} else {
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		}
+		return
+	}
+
+	objInfo := ObjectInfo{
+		Bucket:  bucket,
+		Name:    file.Name,
+		Size:    int64(file.UncompressedSize64),
+		ModTime: zipInfo.ModTime,
+	}
+
+	// Set standard object headers.
+	if err = setObjectHeaders(w, objInfo, nil, opts); err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
+		return
+	}
+
+	// Set any additional requested response headers.
+	setHeadGetRespHeaders(w, r.URL.Query())
+
+	// Successful response.
+	if rs != nil {
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	/*
+		// Notify object accessed via a HEAD request.
+		sendEvent(eventArgs{
+			EventName:    event.ObjectAccessedHead,
+			BucketName:   bucket,
+			Object:       objInfo,
+			ReqParams:    extractReqParams(r),
+			RespElements: extractRespElements(w),
+			UserAgent:    r.UserAgent(),
+			Host:         handlers.GetSourceIP(r),
+		})
+	*/
 }
 
 // HeadObjectHandler - HEAD Object
@@ -1659,6 +2042,32 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
+	}
+
+	if strings.HasSuffix(object, ".zip") {
+		getObjectNInfo := objectAPI.GetObjectNInfo
+		getRangeStream := func(dataRange *HTTPRangeSpec) (*GetObjectReader, error) {
+			return getObjectNInfo(ctx, bucket, object, dataRange, nil, readLock, ObjectOptions{})
+		}
+		files, srcInfo, err := getZIPContentsList(ctx, getRangeStream)
+		if err == nil {
+			b, err := files.Serialize()
+			if err != nil {
+				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+				return
+			}
+			srcInfo.UserDefined["x-minio-zip-info"] = base64.StdEncoding.EncodeToString(b)
+			srcInfo.metadataOnly = true
+
+			copyObject := objectAPI.CopyObject
+			_, err = copyObject(ctx, bucket, object, bucket, object, srcInfo, ObjectOptions{}, ObjectOptions{})
+			if err != nil {
+				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+				return
+			}
+		} else {
+			logger.LogIf(ctx, err)
+		}
 	}
 
 	switch kind, encrypted := crypto.IsEncrypted(objInfo.UserDefined); {
@@ -3074,6 +3483,32 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 		if err != nil {
 			writeErrorResponseWithoutXMLHeader(ctx, w, toAPIError(ctx, err), r.URL)
 			return
+		}
+	}
+
+	if strings.HasSuffix(object, ".zip") {
+		getObjectNInfo := objectAPI.GetObjectNInfo
+		getRangeStream := func(dataRange *HTTPRangeSpec) (*GetObjectReader, error) {
+			return getObjectNInfo(ctx, bucket, object, dataRange, nil, readLock, ObjectOptions{})
+		}
+		files, srcInfo, err := getZIPContentsList(ctx, getRangeStream)
+		if err == nil {
+			b, err := files.Serialize()
+			if err != nil {
+				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+				return
+			}
+			srcInfo.UserDefined["x-minio-zip-info"] = base64.StdEncoding.EncodeToString(b)
+			srcInfo.metadataOnly = true
+
+			copyObject := objectAPI.CopyObject
+			_, err = copyObject(ctx, bucket, object, bucket, object, srcInfo, ObjectOptions{}, ObjectOptions{})
+			if err != nil {
+				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+				return
+			}
+		} else {
+			logger.LogIf(ctx, err)
 		}
 	}
 
