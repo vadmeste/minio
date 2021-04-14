@@ -60,6 +60,7 @@ require (
 	github.com/minio/sha256-simd v1.0.0
 	github.com/minio/simdjson-go v0.2.1
 	github.com/minio/sio v0.2.1
+	github.com/minio/zipindex v0.2.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/montanaflynn/stats v0.5.0
 	github.com/nats-io/nats-server/v2 v2.1.9
@@ -85,7 +86,7 @@ require (
 	github.com/streadway/amqp v1.0.0
 	github.com/tidwall/gjson v1.6.8
 	github.com/tidwall/sjson v1.0.4
-	github.com/tinylib/msgp v1.1.3
+	github.com/tinylib/msgp v1.1.5
 	github.com/valyala/tcplisten v0.0.0-20161114210144-ceec8f93295a
 	github.com/willf/bitset v1.1.11 // indirect
 	github.com/willf/bloom v2.0.3+incompatible

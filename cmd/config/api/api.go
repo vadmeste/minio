@@ -39,6 +39,7 @@ const (
 	apiExtendListCacheLife      = "extend_list_cache_life"
 	apiReplicationWorkers       = "replication_workers"
 	apiReplicationFailedWorkers = "replication_failed_workers"
+	apiZipListing               = "zip_listing"
 
 	EnvAPIRequestsMax              = "MINIO_API_REQUESTS_MAX"
 	EnvAPIRequestsDeadline         = "MINIO_API_REQUESTS_DEADLINE"
@@ -50,6 +51,7 @@ const (
 	EnvAPISecureCiphers            = "MINIO_API_SECURE_CIPHERS"
 	EnvAPIReplicationWorkers       = "MINIO_API_REPLICATION_WORKERS"
 	EnvAPIReplicationFailedWorkers = "MINIO_API_REPLICATION_FAILED_WORKERS"
+	EnvAPIZipListing               = "MINIO_API_ZIP_LISTING"
 )
 
 // Deprecated key and ENVs
@@ -97,6 +99,10 @@ var (
 			Key:   apiReplicationFailedWorkers,
 			Value: "4",
 		},
+		config.KV{
+			Key:   apiZipListing,
+			Value: "off",
+		},
 	}
 )
 
@@ -111,6 +117,7 @@ type Config struct {
 	ExtendListLife           time.Duration `json:"extend_list_cache_life"`
 	ReplicationWorkers       int           `json:"replication_workers"`
 	ReplicationFailedWorkers int           `json:"replication_failed_workers"`
+	ZipListing               bool          `json:"zip_listing"`
 }
 
 // UnmarshalJSON - Validate SS and RRS parity when unmarshalling JSON.
@@ -206,6 +213,11 @@ func LookupConfig(kvs config.KVS) (cfg Config, err error) {
 		return cfg, config.ErrInvalidReplicationWorkersValue(nil).Msg("Minimum number of replication failed workers should be 1")
 	}
 
+	zipListing, err := config.ParseBool(env.Get(EnvAPIZipListing, kvs.Get(apiZipListing)))
+	if err != nil {
+		return cfg, err
+	}
+
 	return Config{
 		RequestsMax:              requestsMax,
 		RequestsDeadline:         requestsDeadline,
@@ -216,5 +228,6 @@ func LookupConfig(kvs config.KVS) (cfg Config, err error) {
 		ExtendListLife:           listLife,
 		ReplicationWorkers:       replicationWorkers,
 		ReplicationFailedWorkers: replicationFailedWorkers,
+		ZipListing:               zipListing,
 	}, nil
 }

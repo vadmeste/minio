@@ -58,5 +58,11 @@ var (
 			Optional:    true,
 			Type:        "number",
 		},
+		config.HelpKV{
+			Key:         apiZipListing,
+			Description: `enable S3 operations on the content of zip files, defaults to "off"`,
+			Optional:    true,
+			Type:        "string",
+		},
 	}
 )

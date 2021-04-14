@@ -19,7 +19,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/base64"
+	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -28,6 +31,7 @@ import (
 
 	"github.com/minio/minio/pkg/bucket/policy"
 	"github.com/minio/minio/pkg/sync/errgroup"
+	"github.com/minio/zipindex"
 )
 
 func concurrentDecryptETag(ctx context.Context, objects []ObjectInfo) {
@@ -236,6 +240,11 @@ func (api objectAPIHandlers) ListObjectsV2Handler(w http.ResponseWriter, r *http
 		return
 	}
 
+	if globalAPIConfig.getZipListing() && strings.Index(prefix, archivePattern) >= 0 {
+		api.listObjectsInZIPHandler(ctx, w, r, bucket, prefix, token, startAfter, delimiter, fetchOwner, maxKeys, encodingType)
+		return
+	}
+
 	listObjectsV2 := objectAPI.ListObjectsV2
 
 	// Inititate a list objects operation based on the input params.
@@ -254,6 +263,112 @@ func (api objectAPIHandlers) ListObjectsV2Handler(w http.ResponseWriter, r *http
 		maxKeys, listObjectsV2Info.Objects, listObjectsV2Info.Prefixes, false)
 
 	// Write success response.
+	writeSuccessResponseXML(w, encodeResponse(response))
+}
+
+func generateListObjectsFromZipIndex(bucket, prefix, delimiter, startAfter, token string, maxKeys int, zipInfo ObjectInfo, files zipindex.Files) (ListObjectsV2Info, error) {
+	var (
+		count           int
+		isTruncated     bool
+		nextToken       string
+		listObjectsInfo ListObjectsV2Info
+	)
+
+	// Always set this
+	listObjectsInfo.ContinuationToken = token
+
+	// Open and iterate through the files in the archive.
+	for _, file := range files {
+		objName := zipInfo.Name + slashSeparator + file.Name
+		if objName <= startAfter || objName <= token {
+			continue
+		}
+		if strings.HasPrefix(objName, prefix) {
+			if count == maxKeys {
+				isTruncated = true
+				break
+			}
+			if delimiter != "" {
+				i := strings.Index(objName[len(prefix):], delimiter)
+				if i >= 0 {
+					commonPrefix := objName[:len(prefix)+i+1]
+					if len(listObjectsInfo.Prefixes) == 0 || commonPrefix != listObjectsInfo.Prefixes[len(listObjectsInfo.Prefixes)-1] {
+						listObjectsInfo.Prefixes = append(listObjectsInfo.Prefixes, commonPrefix)
+						count++
+					}
+					goto next
+				}
+			}
+			listObjectsInfo.Objects = append(listObjectsInfo.Objects, ObjectInfo{
+				Bucket:  bucket,
+				Name:    objName,
+				Size:    int64(file.UncompressedSize64),
+				ModTime: zipInfo.ModTime,
+			})
+			count++
+		}
+	next:
+		nextToken = objName
+	}
+
+	if isTruncated {
+		listObjectsInfo.IsTruncated = true
+		listObjectsInfo.NextContinuationToken = nextToken
+	}
+
+	return listObjectsInfo, nil
+}
+
+// listObjectsInZIPHandler - GET Bucket (List Objects) inside a ZIP file
+// --------------------------
+func (api objectAPIHandlers) listObjectsInZIPHandler(ctx context.Context, w http.ResponseWriter, r *http.Request,
+	bucket, prefix, token, startAfter, delimiter string, fetchOwner bool, maxKeys int, encodingType string) {
+
+	idx := strings.Index(prefix, archivePattern)
+	idx += len(archivePattern)
+	zipPath := prefix[:idx-len(slashSeparator)]
+
+	getObjectInfo := api.ObjectAPI().GetObjectInfo
+	if api.CacheAPI() != nil {
+		getObjectInfo = api.CacheAPI().GetObjectInfo
+	}
+
+	zipInfo, err := getObjectInfo(ctx, bucket, zipPath, ObjectOptions{})
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	b, err := base64.StdEncoding.DecodeString(zipInfo.UserDefined["x-minio-zip-info"])
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	files, err := zipindex.DeserializeFiles(b)
+	if err != nil {
+		if err == io.EOF {
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNoSuchKey), r.URL, guessIsBrowserReq(r))
+		} else {
+			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		}
+		return
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name < files[j].Name
+	})
+
+	listObjectsV2Info, err := generateListObjectsFromZipIndex(bucket, prefix, delimiter, startAfter, token, maxKeys, zipInfo, files)
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
+		return
+	}
+
+	response := generateListObjectsV2Response(bucket, prefix, token, listObjectsV2Info.NextContinuationToken, startAfter,
+		delimiter, encodingType, fetchOwner, listObjectsV2Info.IsTruncated,
+		maxKeys, listObjectsV2Info.Objects, listObjectsV2Info.Prefixes, false)
+
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
 

@@ -40,6 +40,7 @@ type apiConfig struct {
 	totalDriveCount          int
 	replicationWorkers       int
 	replicationFailedWorkers int
+	zipListing               bool
 }
 
 func (t *apiConfig) init(cfg api.Config, setDriveCounts []int) {
@@ -89,6 +90,7 @@ func (t *apiConfig) init(cfg api.Config, setDriveCounts []int) {
 	}
 	t.replicationFailedWorkers = cfg.ReplicationFailedWorkers
 	t.replicationWorkers = cfg.ReplicationWorkers
+	t.zipListing = cfg.ZipListing
 }
 
 func (t *apiConfig) getListQuorum() int {
@@ -96,6 +98,13 @@ func (t *apiConfig) getListQuorum() int {
 	defer t.mu.RUnlock()
 
 	return t.listQuorum
+}
+
+func (t *apiConfig) getZipListing() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return t.zipListing
 }
 
 func (t *apiConfig) getExtendListLife() time.Duration {
