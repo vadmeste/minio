@@ -377,15 +377,16 @@ func (er erasureObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObjec
 //
 // Implements S3 compatible Upload Part API.
 func (er erasureObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, r *PutObjReader, opts ObjectOptions) (pi PartInfo, err error) {
+	var cancel context.CancelFunc
 	uploadIDLock := er.NewNSLock(bucket, pathJoin(object, uploadID))
-	ctx, err = uploadIDLock.GetRLock(ctx, globalOperationTimeout)
+	ctx, cancel, err = uploadIDLock.GetRLock(ctx, globalOperationTimeout)
 	if err != nil {
 		return PartInfo{}, err
 	}
 	readLocked := true
 	defer func() {
 		if readLocked {
-			uploadIDLock.RUnlock()
+			uploadIDLock.RUnlock(cancel)
 		}
 	}()
 
@@ -505,13 +506,13 @@ func (er erasureObjects) PutObjectPart(ctx context.Context, bucket, object, uplo
 
 	// Unlock here before acquiring write locks all concurrent
 	// PutObjectParts would serialize here updating `xl.meta`
-	uploadIDLock.RUnlock()
+	uploadIDLock.RUnlock(cancel)
 	readLocked = false
-	ctx, err = uploadIDLock.GetLock(ctx, globalOperationTimeout)
+	ctx, cancel, err = uploadIDLock.GetLock(ctx, globalOperationTimeout)
 	if err != nil {
 		return PartInfo{}, err
 	}
-	defer uploadIDLock.Unlock()
+	defer uploadIDLock.Unlock(cancel)
 
 	// Validates if upload ID exists.
 	if err = er.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
@@ -591,13 +592,12 @@ func (er erasureObjects) GetMultipartInfo(ctx context.Context, bucket, object, u
 		UploadID: uploadID,
 	}
 
-	var err error
 	uploadIDLock := er.NewNSLock(bucket, pathJoin(object, uploadID))
-	ctx, err = uploadIDLock.GetRLock(ctx, globalOperationTimeout)
+	ctx, cancel, err := uploadIDLock.GetRLock(ctx, globalOperationTimeout)
 	if err != nil {
 		return MultipartInfo{}, err
 	}
-	defer uploadIDLock.RUnlock()
+	defer uploadIDLock.RUnlock(cancel)
 
 	if err := er.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
 		return result, toObjectErr(err, bucket, object, uploadID)
@@ -642,11 +642,11 @@ func (er erasureObjects) GetMultipartInfo(ctx context.Context, bucket, object, u
 // replied back to the client.
 func (er erasureObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, opts ObjectOptions) (result ListPartsInfo, err error) {
 	uploadIDLock := er.NewNSLock(bucket, pathJoin(object, uploadID))
-	ctx, err = uploadIDLock.GetRLock(ctx, globalOperationTimeout)
+	ctx, cancel, err := uploadIDLock.GetRLock(ctx, globalOperationTimeout)
 	if err != nil {
 		return ListPartsInfo{}, err
 	}
-	defer uploadIDLock.RUnlock()
+	defer uploadIDLock.RUnlock(cancel)
 
 	if err := er.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
 		return result, toObjectErr(err, bucket, object, uploadID)
@@ -736,11 +736,11 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 	// Hold read-locks to verify uploaded parts, also disallows
 	// parallel part uploads as well.
 	uploadIDLock := er.NewNSLock(bucket, pathJoin(object, uploadID))
-	ctx, err = uploadIDLock.GetRLock(ctx, globalOperationTimeout)
+	ctx, cancel, err := uploadIDLock.GetRLock(ctx, globalOperationTimeout)
 	if err != nil {
 		return oi, err
 	}
-	defer uploadIDLock.RUnlock()
+	defer uploadIDLock.RUnlock(cancel)
 
 	if err = er.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
 		return oi, toObjectErr(err, bucket, object, uploadID)
@@ -892,11 +892,11 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 
 	// Hold namespace to complete the transaction
 	lk := er.NewNSLock(bucket, object)
-	ctx, err = lk.GetLock(ctx, globalOperationTimeout)
+	ctx, cancel, err = lk.GetLock(ctx, globalOperationTimeout)
 	if err != nil {
 		return oi, err
 	}
-	defer lk.Unlock()
+	defer lk.Unlock(cancel)
 
 	// Rename the multipart object to final location.
 	if onlineDisks, err = renameData(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath,
@@ -935,11 +935,11 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 // operation.
 func (er erasureObjects) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) (err error) {
 	lk := er.NewNSLock(bucket, pathJoin(object, uploadID))
-	ctx, err = lk.GetLock(ctx, globalOperationTimeout)
+	ctx, cancel, err := lk.GetLock(ctx, globalOperationTimeout)
 	if err != nil {
 		return err
 	}
-	defer lk.Unlock()
+	defer lk.Unlock(cancel)
 
 	// Validates if upload ID exists.
 	if err := er.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {

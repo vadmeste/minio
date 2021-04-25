@@ -94,7 +94,7 @@ func runDataScanner(ctx context.Context, objAPI ObjectLayer) {
 	locker := objAPI.NewNSLock(minioMetaBucket, "runDataScanner.lock")
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for {
-		ctx, err = locker.GetLock(ctx, dataScannerLeaderLockTimeout)
+		ctx, _, err = locker.GetLock(ctx, dataScannerLeaderLockTimeout)
 		if err != nil {
 			time.Sleep(time.Duration(r.Float64() * float64(scannerCycle.Get())))
 			continue
