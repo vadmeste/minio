@@ -680,6 +680,60 @@ func extractHealInitParams(vars map[string]string, qParms url.Values, r io.Reade
 	return
 }
 
+func (a adminAPIHandlers) HealErasureSetActionHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "HealErasureSetActionHandler")
+
+	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
+
+	objectAPI, _ := validateAdminReq(ctx, w, r, iampolicy.HealAdminAction)
+	if objectAPI == nil {
+		return
+	}
+
+	// Check if this setup has an erasure coded backend.
+	if !globalIsErasure {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrHealNotImplemented), r.URL)
+		return
+	}
+
+	q := r.URL.Query()
+
+	action := q.Get("action")
+	if action == "" {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrHealNotImplemented), r.URL)
+		return
+	}
+
+	setsQuery := q.Get("sets")
+	if setsQuery == "" {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrHealNotImplemented), r.URL)
+		return
+	}
+
+	var sets []int
+	for _, s := range strings.Split(setsQuery, ",") {
+		set, err := strconv.Atoi(s)
+		if err != nil {
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrHealNotImplemented), r.URL)
+			return
+		}
+		sets = append(sets, set)
+	}
+
+	if len(sets) == 0 {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrHealNotImplemented), r.URL)
+		return
+	}
+
+	switch action {
+	case "start", "resume":
+	case "suspend", "stop":
+	default:
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrHealNotImplemented), r.URL)
+		return
+	}
+}
+
 // HealHandler - POST /minio/admin/v3/heal/
 // -----------
 // Start heal processing and return heal status items.
