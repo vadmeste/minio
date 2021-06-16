@@ -348,7 +348,8 @@ func saveFormatErasure(disk StorageAPI, format *formatErasureV3, heal bool) erro
 
 	diskID := format.Erasure.This
 
-	if err := makeFormatErasureMetaVolumes(disk); err != nil {
+	err := disk.MakeVol(context.TODO(), minioMetaBucket)
+	if err != nil && err != errVolumeExists {
 		return err
 	}
 
@@ -660,42 +661,38 @@ func formatErasureV3Check(reference *formatErasureV3, format *formatErasureV3) e
 	return fmt.Errorf("Disk ID %s not found in any disk sets %s", this, format.Erasure.Sets)
 }
 
-// Initializes meta volume only on local storage disks.
-func initErasureMetaVolumesInLocalDisks(storageDisks []StorageAPI, formats []*formatErasureV3) error {
-
-	// Compute the local disks eligible for meta volumes (re)initialization
-	disksToInit := make([]StorageAPI, 0, len(storageDisks))
-	for index := range storageDisks {
-		if formats[index] == nil || storageDisks[index] == nil || !storageDisks[index].IsLocal() {
-			// Ignore create meta volume on disks which are not found or not local.
-			continue
-		}
-		disksToInit = append(disksToInit, storageDisks[index])
-	}
-
+// Initializes local disks: upgrade format.json, clean tmp data and create meta volumes
+func initErasureLocalDisks(storageDisks []StorageAPI, formats []*formatErasureV3) []error {
 	// Initialize errs to collect errors inside go-routine.
-	g := errgroup.WithNErrs(len(disksToInit))
+	g := errgroup.WithNErrs(len(storageDisks))
 
 	// Initialize all disks in parallel.
-	for index := range disksToInit {
+	for index := range storageDisks {
 		// Initialize a new index variable in each loop so each
 		// goroutine will return its own instance of index variable.
 		index := index
 		g.Go(func() error {
-			return makeFormatErasureMetaVolumes(disksToInit[index])
+			if formats[index] == nil || storageDisks[index] == nil || !storageDisks[index].IsLocal() {
+				return nil
+			}
+			diskLocalPath := storageDisks[index].Endpoint().Path
+			if err := formatErasureMigrate(diskLocalPath); err != nil {
+				return err
+			}
+			if err := formatErasureCleanupTmp(diskLocalPath); err != nil {
+				return err
+			}
+			for _, path := range []string{minioMetaBucket, minioMetaTmpBucket, minioMetaMultipartBucket,
+				minioMetaTmpDeletedBucket, dataUsageBucket, minioMetaTmpBucket + "-old"} {
+				if err := mkdirAll(pathJoin(diskLocalPath, path), 0777); err != nil && err != errVolumeExists {
+					return err
+				}
+			}
+			return nil
 		}, index)
 	}
 
-	// Return upon first error.
-	for _, err := range g.Wait() {
-		if err == nil {
-			continue
-		}
-		return toObjectErr(err, minioMetaBucket)
-	}
-
-	// Return success here.
-	return nil
+	return g.Wait()
 }
 
 // saveUnformattedFormat - populates `format.json` on unformatted disks.
@@ -906,15 +903,6 @@ func ecDrivesNoConfig(setDriveCount int) int {
 		ecDrives = getDefaultParityBlocks(setDriveCount)
 	}
 	return ecDrives
-}
-
-// Make Erasure backend meta volumes.
-func makeFormatErasureMetaVolumes(disk StorageAPI) error {
-	if disk == nil {
-		return errDiskNotFound
-	}
-	// Attempt to create MinIO internal buckets.
-	return disk.MakeVolBulk(context.TODO(), minioMetaBucket, minioMetaTmpBucket, minioMetaMultipartBucket, minioMetaTmpDeletedBucket, dataUsageBucket, minioMetaTmpBucket+"-old")
 }
 
 // Initialize a new set of set formats which will be written to all disks.

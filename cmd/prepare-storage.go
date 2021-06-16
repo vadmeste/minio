@@ -280,9 +280,14 @@ func connectLoadInitFormats(retryCount int, firstDisk bool, endpoints Endpoints,
 		return nil, nil, err
 	}
 
-	// The will always recreate some directories inside .minio.sys of
-	// the local disk such as tmp, multipart and background-ops
-	initErasureMetaVolumesInLocalDisks(storageDisks, formatConfigs)
+	// The will initialize local disks and ignore errors
+	errs = initErasureLocalDisks(storageDisks, formatConfigs)
+	for i, e := range errs {
+		if e != nil {
+			logger.LogIf(GlobalContext, err)
+			storageDisks[i] = nil
+		}
+	}
 
 	return storageDisks, format, nil
 }

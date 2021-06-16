@@ -20,6 +20,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -54,8 +55,12 @@ func TestFixFormatV3(t *testing.T) {
 		formats[j] = newFormat
 	}
 
-	if err = initErasureMetaVolumesInLocalDisks(storageDisks, formats); err != nil {
-		t.Fatal(err)
+	errs = initErasureLocalDisks(storageDisks, formats)
+	for _, e := range errs {
+		fmt.Println(e)
+		if e != nil {
+			t.Fatal(e)
+		}
 	}
 
 	formats[1] = nil
