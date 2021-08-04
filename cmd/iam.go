@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"strings"
 	"sync"
@@ -1591,10 +1592,14 @@ func (sys *IAMSys) purgeExpiredCredentialsForExternalSSO(ctx context.Context) {
 // purgeExpiredCredentialsForLDAP - validates if local credentials are still
 // valid by checking LDAP server if the relevant users are still present.
 func (sys *IAMSys) purgeExpiredCredentialsForLDAP(ctx context.Context) {
+
+	log.Println("calling purgeExpiredCredentialsForLDAP")
+
 	sys.store.lock()
 	parentUsersMap := make(map[string][]auth.Credentials, len(sys.iamUsersMap))
 	parentUsers := make([]string, 0, len(sys.iamUsersMap))
 	for _, cred := range sys.iamUsersMap {
+		log.Println("Found credential", cred.AccessKey, "parent", cred.ParentUser, cred.IsServiceAccount(), cred.IsTemp())
 		if cred.IsServiceAccount() || cred.IsTemp() {
 			if globalLDAPConfig.IsLDAPUserDN(cred.ParentUser) {
 				if _, ok := parentUsersMap[cred.ParentUser]; !ok {
@@ -1606,6 +1611,8 @@ func (sys *IAMSys) purgeExpiredCredentialsForLDAP(ctx context.Context) {
 	}
 	sys.store.unlock()
 
+	log.Println("Parent users:", parentUsers)
+
 	expiredUsers, err := globalLDAPConfig.GetNonExistentUserDistNames(parentUsers)
 	if err != nil {
 		// Log and return on error - perhaps it'll work the next time.
@@ -1613,8 +1620,11 @@ func (sys *IAMSys) purgeExpiredCredentialsForLDAP(ctx context.Context) {
 		return
 	}
 
+	log.Println("Expired users:", expiredUsers)
+
 	for _, expiredUser := range expiredUsers {
 		for _, cred := range parentUsersMap[expiredUser] {
+			log.Println("expire", cred.AccessKey, expiredUser)
 			userType := regUser
 			if cred.IsServiceAccount() {
 				userType = svcUser
