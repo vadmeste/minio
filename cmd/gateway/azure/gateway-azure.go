@@ -819,7 +819,7 @@ func (a *azureObjects) getObject(ctx context.Context, bucket, object string, sta
 	}
 
 	blobURL := a.client.NewContainerURL(bucket).NewBlobURL(object)
-	blob, err := blobURL.Download(ctx, startOffset, length, accessCond, false)
+	blob, err := blobURL.Download(ctx, startOffset, length, accessCond, false, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return azureToObjectError(err, bucket, object)
 	}
@@ -835,7 +835,7 @@ func (a *azureObjects) getObject(ctx context.Context, bucket, object string, sta
 // uses Azure equivalent `BlobURL.GetProperties`.
 func (a *azureObjects) GetObjectInfo(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	blobURL := a.client.NewContainerURL(bucket).NewBlobURL(object)
-	blob, err := blobURL.GetProperties(ctx, azblob.BlobAccessConditions{})
+	blob, err := blobURL.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return objInfo, azureToObjectError(err, bucket, object)
 	}
@@ -902,14 +902,14 @@ func (a *azureObjects) PutObject(ctx context.Context, bucket, object string, r *
 		return objInfo, azureToObjectError(err, bucket, object)
 	}
 	// Query the blob's properties and metadata
-	get, err := blobURL.GetProperties(ctx, azblob.BlobAccessConditions{})
+	get, err := blobURL.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return objInfo, azureToObjectError(err, bucket, object)
 	}
 	// Update the blob's metadata with Content-MD5 after the upload
 	metadata = get.NewMetadata()
 	metadata["md5sum"] = r.MD5CurrentHexString()
-	_, err = blobURL.SetMetadata(ctx, metadata, azblob.BlobAccessConditions{})
+	_, err = blobURL.SetMetadata(ctx, metadata, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return objInfo, azureToObjectError(err, bucket, object)
 	}
@@ -925,7 +925,7 @@ func (a *azureObjects) CopyObject(ctx context.Context, srcBucket, srcObject, des
 	srcBlob := a.client.NewContainerURL(srcBucket).NewBlobURL(srcObject)
 	srcBlobURL := srcBlob.URL()
 
-	srcProps, err := srcBlob.GetProperties(ctx, azblob.BlobAccessConditions{})
+	srcProps, err := srcBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return objInfo, azureToObjectError(err, srcBucket, srcObject)
 	}
@@ -937,7 +937,7 @@ func (a *azureObjects) CopyObject(ctx context.Context, srcBucket, srcObject, des
 	}
 	props.ContentMD5 = srcProps.ContentMD5()
 	azureMeta["md5sum"] = srcInfo.ETag
-	res, err := destBlob.StartCopyFromURL(ctx, srcBlobURL, azureMeta, azblob.ModifiedAccessConditions{}, azblob.BlobAccessConditions{})
+	res, err := destBlob.StartCopyFromURL(ctx, srcBlobURL, azureMeta, azblob.ModifiedAccessConditions{}, azblob.BlobAccessConditions{}, "", nil)
 	if err != nil {
 		return objInfo, azureToObjectError(err, srcBucket, srcObject)
 	}
@@ -945,7 +945,7 @@ func (a *azureObjects) CopyObject(ctx context.Context, srcBucket, srcObject, des
 	// see https://docs.microsoft.com/en-us/rest/api/storageservices/copy-blob#remarks.
 	copyStatus := res.CopyStatus()
 	for copyStatus != azblob.CopyStatusSuccess {
-		destProps, err := destBlob.GetProperties(ctx, azblob.BlobAccessConditions{})
+		destProps, err := destBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
 			return objInfo, azureToObjectError(err, srcBucket, srcObject)
 		}
@@ -956,7 +956,7 @@ func (a *azureObjects) CopyObject(ctx context.Context, srcBucket, srcObject, des
 	// To handle the case where the source object should be copied without its metadata,
 	// the metadata must be removed from the dest. object after the copy completes
 	if len(azureMeta) == 0 {
-		_, err = destBlob.SetMetadata(ctx, azureMeta, azblob.BlobAccessConditions{})
+		_, err = destBlob.SetMetadata(ctx, azureMeta, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
 			return objInfo, azureToObjectError(err, srcBucket, srcObject)
 		}
@@ -1036,7 +1036,7 @@ func getAzureMetadataPartPrefix(uploadID, objectName string) string {
 func (a *azureObjects) checkUploadIDExists(ctx context.Context, bucketName, objectName, uploadID string) (err error) {
 	blobURL := a.client.NewContainerURL(bucketName).NewBlobURL(
 		getAzureMetadataObjectName(objectName, uploadID))
-	_, err = blobURL.GetProperties(ctx, azblob.BlobAccessConditions{})
+	_, err = blobURL.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
 	err = azureToObjectError(err, bucketName, objectName)
 	oerr := minio.ObjectNotFound{
 		Bucket: bucketName,
@@ -1066,7 +1066,7 @@ func (a *azureObjects) NewMultipartUpload(ctx context.Context, bucket, object st
 	}
 
 	blobURL := a.client.NewContainerURL(bucket).NewBlockBlobURL(metadataObject)
-	_, err = blobURL.Upload(ctx, bytes.NewReader(jsonData), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{})
+	_, err = blobURL.Upload(ctx, bytes.NewReader(jsonData), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{}, "", nil, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return "", azureToObjectError(err, bucket, metadataObject)
 	}
@@ -1103,7 +1103,7 @@ func (a *azureObjects) PutObjectPart(ctx context.Context, bucket, object, upload
 		if err != nil {
 			return info, azureToObjectError(err, bucket, object)
 		}
-		_, err = blobURL.StageBlock(ctx, id, bytes.NewReader(body), azblob.LeaseAccessConditions{}, nil)
+		_, err = blobURL.StageBlock(ctx, id, bytes.NewReader(body), azblob.LeaseAccessConditions{}, nil, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
 			return info, azureToObjectError(err, bucket, object)
 		}
@@ -1124,7 +1124,7 @@ func (a *azureObjects) PutObjectPart(ctx context.Context, bucket, object, upload
 	}
 
 	blobURL := a.client.NewContainerURL(bucket).NewBlockBlobURL(metadataObject)
-	_, err = blobURL.Upload(ctx, bytes.NewReader(jsonData), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{})
+	_, err = blobURL.Upload(ctx, bytes.NewReader(jsonData), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{}, "", nil, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return info, azureToObjectError(err, bucket, metadataObject)
 	}
@@ -1198,7 +1198,7 @@ func (a *azureObjects) ListObjectParts(ctx context.Context, bucket, object, uplo
 		}
 		var metadata partMetadataV1
 		blobURL := containerURL.NewBlobURL(blob.Name)
-		blob, err := blobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false)
+		blob, err := blobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
 			return result, azureToObjectError(fmt.Errorf("Unexpected error"), bucket, object)
 		}
@@ -1285,7 +1285,7 @@ func (a *azureObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	}
 
 	blobURL := a.client.NewContainerURL(bucket).NewBlobURL(metadataObject)
-	blob, err := blobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false)
+	blob, err := blobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return objInfo, azureToObjectError(err, bucket, metadataObject)
 	}
@@ -1304,7 +1304,7 @@ func (a *azureObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 		var partMetadata partMetadataV1
 		partMetadataObject := getAzureMetadataPartName(object, uploadID, part.PartNumber)
 		pblobURL := a.client.NewContainerURL(bucket).NewBlobURL(partMetadataObject)
-		pblob, err := pblobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false)
+		pblob, err := pblobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
 			return objInfo, azureToObjectError(err, bucket, partMetadataObject)
 		}
@@ -1334,7 +1334,7 @@ func (a *azureObjects) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	}
 	objMetadata["md5sum"] = minio.ComputeCompleteMultipartMD5(uploadedParts)
 
-	_, err = objBlob.CommitBlockList(ctx, allBlocks, objProperties, objMetadata, azblob.BlobAccessConditions{})
+	_, err = objBlob.CommitBlockList(ctx, allBlocks, objProperties, objMetadata, azblob.BlobAccessConditions{}, "", nil, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return objInfo, azureToObjectError(err, bucket, object)
 	}

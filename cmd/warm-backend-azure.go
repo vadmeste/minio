@@ -74,7 +74,7 @@ func (az *warmBackendAzure) Get(ctx context.Context, object string, rv remoteVer
 		return nil, InvalidRange{}
 	}
 	blobURL := az.serviceURL.NewContainerURL(az.Bucket).NewBlobURL(az.getDest(object))
-	blob, err := blobURL.Download(ctx, opts.startOffset, opts.length, azblob.BlobAccessConditions{}, false)
+	blob, err := blobURL.Download(ctx, opts.startOffset, opts.length, azblob.BlobAccessConditions{}, false, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return nil, azureToObjectError(err, az.Bucket, object)
 	}
