@@ -257,6 +257,9 @@ var (
 	// Allocated etcd endpoint for config and bucket DNS.
 	globalEtcdClient *etcd.Client
 
+	// Cluster replication manager.
+	globalClusterReplMgr ClusterReplMgr
+
 	// Is set to true when Bucket federation is requested
 	// and is 'true' when etcdConfig.PathPrefix is empty
 	globalBucketFederation bool

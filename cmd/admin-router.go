@@ -168,6 +168,15 @@ func registerAdminRouter(router *mux.Router, enableConfigOps bool) {
 		// Set Group Status
 		adminRouter.Methods(http.MethodPut).Path(adminVersion+"/set-group-status").HandlerFunc(gz(httpTraceHdrs(adminAPI.SetGroupStatus))).Queries("group", "{group:.*}").Queries("status", "{status:.*}")
 
+		// Cluster Replication APIs
+		adminRouter.Methods(http.MethodPut).Path(adminVersion + "/cluster-replicate/add").HandlerFunc(gz(httpTraceHdrs(adminAPI.ClusterReplicateAdd)))
+		adminRouter.Methods(http.MethodPut).Path(adminVersion + "/cluster-replicate/disable").HandlerFunc(gz(httpTraceHdrs(adminAPI.ClusterReplicateDisable)))
+		adminRouter.Methods(http.MethodGet).Path(adminVersion + "/cluster-replicate/info").HandlerFunc(gz(httpTraceHdrs(adminAPI.ClusterReplicateInfo)))
+		adminRouter.Methods(http.MethodPut).Path(adminVersion + "/cluster-replicate/peer/join").HandlerFunc(gz(httpTraceHdrs(adminAPI.CRInternalJoin)))
+		adminRouter.Methods(http.MethodPut).Path(adminVersion+"/cluster-replicate/peer/bucket-ops").HandlerFunc(gz(httpTraceHdrs(adminAPI.CRInternalBucketOps))).Queries("bucket", "{bucket:.*}").Queries("operation", "{operation:.*}")
+		adminRouter.Methods(http.MethodPut).Path(adminVersion + "/cluster-replicate/peer/iam-item").HandlerFunc(gz(httpTraceHdrs(adminAPI.CRInternalReplicateIAMItem)))
+		adminRouter.Methods(http.MethodPut).Path(adminVersion + "/cluster-replicate/peer/bucket-meta").HandlerFunc(gz(httpTraceHdrs(adminAPI.CRInternalReplicateBucketItem)))
+
 		if globalIsDistErasure || globalIsErasure {
 			// GetBucketQuotaConfig
 			adminRouter.Methods(http.MethodGet).Path(adminVersion+"/get-bucket-quota").HandlerFunc(

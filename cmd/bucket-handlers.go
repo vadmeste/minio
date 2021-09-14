@@ -37,6 +37,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 
+	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio-go/v7/pkg/tags"
 	sse "github.com/minio/minio/internal/bucket/encryption"
@@ -778,6 +779,13 @@ func (api objectAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Req
 	// Load updated bucket metadata into memory.
 	globalNotificationSys.LoadBucketMetadata(GlobalContext, bucket)
 
+	// Call cluster replication hook
+	err = globalClusterReplMgr.MakeBucketHook(ctx, bucket, opts)
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		return
+	}
+
 	// Make sure to add Location information here only for bucket
 	if cp := pathClean(r.URL.Path); cp != "" {
 		w.Header().Set(xhttp.Location, cp) // Clean any trailing slashes.
@@ -1258,6 +1266,12 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 
 	globalNotificationSys.DeleteBucketMetadata(ctx, bucket)
 
+	// Call cluster replication hook.
+	if err := globalClusterReplMgr.DeleteBucketHook(ctx, bucket, forceDelete); err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		return
+	}
+
 	// Write success response.
 	writeSuccessNoContent(w)
 
@@ -1319,6 +1333,20 @@ func (api objectAPIHandlers) PutBucketObjectLockConfigHandler(w http.ResponseWri
 	}
 
 	if err = globalBucketMetadataSys.Update(bucket, objectLockConfig, configData); err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		return
+	}
+
+	// Call cluster replication hook.
+	//
+	// We encode the xml bytes as base64 to ensure there are no encoding
+	// errors.
+	cfgStr := base64.StdEncoding.EncodeToString(configData)
+	if err = globalClusterReplMgr.BucketMetaHook(ctx, madmin.CRBucketMeta{
+		Type:             madmin.CRBucketMetaTypeObjectLockConfig,
+		Bucket:           bucket,
+		ObjectLockConfig: &cfgStr,
+	}); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
@@ -1414,6 +1442,20 @@ func (api objectAPIHandlers) PutBucketTaggingHandler(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Call cluster replication hook.
+	//
+	// We encode the xml bytes as base64 to ensure there are no encoding
+	// errors.
+	cfgStr := base64.StdEncoding.EncodeToString(configData)
+	if err = globalClusterReplMgr.BucketMetaHook(ctx, madmin.CRBucketMeta{
+		Type:   madmin.CRBucketMetaTypeTags,
+		Bucket: bucket,
+		Tags:   &cfgStr,
+	}); err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		return
+	}
+
 	// Write success response.
 	writeSuccessResponseHeadersOnly(w)
 }
@@ -1478,6 +1520,14 @@ func (api objectAPIHandlers) DeleteBucketTaggingHandler(w http.ResponseWriter, r
 	}
 
 	if err := globalBucketMetadataSys.Update(bucket, bucketTaggingConfig, nil); err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		return
+	}
+
+	if err := globalClusterReplMgr.BucketMetaHook(ctx, madmin.CRBucketMeta{
+		Type:   madmin.CRBucketMetaTypeTags,
+		Bucket: bucket,
+	}); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}
