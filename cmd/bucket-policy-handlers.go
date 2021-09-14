@@ -24,6 +24,7 @@ import (
 
 	humanize "github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
+	"github.com/minio/madmin-go"
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/bucket/policy"
 )
@@ -99,6 +100,16 @@ func (api objectAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Call cluster replication hook.
+	if err = globalClusterReplMgr.BucketMetaHook(ctx, madmin.CRBucketMeta{
+		Type:   madmin.CRBucketMetaTypePolicy,
+		Bucket: bucket,
+		Policy: bucketPolicy,
+	}); err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		return
+	}
+
 	// Success.
 	writeSuccessNoContent(w)
 }
@@ -130,6 +141,15 @@ func (api objectAPIHandlers) DeleteBucketPolicyHandler(w http.ResponseWriter, r 
 	}
 
 	if err := globalBucketMetadataSys.Update(bucket, bucketPolicyConfig, nil); err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		return
+	}
+
+	// Call cluster replication hook.
+	if err := globalClusterReplMgr.BucketMetaHook(ctx, madmin.CRBucketMeta{
+		Type:   madmin.CRBucketMetaTypePolicy,
+		Bucket: bucket,
+	}); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
 	}

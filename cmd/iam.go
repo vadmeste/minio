@@ -514,6 +514,7 @@ func (sys *IAMSys) Load(ctx context.Context, store IAMStorageAPI) error {
 		return err
 	}
 
+	// load service accounts
 	if err := store.loadUsers(ctx, svcUser, iamUsersMap); err != nil {
 		return err
 	}
@@ -1423,6 +1424,37 @@ func (sys *IAMSys) GetServiceAccount(ctx context.Context, accessKey string) (aut
 	sa.SessionToken = ""
 
 	return sa, embeddedPolicy, nil
+}
+
+// GetLDAPUserForSvcAcc - gets the LDAP short username who owns the given
+// service account. Returns an empty username if the account is not owned by an
+// LDAP user.
+func (sys *IAMSys) GetLDAPUserForSvcAcc(ctx context.Context, accessKey string) (string, error) {
+	if !sys.Initialized() {
+		return "", errServerNotInitialized
+	}
+
+	if sys.usersSysType != LDAPUsersSysType {
+		return "", nil
+	}
+
+	sys.store.rlock()
+	defer sys.store.runlock()
+
+	sa, ok := sys.iamUsersMap[accessKey]
+	if !ok || !sa.IsServiceAccount() {
+		return "", errNoSuchServiceAccount
+	}
+
+	jwtClaims, err := auth.ExtractClaims(sa.SessionToken, globalActiveCred.SecretKey)
+	if err == nil {
+		lu, ok := jwtClaims.Lookup(ldapUserN)
+		if ok {
+			return lu, nil
+		}
+	}
+
+	return "", nil
 }
 
 // DeleteServiceAccount - delete a service account

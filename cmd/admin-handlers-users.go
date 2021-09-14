@@ -28,6 +28,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
+	"github.com/minio/minio/internal/auth"
 	"github.com/minio/minio/internal/config/dns"
 	"github.com/minio/minio/internal/logger"
 	iampolicy "github.com/minio/pkg/iam/policy"
@@ -631,6 +632,34 @@ func (a adminAPIHandlers) AddServiceAccount(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// Call hook for cluster-replication.
+	//
+	// FIXME: This wont work in an OpenID situation as the parent credential
+	// may not be present on peer clusters to provide inherited policies.
+	// Also, we should not be replicating root user's service account - as
+	// they are not authenticated by a common external IDP, so we skip when
+	// opts.ldapUser == "".
+	if opts.ldapUsername != "" {
+		err = globalClusterReplMgr.IAMChangeHook(ctx, madmin.CRIAMItem{
+			Type: madmin.CRIAMItemSvcAcc,
+			SvcAccChange: &madmin.CRSvcAccChange{
+				Create: &madmin.CRSvcAccCreate{
+					Parent:        newCred.ParentUser,
+					AccessKey:     newCred.AccessKey,
+					SecretKey:     newCred.SecretKey,
+					Groups:        newCred.Groups,
+					LDAPUser:      opts.ldapUsername,
+					SessionPolicy: opts.sessionPolicy,
+					Status:        auth.AccountOn,
+				},
+			},
+		})
+		if err != nil {
+			writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+			return
+		}
+	}
+
 	var createResp = madmin.AddServiceAccountResp{
 		Credentials: madmin.Credentials{
 			AccessKey: newCred.AccessKey,
@@ -742,6 +771,30 @@ func (a adminAPIHandlers) UpdateServiceAccount(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	// Call cluster replication hook. Only LDAP accounts are supported for
+	// replication operations.
+	u, err := globalIAMSys.GetLDAPUserForSvcAcc(ctx, accessKey)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+	if u != "" {
+		err = globalClusterReplMgr.IAMChangeHook(ctx, madmin.CRIAMItem{
+			Type: madmin.CRIAMItemSvcAcc,
+			SvcAccChange: &madmin.CRSvcAccChange{
+				Update: &madmin.CRSvcAccUpdate{
+					AccessKey:     accessKey,
+					SecretKey:     opts.secretKey,
+					Status:        opts.status,
+					SessionPolicy: opts.sessionPolicy,
+				},
+			},
+		})
+		if err != nil {
+			writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+			return
+		}
+	}
 	writeSuccessNoContent(w)
 }
 
@@ -973,6 +1026,28 @@ func (a adminAPIHandlers) DeleteServiceAccount(w http.ResponseWriter, r *http.Re
 		if nerr.Err != nil {
 			logger.GetReqInfo(ctx).SetTags("peerAddress", nerr.Host.String())
 			logger.LogIf(ctx, nerr.Err)
+		}
+	}
+
+	// Call cluster replication hook. Only LDAP accounts are supported for
+	// replication operations.
+	u, err := globalIAMSys.GetLDAPUserForSvcAcc(ctx, serviceAccount)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+	if u != "" {
+		err = globalClusterReplMgr.IAMChangeHook(ctx, madmin.CRIAMItem{
+			Type: madmin.CRIAMItemSvcAcc,
+			SvcAccChange: &madmin.CRSvcAccChange{
+				Delete: &madmin.CRSvcAccDelete{
+					AccessKey: serviceAccount,
+				},
+			},
+		})
+		if err != nil {
+			writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+			return
 		}
 	}
 
@@ -1287,6 +1362,16 @@ func (a adminAPIHandlers) RemoveCannedPolicy(w http.ResponseWriter, r *http.Requ
 			logger.LogIf(ctx, nerr.Err)
 		}
 	}
+
+	// Call cluster-replication policy creation hook to replicate policy deletion to
+	// other minio clusters.
+	if err := globalClusterReplMgr.IAMChangeHook(ctx, madmin.CRIAMItem{
+		Type: madmin.CRIAMItemPolicy,
+		Name: policyName,
+	}); err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
 }
 
 // AddCannedPolicy - PUT /minio/admin/v3/add-canned-policy?name=<policy_name>
@@ -1339,6 +1424,17 @@ func (a adminAPIHandlers) AddCannedPolicy(w http.ResponseWriter, r *http.Request
 			logger.LogIf(ctx, nerr.Err)
 		}
 	}
+
+	// Call cluster-replication policy creation hook to replicate policy to
+	// other minio clusters.
+	if err := globalClusterReplMgr.IAMChangeHook(ctx, madmin.CRIAMItem{
+		Type:   madmin.CRIAMItemPolicy,
+		Name:   policyName,
+		Policy: iamPolicy,
+	}); err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
 }
 
 // SetPolicyForUserOrGroup - PUT /minio/admin/v3/set-policy?policy=xxx&user-or-group=?[&is-group]
@@ -1380,5 +1476,17 @@ func (a adminAPIHandlers) SetPolicyForUserOrGroup(w http.ResponseWriter, r *http
 			logger.GetReqInfo(ctx).SetTags("peerAddress", nerr.Host.String())
 			logger.LogIf(ctx, nerr.Err)
 		}
+	}
+
+	if err := globalClusterReplMgr.IAMChangeHook(ctx, madmin.CRIAMItem{
+		Type: madmin.CRIAMItemPolicyMapping,
+		PolicyMapping: &madmin.CRPolicyMapping{
+			UserOrGroup: entityName,
+			IsGroup:     isGroup,
+			Policy:      policyName,
+		},
+	}); err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
 	}
 }
