@@ -20,6 +20,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -27,6 +28,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/minio/madmin-go"
@@ -176,6 +178,12 @@ func (c *ClusterReplMgr) saveToDisk(ctx context.Context, state crState) error {
 	return nil
 }
 
+const (
+	// Access key of service account used for perform cluster-replication
+	// operations.
+	clusterReplicatorSvcAcc = "cluster-replicator-0"
+)
+
 // AddPeerClusters - add clusters for replication configuration.
 func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) error {
 	// If current cluster is already CR enabled, we fail.
@@ -265,7 +273,26 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 	// permissions.
 
 	// Create a local service account.
-	svcCred, err := globalIAMSys.NewServiceAccount(ctx, arg.Clusters[selfIdx].AccessKey, nil, newServiceAccountOpts{})
+
+	// Generate a secret key for the service account.
+	var secretKey string
+	{
+		secretKeyBuf := make([]byte, 40)
+		n, err := rand.Read(secretKeyBuf)
+		if err == nil && n != 40 {
+			err = fmt.Errorf("Unable to read 40 random bytes to generate secret key")
+		}
+		if err != nil {
+			return wrapCRErr(err)
+		}
+		secretKey = strings.Replace(string([]byte(base64.StdEncoding.EncodeToString(secretKeyBuf))[:40]),
+			"/", "+", -1)
+	}
+
+	svcCred, err := globalIAMSys.NewServiceAccount(ctx, arg.Clusters[selfIdx].AccessKey, nil, newServiceAccountOpts{
+		accessKey: clusterReplicatorSvcAcc,
+		secretKey: secretKey,
+	})
 	if err != nil {
 		return fmt.Errorf("unable to create local service account: %w", err)
 	}
