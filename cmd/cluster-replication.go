@@ -166,6 +166,9 @@ func (c *ClusterReplMgr) saveToDisk(ctx context.Context, state crState) error {
 	}
 
 	objAPI := newObjectLayerFn()
+	if objAPI == nil {
+		return errServerNotInitialized
+	}
 	err = saveConfig(ctx, objAPI, getCRStateFilePath(), buf)
 	if err != nil {
 		return err
@@ -224,6 +227,9 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 		if deploymentID == globalDeploymentID {
 			selfIdx = i
 			objAPI := newObjectLayerFn()
+			if objAPI == nil {
+				return errServerNotInitialized
+			}
 			res, err := objAPI.ListBuckets(ctx)
 			if err != nil {
 				return err
@@ -310,7 +316,6 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 		}
 	}
 
-	// Tell other peers to add peer clusters and save the service account.
 	for i, v := range arg.Clusters {
 		if i == selfIdx {
 			continue
@@ -419,50 +424,64 @@ func (c *ClusterReplMgr) MakeBucketHook(ctx context.Context, bucket string, opts
 	}
 
 	// Create bucket and enable versioning on all peers.
-	for d, p := range c.state.Peers {
-		if d == globalDeploymentID {
+	makeBuckerConcErr := c.concDo(
+		func() error {
 			err := c.PeerBucketMakeWithVersioningHandler(ctx, bucket, opts)
 			if err != nil {
 				fmt.Printf("%s: MakeWithVersioning: %v\n", c.state.Name, err)
-				return wrapCRErr(err)
 			}
-			continue
-		}
+			return err
+		},
+		func(deploymentID string, p madmin.PeerInfo) error {
+			admClient, err := c.getAdminClient(ctx, deploymentID)
+			if err != nil {
+				return err
+			}
 
-		admClient, err := c.getAdminClient(ctx, d)
-		if err != nil {
-			return wrapCRErr(err)
-		}
-
-		err = admClient.CRInternalBucketOps(ctx, bucket, madmin.MakeWithVersioningBktOp, optsMap)
-		if err != nil {
-			fmt.Printf("%s->%s: MakeWithVersioning: %v\n", c.state.Name, p.Name, err)
-			return wrapCRErr(err)
-		}
+			err = admClient.CRInternalBucketOps(ctx, bucket, madmin.MakeWithVersioningBktOp, optsMap)
+			if err != nil {
+				fmt.Printf("%s->%s: MakeWithVersioning: %v\n", c.state.Name, p.Name, err)
+			}
+			return err
+		},
+	)
+	// If all make-bucket-and-enable-versioning operations failed, nothing
+	// more to do.
+	if makeBuckerConcErr.allFailed() {
+		return makeBuckerConcErr
 	}
 
-	// Handle bucket remote and replication addition.
-	for d, p := range c.state.Peers {
-		if d == globalDeploymentID {
+	// Log any errors in make-bucket operations.
+	logger.LogIf(ctx, makeBuckerConcErr.summaryErr)
+
+	// Create bucket remotes and add replication rules for the bucket on
+	// self and peers.
+	makeRemotesConcErr := c.concDo(
+		func() error {
 			err := c.PeerBucketConfigureReplHandler(ctx, bucket)
 			if err != nil {
 				fmt.Printf("%s: ConfigureRepl: %v\n", c.state.Name, err)
-				return wrapCRErr(err)
 			}
-			continue
-		}
+			return err
+		},
+		func(deploymentID string, p madmin.PeerInfo) error {
+			admClient, err := c.getAdminClient(ctx, deploymentID)
+			if err != nil {
+				return err
+			}
 
-		admClient, err := c.getAdminClient(ctx, d)
-		if err != nil {
-			return wrapCRErr(err)
-		}
-
-		err = admClient.CRInternalBucketOps(ctx, bucket, madmin.ConfigureReplBktOp, nil)
-		if err != nil {
-			fmt.Printf("%s->%s: ConfigureRepl: %v\n", c.state.Name, p.Name, err)
-			return wrapCRErr(err)
-		}
+			err = admClient.CRInternalBucketOps(ctx, bucket, madmin.ConfigureReplBktOp, nil)
+			if err != nil {
+				fmt.Printf("%s->%s: ConfigureRepl: %v\n", c.state.Name, p.Name, err)
+			}
+			return err
+		},
+	)
+	err := makeRemotesConcErr.summaryErr
+	if err != nil {
+		return err
 	}
+
 	return nil
 }
 
@@ -484,12 +503,8 @@ func (c *ClusterReplMgr) DeleteBucketHook(ctx context.Context, bucket string, fo
 	}
 
 	// Send bucket delete to other clusters.
-	for d, p := range c.state.Peers {
-		if d == globalDeploymentID {
-			continue
-		}
-
-		admClient, err := c.getAdminClient(ctx, d)
+	cErr := c.concDo(nil, func(deploymentID string, p madmin.PeerInfo) error {
+		admClient, err := c.getAdminClient(ctx, deploymentID)
 		if err != nil {
 			return wrapCRErr(err)
 		}
@@ -497,15 +512,18 @@ func (c *ClusterReplMgr) DeleteBucketHook(ctx context.Context, bucket string, fo
 		err = admClient.CRInternalBucketOps(ctx, bucket, op, nil)
 		if err != nil {
 			fmt.Printf("%s->%s: DeleteBucket: %v\n", c.state.Name, p.Name, err)
-			return wrapCRErr(err)
 		}
-	}
-	return nil
+		return err
+	})
+	return cErr.summaryErr
 }
 
 // PeerBucketMakeWithVersioningHandler - creates bucket and enables versioning.
 func (c *ClusterReplMgr) PeerBucketMakeWithVersioningHandler(ctx context.Context, bucket string, opts BucketOptions) error {
 	objAPI := newObjectLayerFn()
+	if objAPI == nil {
+		return errServerNotInitialized
+	}
 	err := objAPI.MakeBucketWithLocation(ctx, bucket, opts)
 	if err != nil {
 		// Check if this is a bucket exists error.
@@ -519,7 +537,6 @@ func (c *ClusterReplMgr) PeerBucketMakeWithVersioningHandler(ctx context.Context
 		// Load updated bucket metadata into memory as new
 		// bucket was created.
 		globalNotificationSys.LoadBucketMetadata(GlobalContext, bucket)
-		// fmt.Printf("%s: make bucket %s success!\n", c.state.Name, bucket)
 	}
 
 	// Enable versioning on the bucket.
@@ -554,14 +571,9 @@ func (c *ClusterReplMgr) PeerBucketConfigureReplHandler(ctx context.Context, buc
 		return wrapCRErr(err)
 	}
 
-	for d, peer := range c.state.Peers {
-		if d == globalDeploymentID {
-			continue
-		}
-
+	cErr := c.concDo(nil, func(d string, peer madmin.PeerInfo) error {
 		ep, _ := url.Parse(peer.Endpoint)
 		targets := globalBucketTargetSys.ListTargets(ctx, bucket, string(madmin.ReplicationService))
-		// fmt.Printf("%s->%s: targets: %#v\n", c.state.Name, peer.Name, targets)
 		targetARN := ""
 		for _, target := range targets {
 			if target.SourceBucket == bucket &&
@@ -592,22 +604,20 @@ func (c *ClusterReplMgr) PeerBucketConfigureReplHandler(ctx context.Context, buc
 			err := globalBucketTargetSys.SetTarget(ctx, bucket, &bucketTarget, false)
 			if err != nil {
 				fmt.Printf("%s->%s: target err: %#v\n", c.state.Name, peer.Name, err)
-				return wrapCRErr(err)
+				return err
 			}
 			targets, err := globalBucketTargetSys.ListBucketTargets(ctx, bucket)
 			if err != nil {
-				return wrapCRErr(err)
+				return err
 			}
 			tgtBytes, err := json.Marshal(&targets)
 			if err != nil {
-				return wrapCRErr(err)
+				return err
 			}
 			if err = globalBucketMetadataSys.Update(bucket, bucketTargetsFile, tgtBytes); err != nil {
-				return wrapCRErr(err)
+				return err
 			}
 			targetARN = bucketTarget.Arn
-
-			// fmt.Printf("%s->%s: target created: %#v\n", c.state.Name, peer.Name, bucketTarget)
 		}
 
 		// Create bucket replication rule to this peer.
@@ -619,22 +629,26 @@ func (c *ClusterReplMgr) PeerBucketConfigureReplHandler(ctx context.Context, buc
 		// finally convert it back to the server type (again via xml).
 		// This is needed as there is no add-rule function in the server
 		// yet.
+
+		// Though we do not check if the rule already exists, this is
+		// not a problem as we are always using the same replication
+		// rule ID - if the rule already exists, it is just replaced.
 		replicationConfigS, err := globalBucketMetadataSys.GetReplicationConfig(ctx, bucket)
 		if err != nil {
 			_, ok := err.(BucketReplicationConfigNotFound)
 			if !ok {
-				return wrapCRErr(err)
+				return err
 			}
 		}
 		var replicationConfig replication.Config
 		if replicationConfigS != nil {
 			replCfgSBytes, err := xml.Marshal(replicationConfigS)
 			if err != nil {
-				return wrapCRErr(err)
+				return err
 			}
 			err = xml.Unmarshal(replCfgSBytes, &replicationConfig)
 			if err != nil {
-				return wrapCRErr(err)
+				return err
 			}
 		}
 		err = replicationConfig.AddRule(replication.Options{
@@ -664,32 +678,32 @@ func (c *ClusterReplMgr) PeerBucketConfigureReplHandler(ctx context.Context, buc
 		// do some validation.
 		newReplCfgBytes, err := xml.Marshal(replicationConfig)
 		if err != nil {
-			return wrapCRErr(err)
+			return err
 		}
 		newReplicationConfig, err := sreplication.ParseConfig(bytes.NewReader(newReplCfgBytes))
 		if err != nil {
-			return wrapCRErr(err)
+			return err
 		}
 		sameTarget, apiErr := validateReplicationDestination(ctx, bucket, newReplicationConfig)
 		if apiErr != noError {
-			return wrapCRErr(fmt.Errorf("bucket replication config validation error: %#v", apiErr))
+			return fmt.Errorf("bucket replication config validation error: %#v", apiErr)
 		}
 		err = newReplicationConfig.Validate(bucket, sameTarget)
 		if err != nil {
-			return wrapCRErr(err)
+			return err
 		}
 		// Config looks good, so we save it.
 		replCfgData, err := xml.Marshal(newReplicationConfig)
 		if err != nil {
-			return wrapCRErr(err)
+			return err
 		}
 		err = globalBucketMetadataSys.Update(bucket, bucketReplicationConfig, replCfgData)
 		if err != nil {
 			fmt.Printf("%s->%s: replconferr: %v\n", c.state.Name, peer.Name, err)
-			return wrapCRErr(err)
 		}
-	}
-	return nil
+		return err
+	})
+	return cErr.summaryErr
 }
 
 // PeerBucketDeleteHandler - deletes bucket on local in response to a delete
@@ -704,6 +718,9 @@ func (c *ClusterReplMgr) PeerBucketDeleteHandler(ctx context.Context, bucket str
 	// FIXME: need to handle cases where globalDNSConfig is set.
 
 	objAPI := newObjectLayerFn()
+	if objAPI == nil {
+		return errServerNotInitialized
+	}
 	err := objAPI.DeleteBucket(ctx, bucket, forceDelete)
 	if err != nil {
 		return err
@@ -741,11 +758,7 @@ func (c *ClusterReplMgr) IAMChangeHook(ctx context.Context, item madmin.CRIAMIte
 		return nil
 	}
 
-	for d, peer := range c.state.Peers {
-		if d == globalDeploymentID {
-			continue
-		}
-
+	cErr := c.concDo(nil, func(d string, p madmin.PeerInfo) error {
 		admClient, err := c.getAdminClient(ctx, d)
 		if err != nil {
 			return wrapCRErr(err)
@@ -753,12 +766,11 @@ func (c *ClusterReplMgr) IAMChangeHook(ctx context.Context, item madmin.CRIAMIte
 
 		err = admClient.CRInternalReplicateIAMItem(ctx, item)
 		if err != nil {
-			fmt.Printf("%s->%s: CRInternalReplicateIAMItem: %v\n", c.state.Name, peer.Name, err)
-			return wrapCRErr(err)
+			fmt.Printf("%s->%s: CRInternalReplicateIAMItem: %v\n", c.state.Name, p.Name, err)
 		}
-	}
-
-	return nil
+		return err
+	})
+	return cErr.summaryErr
 }
 
 // PeerAddPolicyHandler - copies IAM policy to local. A nil policy argument,
@@ -888,11 +900,7 @@ func (c *ClusterReplMgr) BucketMetaHook(ctx context.Context, item madmin.CRBucke
 		return nil
 	}
 
-	for d, peer := range c.state.Peers {
-		if d == globalDeploymentID {
-			continue
-		}
-
+	cErr := c.concDo(nil, func(d string, p madmin.PeerInfo) error {
 		admClient, err := c.getAdminClient(ctx, d)
 		if err != nil {
 			return wrapCRErr(err)
@@ -900,12 +908,11 @@ func (c *ClusterReplMgr) BucketMetaHook(ctx context.Context, item madmin.CRBucke
 
 		err = admClient.CRInternalReplicateBucketMeta(ctx, item)
 		if err != nil {
-			fmt.Printf("%s->%s: CRInternalReplicateBucketMeta: %v\n", c.state.Name, peer.Name, err)
-			return wrapCRErr(err)
+			fmt.Printf("%s->%s: CRInternalReplicateBucketMeta: %v\n", c.state.Name, p.Name, err)
 		}
-	}
-
-	return nil
+		return err
+	})
+	return cErr.summaryErr
 }
 
 // PeerBucketPolicyHandler - copies/deletes policy to local cluster.
@@ -1048,6 +1055,9 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 	// If local has buckets, enable versioning on them, create them on peers
 	// and setup replication rules.
 	objAPI := newObjectLayerFn()
+	if objAPI == nil {
+		return errServerNotInitialized
+	}
 	buckets, err := objAPI.ListBuckets(ctx)
 	if err != nil {
 		return err
@@ -1278,6 +1288,75 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 
 	return nil
 }
+
+// Concurrency helpers
+
+type concErr struct {
+	numActions int
+	errMap     map[string]error
+	summaryErr error
+}
+
+func (c concErr) Error() string {
+	return c.summaryErr.Error()
+}
+
+func (c concErr) allFailed() bool {
+	return len(c.errMap) == c.numActions
+}
+
+func (c *ClusterReplMgr) newConcErr(numActions int, errMap map[string]error) (e concErr) {
+	e.numActions = numActions
+	e.errMap = errMap
+
+	msgs := []string{}
+	for d, err := range errMap {
+		name := c.state.Peers[d].Name
+		msgs = append(msgs, fmt.Sprintf("Site %s (%s): %v", name, d, err))
+	}
+	if len(errMap) != 0 {
+		e.summaryErr = fmt.Errorf("Site replication error(s): %s", strings.Join(msgs, "; "))
+	}
+	return e
+}
+
+// concDo calls actions concurrently. selfActionFn is run for the current
+// cluster and peerActionFn is run each peer replication cluster.
+func (c *ClusterReplMgr) concDo(selfActionFn func() error, peerActionFn func(deploymentID string, p madmin.PeerInfo) error) concErr {
+	depIDs := make([]string, 0, len(c.state.Peers))
+	for d := range c.state.Peers {
+		depIDs = append(depIDs, d)
+	}
+	errs := make([]error, len(c.state.Peers))
+	var wg sync.WaitGroup
+	for i := range depIDs {
+		wg.Add(1)
+		go func(i int) {
+			if depIDs[i] == globalDeploymentID {
+				if selfActionFn != nil {
+					errs[i] = selfActionFn()
+				}
+			} else {
+				errs[i] = peerActionFn(depIDs[i], c.state.Peers[depIDs[i]])
+			}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+	errMap := make(map[string]error, len(c.state.Peers))
+	for i, depID := range depIDs {
+		if errs[i] != nil {
+			errMap[depID] = errs[i]
+		}
+	}
+	numActions := len(c.state.Peers) - 1
+	if selfActionFn != nil {
+		numActions += 1
+	}
+	return c.newConcErr(numActions, errMap)
+}
+
+// Other helpers
 
 func getAdminClient(pc madmin.PeerCluster) (*madmin.AdminClient, error) {
 	epURL, _ := url.Parse(pc.Endpoint)
