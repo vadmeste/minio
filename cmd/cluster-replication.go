@@ -426,7 +426,7 @@ func (c *ClusterReplMgr) MakeBucketHook(ctx context.Context, bucket string, opts
 	}
 
 	// Create bucket and enable versioning on all peers.
-	makeBuckerConcErr := c.concDo(
+	makeBucketConcErr := c.concDo(
 		func() error {
 			err := c.PeerBucketMakeWithVersioningHandler(ctx, bucket, opts)
 			if err != nil {
@@ -449,12 +449,12 @@ func (c *ClusterReplMgr) MakeBucketHook(ctx context.Context, bucket string, opts
 	)
 	// If all make-bucket-and-enable-versioning operations failed, nothing
 	// more to do.
-	if makeBuckerConcErr.allFailed() {
-		return makeBuckerConcErr
+	if makeBucketConcErr.allFailed() {
+		return makeBucketConcErr
 	}
 
 	// Log any errors in make-bucket operations.
-	logger.LogIf(ctx, makeBuckerConcErr.summaryErr)
+	logger.LogIf(ctx, makeBucketConcErr.summaryErr)
 
 	// Create bucket remotes and add replication rules for the bucket on
 	// self and peers.
@@ -573,7 +573,9 @@ func (c *ClusterReplMgr) PeerBucketConfigureReplHandler(ctx context.Context, buc
 		return wrapCRErr(err)
 	}
 
-	cErr := c.concDo(nil, func(d string, peer madmin.PeerInfo) error {
+	// The following function, creates a bucket remote and sets up a bucket
+	// replication rule for the given peer.
+	configurePeerFn := func(d string, peer madmin.PeerInfo) error {
 		ep, _ := url.Parse(peer.Endpoint)
 		targets := globalBucketTargetSys.ListTargets(ctx, bucket, string(madmin.ReplicationService))
 		targetARN := ""
@@ -704,8 +706,18 @@ func (c *ClusterReplMgr) PeerBucketConfigureReplHandler(ctx context.Context, buc
 			fmt.Printf("%s->%s: replconferr: %v\n", c.state.Name, peer.Name, err)
 		}
 		return err
-	})
-	return cErr.summaryErr
+	}
+
+	errMap := make(map[string]error, len(c.state.Peers))
+	for d, peer := range c.state.Peers {
+		if d == globalDeploymentID {
+			continue
+		}
+		if err := configurePeerFn(d, peer); err != nil {
+			errMap[d] = err
+		}
+	}
+	return c.toErrorFromErrMap(errMap)
 }
 
 // PeerBucketDeleteHandler - deletes bucket on local in response to a delete
@@ -1287,19 +1299,25 @@ func (c concErr) allFailed() bool {
 	return len(c.errMap) == c.numActions
 }
 
-func (c *ClusterReplMgr) newConcErr(numActions int, errMap map[string]error) (e concErr) {
-	e.numActions = numActions
-	e.errMap = errMap
+func (c *ClusterReplMgr) toErrorFromErrMap(errMap map[string]error) error {
+	if len(errMap) == 0 {
+		return nil
+	}
 
 	msgs := []string{}
 	for d, err := range errMap {
 		name := c.state.Peers[d].Name
 		msgs = append(msgs, fmt.Sprintf("Site %s (%s): %v", name, d, err))
 	}
-	if len(errMap) != 0 {
-		e.summaryErr = fmt.Errorf("Site replication error(s): %s", strings.Join(msgs, "; "))
+	return fmt.Errorf("Site replication error(s): %s", strings.Join(msgs, "; "))
+}
+
+func (c *ClusterReplMgr) newConcErr(numActions int, errMap map[string]error) concErr {
+	return concErr{
+		numActions: numActions,
+		errMap:     errMap,
+		summaryErr: c.toErrorFromErrMap(errMap),
 	}
-	return e
 }
 
 // concDo calls actions concurrently. selfActionFn is run for the current
