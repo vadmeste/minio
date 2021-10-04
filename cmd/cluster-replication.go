@@ -1303,7 +1303,7 @@ func (c *ClusterReplMgr) newConcErr(numActions int, errMap map[string]error) (e 
 }
 
 // concDo calls actions concurrently. selfActionFn is run for the current
-// cluster and peerActionFn is run each peer replication cluster.
+// cluster and peerActionFn is run for each peer replication cluster.
 func (c *ClusterReplMgr) concDo(selfActionFn func() error, peerActionFn func(deploymentID string, p madmin.PeerInfo) error) concErr {
 	depIDs := make([]string, 0, len(c.state.Peers))
 	for d := range c.state.Peers {
@@ -1333,7 +1333,7 @@ func (c *ClusterReplMgr) concDo(selfActionFn func() error, peerActionFn func(dep
 	}
 	numActions := len(c.state.Peers) - 1
 	if selfActionFn != nil {
-		numActions += 1
+		numActions++
 	}
 	return c.newConcErr(numActions, errMap)
 }

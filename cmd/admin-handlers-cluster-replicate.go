@@ -33,9 +33,9 @@ import (
 	iampolicy "github.com/minio/pkg/iam/policy"
 )
 
-// ClusterReplicateAdd - PUT /minio/admin/v3/cluster-replicate-add
-func (a adminAPIHandlers) ClusterReplicateAdd(w http.ResponseWriter, r *http.Request) {
-	ctx := newContext(r, w, "ClusterReplicateAdd")
+// SiteReplicationAdd - PUT /minio/admin/v3/site-replication/add
+func (a adminAPIHandlers) SiteReplicationAdd(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "SiteReplicationAdd")
 
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
 
@@ -61,7 +61,7 @@ func (a adminAPIHandlers) ClusterReplicateAdd(w http.ResponseWriter, r *http.Req
 	}
 }
 
-// CRInternalJoin - PUT /minio/admin/v3/cluster-replicate/join
+// CRInternalJoin - PUT /minio/admin/v3/site-replication/join
 //
 // used internally to tell current cluster to enable CR with
 // the provided peer clusters and service account.
@@ -91,7 +91,7 @@ func (a adminAPIHandlers) CRInternalJoin(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// CRInternalBucketOps - PUT /minio/admin/v3/cluster-replicate/bucket-ops?bucket=x&operation=y
+// CRInternalBucketOps - PUT /minio/admin/v3/site-replication/bucket-ops?bucket=x&operation=y
 func (a adminAPIHandlers) CRInternalBucketOps(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "CRInternalBucketOps")
 
@@ -135,7 +135,7 @@ func (a adminAPIHandlers) CRInternalBucketOps(w http.ResponseWriter, r *http.Req
 
 }
 
-// CRInternalReplicateIAMItem - PUT /minio/admin/v3/cluster-replicate/iam-item
+// CRInternalReplicateIAMItem - PUT /minio/admin/v3/site-replication/iam-item
 func (a adminAPIHandlers) CRInternalReplicateIAMItem(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "CRInternalReplicateIAMItem")
 
@@ -173,7 +173,7 @@ func (a adminAPIHandlers) CRInternalReplicateIAMItem(w http.ResponseWriter, r *h
 	}
 }
 
-// CRInternalReplicateBucketItem - PUT /minio/admin/v3/cluster-replicate/bucket-meta
+// CRInternalReplicateBucketItem - PUT /minio/admin/v3/site-replication/bucket-meta
 func (a adminAPIHandlers) CRInternalReplicateBucketItem(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "CRInternalReplicateIAMItem")
 
@@ -213,9 +213,9 @@ func (a adminAPIHandlers) CRInternalReplicateBucketItem(w http.ResponseWriter, r
 	}
 }
 
-// ClusterReplicateDisable - PUT /minio/admin/v3/cluster-replicate-disable
-func (a adminAPIHandlers) ClusterReplicateDisable(w http.ResponseWriter, r *http.Request) {
-	ctx := newContext(r, w, "ClusterReplicateDisable")
+// SiteReplicationDisable - PUT /minio/admin/v3/site-replication/disable
+func (a adminAPIHandlers) SiteReplicationDisable(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "SiteReplicationDisable")
 
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
 
@@ -227,9 +227,9 @@ func (a adminAPIHandlers) ClusterReplicateDisable(w http.ResponseWriter, r *http
 	return
 }
 
-// ClusterReplicateInfo - GET /minio/admin/v3/cluster-replicate-info
-func (a adminAPIHandlers) ClusterReplicateInfo(w http.ResponseWriter, r *http.Request) {
-	ctx := newContext(r, w, "ClusterReplicateInfo")
+// SiteReplicationInfo - GET /minio/admin/v3/site-replication/info
+func (a adminAPIHandlers) SiteReplicationInfo(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "SiteReplicationInfo")
 
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
 
