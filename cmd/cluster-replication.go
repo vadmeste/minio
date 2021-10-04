@@ -21,11 +21,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -1358,16 +1360,34 @@ func (c *ClusterReplMgr) concDo(selfActionFn func() error, peerActionFn func(dep
 
 // Other helpers
 
+// NewRemoteClusterHTTPTransport returns a new http configuration
+// used while communicating with the remote cluster.
+func NewRemoteClusterHTTPTransport() *http.Transport {
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{
+			RootCAs: globalRootCAs,
+		},
+	}
+	return tr
+}
+
 func getAdminClient(pc madmin.PeerCluster) (*madmin.AdminClient, error) {
 	epURL, _ := url.Parse(pc.Endpoint)
-	return madmin.New(epURL.Host, pc.AccessKey, pc.SecretKey, epURL.Scheme == "https")
+	client, err := madmin.New(epURL.Host, pc.AccessKey, pc.SecretKey, epURL.Scheme == "https")
+	if err != nil {
+		return nil, err
+	}
+	client.SetCustomTransport(NewRemoteClusterHTTPTransport())
+	return client, nil
 }
 
 func getS3Client(pc madmin.PeerCluster) (*minioClient.Client, error) {
 	ep, _ := url.Parse(pc.Endpoint)
 	return minioClient.New(ep.Host, &minioClient.Options{
-		Creds:  credentials.NewStaticV4(pc.AccessKey, pc.SecretKey, ""),
-		Secure: ep.Scheme == "https",
+		Creds:     credentials.NewStaticV4(pc.AccessKey, pc.SecretKey, ""),
+		Secure:    ep.Scheme == "https",
+		Transport: NewRemoteClusterHTTPTransport(),
 	})
 }
 
