@@ -1029,3 +1029,12 @@ func (client *peerRESTClient) Speedtest(ctx context.Context, size, concurrent in
 	}
 	return result, nil
 }
+
+func (client *peerRESTClient) ReloadClusterLinkingConfig(ctx context.Context) error {
+	respBody, err := client.callWithContext(context.Background(), peerRESTMethodReloadClusterLinkingConfig, nil, nil, -1)
+	if err != nil {
+		return err
+	}
+	defer http.DrainBody(respBody)
+	return nil
+}

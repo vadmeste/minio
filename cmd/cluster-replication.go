@@ -174,9 +174,13 @@ func (c *ClusterReplMgr) Init(ctx context.Context, objAPI ObjectLayer) error {
 	if err == errConfigNotFound {
 		return nil
 	}
+
+	c.RLock()
+	defer c.RUnlock()
 	if c.enabled {
-		fmt.Println("Cluster Replication is enabled.")
+		fmt.Println("Cluster Replication is initialized.")
 	}
+
 	return err
 }
 
@@ -229,6 +233,10 @@ func (c *ClusterReplMgr) saveToDisk(ctx context.Context, state crState) error {
 	err = saveConfig(ctx, objAPI, getCRStateFilePath(), buf)
 	if err != nil {
 		return err
+	}
+
+	for _, e := range globalNotificationSys.ReloadClusterLinkingConfig(ctx) {
+		logger.LogIf(ctx, e)
 	}
 
 	c.Lock()

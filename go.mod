@@ -91,6 +91,6 @@ require (
 )
 
 replace (
-	github.com/minio/pkg => ../minio-pkg
 	github.com/minio/madmin-go => ../madmin-go
+	github.com/minio/pkg => ../pkg
 )
