@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -52,13 +51,20 @@ func (a adminAPIHandlers) SiteReplicationAdd(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err := globalClusterReplMgr.AddPeerClusters(ctx, addArg)
-	fmt.Printf("AddPeerCluster err: %v\n", err)
-	if err != nil {
-		logger.LogIf(ctx, err)
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), r.URL)
+	status, errInfo := globalClusterReplMgr.AddPeerClusters(ctx, addArg)
+	if errInfo.Code != ErrNone {
+		logger.LogIf(ctx, errInfo)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErrWithErr(errInfo.Code, errInfo.Cause), r.URL)
 		return
 	}
+
+	body, err := json.Marshal(status)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	writeSuccessResponseJSON(w, body)
 }
 
 // CRInternalJoin - PUT /minio/admin/v3/site-replication/join
@@ -83,10 +89,10 @@ func (a adminAPIHandlers) CRInternalJoin(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err := globalClusterReplMgr.InternalJoinReq(ctx, joinArg)
-	if err != nil {
-		logger.LogIf(ctx, err)
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), r.URL)
+	errInfo := globalClusterReplMgr.InternalJoinReq(ctx, joinArg)
+	if errInfo.Code != ErrNone {
+		logger.LogIf(ctx, errInfo)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErrWithErr(errInfo.Code, errInfo.Cause), r.URL)
 		return
 	}
 }

@@ -47,7 +47,7 @@ import (
 )
 
 const (
-	crStatePrefix = minioConfigPrefix + "/cluster-replication"
+	crStatePrefix = minioConfigPrefix + "/site-replication"
 
 	crStateFile = "state.json"
 )
@@ -57,10 +57,68 @@ const (
 )
 
 var (
-	errCRCannotJoin   = errors.New("this cluster cannot be added to a CR set.")
-	errCRSelfNotFound = errors.New("none of the given clusters correspond to the current one.")
-	errCRPeerNotFound = errors.New("peer not found")
-	errCRNotEnabled   = errors.New("cluster replication is not enabled")
+	errCRCannotJoin     = errors.New("this cluster is already configured for site-replication")
+	errCRDuplicateSites = errors.New("duplicate sites provided for site-replication")
+	errCRSelfNotFound   = errors.New("none of the given clusters correspond to the current one")
+	errCRPeerNotFound   = errors.New("peer not found")
+	errCRNotEnabled     = errors.New("cluster replication is not enabled")
+)
+
+func errCRInvalidRequest(err error) CRError {
+	return CRError{
+		Cause: err,
+		Code:  ErrSiteReplicationInvalidRequest,
+	}
+}
+
+func errCRPeerResp(err error) CRError {
+	return CRError{
+		Cause: err,
+		Code:  ErrSiteReplicationPeerResp,
+	}
+}
+
+func errCRBackendIssue(err error) CRError {
+	return CRError{
+		Cause: err,
+		Code:  ErrSiteReplicationBackendIssue,
+	}
+}
+
+func errCRServiceAccount(err error) CRError {
+	return CRError{
+		Cause: err,
+		Code:  ErrSiteReplicationServiceAccountError,
+	}
+}
+
+func errCRBucketConfigError(err error) CRError {
+	return CRError{
+		Cause: err,
+		Code:  ErrSiteReplicationBucketConfigError,
+	}
+
+}
+
+func errCRBucketMetaError(err error) CRError {
+	return CRError{
+		Cause: err,
+		Code:  ErrSiteReplicationBucketMetaError,
+	}
+}
+
+func errCRIAMError(err error) CRError {
+	return CRError{
+		Cause: err,
+		Code:  ErrSiteReplicationIAMError,
+	}
+}
+
+var (
+	errCRObjectLayerNotReady = CRError{
+		Cause: fmt.Errorf("object layer not ready"),
+		Code:  ErrServerNotInitialized,
+	}
 )
 
 func getCRStateFilePath() string {
@@ -70,18 +128,15 @@ func getCRStateFilePath() string {
 // CRError - wrapped error for cluster replication.
 type CRError struct {
 	Cause error
-	Msg   string
+	Code  APIErrorCode
 }
 
 func (c CRError) Error() string {
-	if c.Msg == "" {
-		return fmt.Sprintf("ClusterReplication err: %v", c.Cause)
-	}
-	return fmt.Sprintf("ClusterReplication error: %s, cause: %v", c.Msg, c.Cause)
+	return c.Cause.Error()
 }
 
 func wrapCRErr(err error) CRError {
-	return CRError{Cause: err}
+	return CRError{Cause: err, Code: ErrInternalError}
 }
 
 // ClusterReplMgr - manages cluster-level replication.
@@ -190,10 +245,10 @@ const (
 )
 
 // AddPeerClusters - add clusters for replication configuration.
-func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) error {
+func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) (madmin.ReplicateAddStatus, CRError) {
 	// If current cluster is already CR enabled, we fail.
 	if c.enabled {
-		return errCRCannotJoin
+		return madmin.ReplicateAddStatus{}, errCRInvalidRequest(errCRCannotJoin)
 	}
 
 	// Only one of the clusters being added, can have any buckets (i.e. self
@@ -206,23 +261,23 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 	for i, v := range arg.Clusters {
 		admClient, err := getAdminClient(v.Endpoint, v.AccessKey, v.SecretKey)
 		if err != nil {
-			return fmt.Errorf("unable to create admin client: %w", err)
+			return madmin.ReplicateAddStatus{}, errCRPeerResp(fmt.Errorf("unable to create admin client for %s: %w", v.Name, err))
 		}
 		info, err := admClient.ServerInfo(ctx)
 		if err != nil {
-			return err
+			return madmin.ReplicateAddStatus{}, errCRPeerResp(fmt.Errorf("unable to fetch server info for %s: %w", v.Name, err))
 		}
 
 		deploymentID := info.DeploymentID
 		if deploymentID == "" {
-			return fmt.Errorf("Cluster %s has an empty deploymentID", v.Name)
+			return madmin.ReplicateAddStatus{}, errCRPeerResp(fmt.Errorf("unable to fetch deploymentID for %s: value was empty!", v.Name))
 		}
 
 		deploymentIDs = append(deploymentIDs, deploymentID)
 
 		// deploymentIDs must be unique
 		if deploymentIDsSet.Contains(deploymentID) {
-			return fmt.Errorf("Found more than one cluster with the same deployment ID: %s", deploymentID)
+			return madmin.ReplicateAddStatus{}, errCRInvalidRequest(errCRDuplicateSites)
 		}
 		deploymentIDsSet.Add(deploymentID)
 
@@ -230,11 +285,11 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 			selfIdx = i
 			objAPI := newObjectLayerFn()
 			if objAPI == nil {
-				return errServerNotInitialized
+				return madmin.ReplicateAddStatus{}, errCRObjectLayerNotReady
 			}
 			res, err := objAPI.ListBuckets(ctx)
 			if err != nil {
-				return err
+				return madmin.ReplicateAddStatus{}, errCRBackendIssue(err)
 			}
 			if len(res) > 0 {
 				localHasBuckets = true
@@ -244,11 +299,11 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 
 		s3Client, err := getS3Client(v)
 		if err != nil {
-			return fmt.Errorf("unable to create s3 client: %w", err)
+			return madmin.ReplicateAddStatus{}, errCRPeerResp(fmt.Errorf("unable to create s3 client for %s: %w", v.Name, err))
 		}
 		buckets, err := s3Client.ListBuckets(ctx)
 		if err != nil {
-			return err
+			return madmin.ReplicateAddStatus{}, errCRPeerResp(fmt.Errorf("unable to list buckets for %s", v.Name, err))
 		}
 
 		if len(buckets) > 0 {
@@ -260,16 +315,16 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 	// cluster must be the only one having some buckets.
 
 	if localHasBuckets && nonLocalPeerWithBuckets != "" {
-		return fmt.Errorf("Only one cluster may have data when configuring site replication")
+		return madmin.ReplicateAddStatus{}, errCRInvalidRequest(errors.New("Only one cluster may have data when configuring site replication"))
 	}
 
 	if !localHasBuckets && nonLocalPeerWithBuckets != "" {
-		return fmt.Errorf("Please send your request to the cluster containing data/buckets: %s", nonLocalPeerWithBuckets)
+		return madmin.ReplicateAddStatus{}, errCRInvalidRequest(fmt.Errorf("Please send your request to the cluster containing data/buckets: %s", nonLocalPeerWithBuckets))
 	}
 
 	// FIXME: Ideally, we also need to check if there are any global IAM
 	// policies and any (LDAP user created) service accounts on the other
-	// peer clusters , and if so, reject the cluster replicate add request.
+	// peer clusters, and if so, reject the cluster replicate add request.
 	// This is not yet implemented.
 
 	// FIXME: validate that all clusters are using the same (LDAP based)
@@ -291,7 +346,10 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 			err = fmt.Errorf("Unable to read 40 random bytes to generate secret key")
 		}
 		if err != nil {
-			return wrapCRErr(err)
+			return madmin.ReplicateAddStatus{}, CRError{
+				Cause: err,
+				Code:  ErrInternalError,
+			}
 		}
 		secretKey = strings.Replace(string([]byte(base64.StdEncoding.EncodeToString(secretKeyBuf))[:40]),
 			"/", "+", -1)
@@ -302,7 +360,7 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 		secretKey: secretKey,
 	})
 	if err != nil {
-		return fmt.Errorf("unable to create local service account: %w", err)
+		return madmin.ReplicateAddStatus{}, errCRServiceAccount(fmt.Errorf("unable to create local service account: %w", err))
 	}
 
 	joinReq := madmin.CRInternalJoinReq{
@@ -318,19 +376,39 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 		}
 	}
 
+	addedCount := 0
+	var peerAddErr CRError
 	for i, v := range arg.Clusters {
 		if i == selfIdx {
 			continue
 		}
 		admClient, err := getAdminClient(v.Endpoint, v.AccessKey, v.SecretKey)
 		if err != nil {
-			return fmt.Errorf("unable to create admin client: %w", err)
+			peerAddErr = errCRPeerResp(fmt.Errorf("unable to create admin client for %s: %w", v.Name, err))
+			break
 		}
 		joinReq.SvcAcctParent = v.AccessKey
 		err = admClient.CRInternalJoin(ctx, joinReq)
 		if err != nil {
-			return fmt.Errorf("error in CR join: %v", err)
+			peerAddErr = errCRPeerResp(fmt.Errorf("unable to link with peer %s: %w", v.Name, err))
+			break
 		}
+		addedCount++
+	}
+
+	if peerAddErr.Cause != nil {
+		if addedCount == 0 {
+			return madmin.ReplicateAddStatus{}, peerAddErr
+		}
+		// In this case, it means at least one cluster was added
+		// successfully, we need to send a response to the client with
+		// some details - FIXME: the disks on this cluster would need to
+		// be cleaned to recover.
+		partial := madmin.ReplicateAddStatus{
+			Status:    madmin.ReplicateAddStatusPartial,
+			ErrDetail: peerAddErr.Error(),
+		}
+		return partial, CRError{}
 	}
 
 	// Other than handling existing buckets, we can now save the cluster
@@ -340,19 +418,31 @@ func (c *ClusterReplMgr) AddPeerClusters(ctx context.Context, arg madmin.CRAdd) 
 		Peers:                   joinReq.Peers,
 		ServiceAccountAccessKey: svcCred.AccessKey,
 	}
-	c.Lock()
-	c.state = state
-	c.enabled = true
-	c.Unlock()
+	err = c.saveToDisk(ctx, state)
+	if err != nil {
+		return madmin.ReplicateAddStatus{
+			Status:    madmin.ReplicateAddStatusPartial,
+			ErrDetail: fmt.Sprintf("unable to save cluster-replication state on local: %v", err),
+		}, CRError{}
+	}
 
-	return c.syncLocalToPeers(ctx)
+	result := madmin.ReplicateAddStatus{
+		Success: true,
+		Status:  madmin.ReplicateAddStatusSuccess,
+	}
+	initialSyncErr := c.syncLocalToPeers(ctx)
+	if initialSyncErr.Code != ErrNone {
+		result.InitialSyncErrorMessage = initialSyncErr.Error()
+	}
+
+	return result, CRError{}
 }
 
 // InternalJoinReq - internal API handler to respond to a peer cluster's request
 // to join.
-func (c *ClusterReplMgr) InternalJoinReq(ctx context.Context, arg madmin.CRInternalJoinReq) error {
+func (c *ClusterReplMgr) InternalJoinReq(ctx context.Context, arg madmin.CRInternalJoinReq) CRError {
 	if c.enabled {
-		return errCRCannotJoin
+		return errCRInvalidRequest(errCRCannotJoin)
 	}
 
 	var ourName string
@@ -363,7 +453,7 @@ func (c *ClusterReplMgr) InternalJoinReq(ctx context.Context, arg madmin.CRInter
 		}
 	}
 	if ourName == "" {
-		return errCRSelfNotFound
+		return errCRInvalidRequest(errCRSelfNotFound)
 	}
 
 	_, err := globalIAMSys.NewServiceAccount(ctx, arg.SvcAcctParent, nil, newServiceAccountOpts{
@@ -371,7 +461,7 @@ func (c *ClusterReplMgr) InternalJoinReq(ctx context.Context, arg madmin.CRInter
 		secretKey: arg.SvcAcctSecretKey,
 	})
 	if err != nil {
-		return err
+		return errCRServiceAccount(fmt.Errorf("unable to create service account on %s: %v", ourName, err))
 	}
 
 	state := crState{
@@ -379,7 +469,11 @@ func (c *ClusterReplMgr) InternalJoinReq(ctx context.Context, arg madmin.CRInter
 		Peers:                   arg.Peers,
 		ServiceAccountAccessKey: arg.SvcAcctAccessKey,
 	}
-	return c.saveToDisk(ctx, state)
+	err = c.saveToDisk(ctx, state)
+	if err != nil {
+		return errCRBackendIssue(fmt.Errorf("unable to save cluster-replication state to disk on %s: %v", ourName, err))
+	}
+	return CRError{}
 }
 
 // GetClusterInfo - returns cluster replication information.
@@ -1044,17 +1138,17 @@ func (c *ClusterReplMgr) getPeerCreds() (*auth.Credentials, error) {
 // syncLocalToPeers is used when initially configuring cluster replication, to
 // copy existing buckets, their settings, service accounts and policies to all
 // new peers.
-func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
+func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) CRError {
 
 	// If local has buckets, enable versioning on them, create them on peers
 	// and setup replication rules.
 	objAPI := newObjectLayerFn()
 	if objAPI == nil {
-		return errServerNotInitialized
+		return errCRObjectLayerNotReady
 	}
 	buckets, err := objAPI.ListBuckets(ctx)
 	if err != nil {
-		return err
+		return errCRBackendIssue(err)
 	}
 	for _, bucketInfo := range buckets {
 		bucket := bucketInfo.Name
@@ -1064,7 +1158,7 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 		lockConfig, err := globalBucketMetadataSys.GetObjectLockConfig(bucket)
 		if err != nil {
 			if _, ok := err.(BucketObjectLockConfigNotFound); !ok {
-				return err
+				return errCRBackendIssue(err)
 			}
 		}
 		opts := BucketOptions{
@@ -1075,18 +1169,16 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 		// create buckets and replication rules on peer clusters.
 		err = c.MakeBucketHook(ctx, bucket, opts)
 		if err != nil {
-			return wrapCRErr(err)
+			return errCRBucketConfigError(err)
 		}
 
 		// Replicate bucket policy if present.
 		policy, err := globalPolicySys.Get(bucket)
 		found := true
-		if err != nil {
-			if _, ok := err.(BucketPolicyNotFound); ok {
-				found = false
-			} else {
-				return wrapCRErr(err)
-			}
+		if _, ok := err.(BucketPolicyNotFound); ok {
+			found = false
+		} else if err != nil {
+			return errCRBackendIssue(err)
 		}
 		if found {
 			err = c.BucketMetaHook(ctx, madmin.CRBucketMeta{
@@ -1095,19 +1187,17 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 				Policy: policy,
 			})
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRBucketMetaError(err)
 			}
 		}
 
 		// Replicate bucket tags if present.
 		tags, err := globalBucketMetadataSys.GetTaggingConfig(bucket)
 		found = true
-		if err != nil {
-			if _, ok := err.(BucketTaggingNotFound); ok {
-				found = false
-			} else {
-				return wrapCRErr(err)
-			}
+		if _, ok := err.(BucketTaggingNotFound); ok {
+			found = false
+		} else if err != nil {
+			return errCRBackendIssue(err)
 		}
 		if found {
 			tagCfg, err := xml.Marshal(tags)
@@ -1121,19 +1211,17 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 				Tags:   &tagCfgStr,
 			})
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRBucketMetaError(err)
 			}
 		}
 
 		// Replicate object-lock config if present.
 		objLockCfg, err := globalBucketMetadataSys.GetObjectLockConfig(bucket)
 		found = true
-		if err != nil {
-			if _, ok := err.(BucketObjectLockConfigNotFound); ok {
-				found = false
-			} else {
-				return wrapCRErr(err)
-			}
+		if _, ok := err.(BucketObjectLockConfigNotFound); ok {
+			found = false
+		} else if err != nil {
+			return errCRBackendIssue(err)
 		}
 		if found {
 			objLockCfgData, err := xml.Marshal(objLockCfg)
@@ -1147,19 +1235,17 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 				Tags:   &objLockStr,
 			})
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRBucketMetaError(err)
 			}
 		}
 
 		// Replicate existing bucket bucket encryption settings
 		sseConfig, err := globalBucketMetadataSys.GetSSEConfig(bucket)
 		found = true
-		if err != nil {
-			if _, ok := err.(BucketSSEConfigNotFound); ok {
-				found = false
-			} else {
-				return wrapCRErr(err)
-			}
+		if _, ok := err.(BucketSSEConfigNotFound); ok {
+			found = false
+		} else if err != nil {
+			return errCRBackendIssue(err)
 		}
 		if found {
 			sseConfigData, err := xml.Marshal(sseConfig)
@@ -1172,6 +1258,9 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 				Bucket:    bucket,
 				SSEConfig: &sseConfigStr,
 			})
+			if err != nil {
+				return errCRBucketMetaError(err)
+			}
 		}
 	}
 
@@ -1179,7 +1268,7 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 		// Replicate IAM policies on local to all peers.
 		allPolicies, err := globalIAMSys.ListPolicies("")
 		if err != nil {
-			return wrapCRErr(err)
+			return errCRBackendIssue(err)
 		}
 
 		for pname, policy := range allPolicies {
@@ -1189,7 +1278,7 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 				Policy: &policy,
 			})
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRIAMError(err)
 			}
 		}
 	}
@@ -1203,10 +1292,10 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 		errG := globalIAMSys.store.loadMappedPolicies(ctx, stsUser, true, groupPolicyMap)
 		globalIAMSys.store.runlock()
 		if errU != nil {
-			return wrapCRErr(errU)
+			return errCRBackendIssue(errU)
 		}
 		if errG != nil {
-			return wrapCRErr(errG)
+			return errCRBackendIssue(errG)
 		}
 
 		for user, mp := range userPolicyMap {
@@ -1219,7 +1308,7 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 				},
 			})
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRIAMError(err)
 			}
 		}
 
@@ -1233,7 +1322,7 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 				},
 			})
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRIAMError(err)
 			}
 		}
 	}
@@ -1246,19 +1335,19 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 		err := globalIAMSys.store.loadUsers(ctx, svcUser, serviceAccounts)
 		globalIAMSys.store.runlock()
 		if err != nil {
-			return wrapCRErr(err)
+			return errCRBackendIssue(err)
 		}
 		for user, acc := range serviceAccounts {
 			ldapUser, err := globalIAMSys.GetLDAPUserForSvcAcc(ctx, acc.AccessKey)
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRBackendIssue(err)
 			}
 			if ldapUser == "" {
 				continue
 			}
 			_, policy, err := globalIAMSys.GetServiceAccount(ctx, acc.AccessKey)
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRBackendIssue(err)
 			}
 			err = c.IAMChangeHook(ctx, madmin.CRIAMItem{
 				Type: madmin.CRIAMItemSvcAcc,
@@ -1275,12 +1364,12 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) error {
 				},
 			})
 			if err != nil {
-				return wrapCRErr(err)
+				return errCRIAMError(err)
 			}
 		}
 	}
 
-	return nil
+	return CRError{}
 }
 
 // Concurrency helpers
