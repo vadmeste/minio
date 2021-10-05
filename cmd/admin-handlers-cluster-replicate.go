@@ -29,6 +29,7 @@ import (
 	"github.com/minio/madmin-go"
 
 	"github.com/minio/minio/internal/logger"
+	"github.com/minio/pkg/bucket/policy"
 	iampolicy "github.com/minio/pkg/iam/policy"
 )
 
@@ -162,7 +163,15 @@ func (a adminAPIHandlers) CRInternalReplicateIAMItem(w http.ResponseWriter, r *h
 	var err error
 	switch item.Type {
 	case madmin.CRIAMItemPolicy:
-		err = globalClusterReplMgr.PeerAddPolicyHandler(ctx, item.Name, item.Policy)
+		var policy *iampolicy.Policy
+		if len(item.Policy) > 0 {
+			policy, err = iampolicy.ParseConfig(bytes.NewReader(item.Policy))
+			if err != nil {
+				writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+				return
+			}
+		}
+		err = globalClusterReplMgr.PeerAddPolicyHandler(ctx, item.Name, policy)
 	case madmin.CRIAMItemSvcAcc:
 		err = globalClusterReplMgr.PeerSvcAccChangeHandler(ctx, *item.SvcAccChange)
 	case madmin.CRIAMItemPolicyMapping:
@@ -200,7 +209,15 @@ func (a adminAPIHandlers) CRInternalReplicateBucketItem(w http.ResponseWriter, r
 	var err error
 	switch item.Type {
 	case madmin.CRBucketMetaTypePolicy:
-		err = globalClusterReplMgr.PeerBucketPolicyHandler(ctx, item.Bucket, item.Policy)
+		var bktPolicy *policy.Policy
+		if len(item.Policy) > 0 {
+			bktPolicy, err = policy.ParseConfig(bytes.NewReader(item.Policy), item.Bucket)
+			if err != nil {
+				writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+				return
+			}
+		}
+		err = globalClusterReplMgr.PeerBucketPolicyHandler(ctx, item.Bucket, bktPolicy)
 	case madmin.CRBucketMetaTypeTags:
 		err = globalClusterReplMgr.PeerBucketTaggingHandler(ctx, item.Bucket, item.Tags)
 	case madmin.CRBucketMetaTypeObjectLockConfig:

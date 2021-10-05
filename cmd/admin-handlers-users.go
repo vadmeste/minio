@@ -649,7 +649,7 @@ func (a adminAPIHandlers) AddServiceAccount(w http.ResponseWriter, r *http.Reque
 					SecretKey:     newCred.SecretKey,
 					Groups:        newCred.Groups,
 					LDAPUser:      opts.ldapUsername,
-					SessionPolicy: opts.sessionPolicy,
+					SessionPolicy: createReq.Policy,
 					Status:        auth.AccountOn,
 				},
 			},
@@ -786,7 +786,7 @@ func (a adminAPIHandlers) UpdateServiceAccount(w http.ResponseWriter, r *http.Re
 					AccessKey:     accessKey,
 					SecretKey:     opts.secretKey,
 					Status:        opts.status,
-					SessionPolicy: opts.sessionPolicy,
+					SessionPolicy: updateReq.NewPolicy,
 				},
 			},
 		})
@@ -1400,7 +1400,13 @@ func (a adminAPIHandlers) AddCannedPolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	iamPolicy, err := iampolicy.ParseConfig(io.LimitReader(r.Body, r.ContentLength))
+	iamPolicyBytes, err := ioutil.ReadAll(io.LimitReader(r.Body, r.ContentLength))
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	iamPolicy, err := iampolicy.ParseConfig(bytes.NewBuffer(iamPolicyBytes))
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
@@ -1430,7 +1436,7 @@ func (a adminAPIHandlers) AddCannedPolicy(w http.ResponseWriter, r *http.Request
 	if err := globalClusterReplMgr.IAMChangeHook(ctx, madmin.CRIAMItem{
 		Type:   madmin.CRIAMItemPolicy,
 		Name:   policyName,
-		Policy: iamPolicy,
+		Policy: iamPolicyBytes,
 	}); err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return

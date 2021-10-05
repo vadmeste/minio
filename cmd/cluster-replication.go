@@ -919,10 +919,19 @@ func (c *ClusterReplMgr) PeerAddPolicyHandler(ctx context.Context, policyName st
 func (c *ClusterReplMgr) PeerSvcAccChangeHandler(ctx context.Context, change madmin.CRSvcAccChange) error {
 	switch {
 	case change.Create != nil:
+		var sp *iampolicy.Policy
+		var err error
+		if len(change.Create.SessionPolicy) > 0 {
+			sp, err = iampolicy.ParseConfig(bytes.NewReader(change.Create.SessionPolicy))
+			if err != nil {
+				return wrapCRErr(err)
+			}
+		}
+
 		opts := newServiceAccountOpts{
 			accessKey:     change.Create.AccessKey,
 			secretKey:     change.Create.SecretKey,
-			sessionPolicy: change.Create.SessionPolicy,
+			sessionPolicy: sp,
 			ldapUsername:  change.Create.LDAPUser,
 		}
 		newCred, err := globalIAMSys.NewServiceAccount(ctx, change.Create.Parent, change.Create.Groups, opts)
@@ -939,13 +948,21 @@ func (c *ClusterReplMgr) PeerSvcAccChangeHandler(ctx context.Context, change mad
 			}
 		}
 	case change.Update != nil:
+		var sp *iampolicy.Policy
+		var err error
+		if len(change.Update.SessionPolicy) > 0 {
+			sp, err = iampolicy.ParseConfig(bytes.NewReader(change.Update.SessionPolicy))
+			if err != nil {
+				return wrapCRErr(err)
+			}
+		}
 		opts := updateServiceAccountOpts{
 			secretKey:     change.Update.SecretKey,
 			status:        change.Update.Status,
-			sessionPolicy: change.Update.SessionPolicy,
+			sessionPolicy: sp,
 		}
 
-		err := globalIAMSys.UpdateServiceAccount(ctx, change.Update.AccessKey, opts)
+		err = globalIAMSys.UpdateServiceAccount(ctx, change.Update.AccessKey, opts)
 		if err != nil {
 			fmt.Printf("%s: UpdateServiceAccount: %#v\n", c.state.Name, err)
 			return wrapCRErr(err)
@@ -1181,10 +1198,14 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) CRError {
 			return errCRBackendIssue(err)
 		}
 		if found {
+			policyJSON, err := json.Marshal(policy)
+			if err != nil {
+				return wrapCRErr(err)
+			}
 			err = c.BucketMetaHook(ctx, madmin.CRBucketMeta{
 				Type:   madmin.CRBucketMetaTypePolicy,
 				Bucket: bucket,
-				Policy: policy,
+				Policy: policyJSON,
 			})
 			if err != nil {
 				return errCRBucketMetaError(err)
@@ -1272,10 +1293,14 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) CRError {
 		}
 
 		for pname, policy := range allPolicies {
-			err := c.IAMChangeHook(ctx, madmin.CRIAMItem{
+			policyJSON, err := json.Marshal(policy)
+			if err != nil {
+				return wrapCRErr(err)
+			}
+			err = c.IAMChangeHook(ctx, madmin.CRIAMItem{
 				Type:   madmin.CRIAMItemPolicy,
 				Name:   pname,
-				Policy: &policy,
+				Policy: policyJSON,
 			})
 			if err != nil {
 				return errCRIAMError(err)
@@ -1349,6 +1374,13 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) CRError {
 			if err != nil {
 				return errCRBackendIssue(err)
 			}
+			var policyJSON []byte
+			if policy != nil {
+				policyJSON, err = json.Marshal(policy)
+				if err != nil {
+					return wrapCRErr(err)
+				}
+			}
 			err = c.IAMChangeHook(ctx, madmin.CRIAMItem{
 				Type: madmin.CRIAMItemSvcAcc,
 				SvcAccChange: &madmin.CRSvcAccChange{
@@ -1358,7 +1390,7 @@ func (c *ClusterReplMgr) syncLocalToPeers(ctx context.Context) CRError {
 						SecretKey:     acc.SecretKey,
 						Groups:        acc.Groups,
 						LDAPUser:      ldapUser,
-						SessionPolicy: policy,
+						SessionPolicy: json.RawMessage(policyJSON),
 						Status:        acc.Status,
 					},
 				},

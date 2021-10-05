@@ -18,8 +18,10 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/http"
 
 	humanize "github.com/dustin/go-humanize"
@@ -77,7 +79,13 @@ func (api objectAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	bucketPolicy, err := policy.ParseConfig(io.LimitReader(r.Body, r.ContentLength), bucket)
+	bucketPolicyBytes, err := ioutil.ReadAll(io.LimitReader(r.Body, r.ContentLength))
+	if err != nil {
+		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		return
+	}
+
+	bucketPolicy, err := policy.ParseConfig(bytes.NewReader(bucketPolicyBytes), bucket)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
@@ -104,7 +112,7 @@ func (api objectAPIHandlers) PutBucketPolicyHandler(w http.ResponseWriter, r *ht
 	if err = globalClusterReplMgr.BucketMetaHook(ctx, madmin.CRBucketMeta{
 		Type:   madmin.CRBucketMetaTypePolicy,
 		Bucket: bucket,
-		Policy: bucketPolicy,
+		Policy: bucketPolicyBytes,
 	}); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
