@@ -287,9 +287,8 @@ func (l *localLocker) expireOldLocks(interval time.Duration) {
 	}
 }
 
-func newLocker(endpoint Endpoint) *localLocker {
+func newLocker() *localLocker {
 	return &localLocker{
-		endpoint: endpoint,
-		lockMap:  make(map[string][]lockRequesterInfo),
+		lockMap: make(map[string][]lockRequesterInfo),
 	}
 }

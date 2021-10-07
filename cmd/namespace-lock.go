@@ -34,8 +34,8 @@ import (
 	"github.com/minio/minio/pkg/lsync"
 )
 
-// local lock servers
-var globalLockServers = make(map[Endpoint]*localLocker)
+// local lock server
+var globalLockServer *localLocker
 
 // RWLocker - locker interface to introduce GetRLock, RUnlock.
 type RWLocker interface {

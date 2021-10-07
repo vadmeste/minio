@@ -144,7 +144,7 @@ func (client *lockRESTClient) ForceUnlock(ctx context.Context, args dsync.LockAr
 
 func newLockAPI(endpoint Endpoint) dsync.NetLocker {
 	if endpoint.IsLocal {
-		return globalLockServers[endpoint]
+		return globalLockServer
 	}
 	return newlockRESTClient(endpoint)
 }
