@@ -367,6 +367,7 @@ func (ies *IAMEtcdStore) loadUser(ctx context.Context, user string, userType IAM
 	err := ies.loadIAMConfig(ctx, &u, getUserIdentityPath(user, userType))
 	if err != nil {
 		if err == errConfigNotFound {
+			logger.Info("%v: user `%s` is not found", time.Now(), user)
 			return errNoSuchUser
 		}
 		return err

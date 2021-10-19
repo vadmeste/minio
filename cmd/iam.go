@@ -1435,6 +1435,7 @@ func (sys *IAMSys) loadUserFromStore(accessKey string) {
 	sys.store.lock()
 	// If user is already found proceed.
 	if _, found := sys.iamUsersMap[accessKey]; !found {
+		logger.Info("%v: loading `%s` from the store", time.Now(), accessKey)
 		sys.store.loadUser(context.Background(), accessKey, regularUser, sys.iamUsersMap)
 		if _, found = sys.iamUsersMap[accessKey]; found {
 			// found user, load its mapped policies
@@ -1448,11 +1449,14 @@ func (sys *IAMSys) loadUserFromStore(accessKey string) {
 				}
 				sys.store.loadMappedPolicy(context.Background(), svc.ParentUser, regularUser, false, sys.iamUserPolicyMap)
 			} else {
+				logger.Info("%v: loading `%s` from the STS store", time.Now(), accessKey)
 				// None found fall back to STS users.
 				sys.store.loadUser(context.Background(), accessKey, stsUser, sys.iamUsersMap)
 				if _, found = sys.iamUsersMap[accessKey]; found {
 					// STS user found, load its mapped policy.
 					sys.store.loadMappedPolicy(context.Background(), accessKey, stsUser, false, sys.iamUserPolicyMap)
+				} else {
+					logger.Info("%v: sts `%s` not found", time.Now(), accessKey)
 				}
 			}
 		}

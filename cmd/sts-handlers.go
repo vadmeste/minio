@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/minio/minio/cmd/config/identity/openid"
@@ -384,6 +385,8 @@ func (sts *stsAPIHandlers) AssumeRoleWithSSO(w http.ResponseWriter, r *http.Requ
 		writeSTSErrorResponse(ctx, w, true, ErrSTSInternalError, err)
 		return
 	}
+
+	logger.Info("%v: AssumeSTS created a new credential: `%s`", time.Now(), cred.AccessKey)
 
 	// https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability
 	// claim is only considered stable when subject and iss are used together
