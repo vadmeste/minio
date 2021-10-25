@@ -157,9 +157,14 @@ func (h *healingTracker) save(ctx context.Context) error {
 		return err
 	}
 	globalBackgroundHealState.updateHealStatus(h)
-	return h.disk.WriteAll(ctx, minioMetaBucket,
+	err = h.disk.WriteAll(ctx, minioMetaBucket,
 		pathJoin(bucketMetaPrefix, slashSeparator, healingTrackerFilename),
 		htrackerBytes)
+	if err != nil {
+		err = fmt.Errorf("healing tracker save: %w", err)
+		return err
+	}
+	return nil
 }
 
 // delete the tracker on disk.

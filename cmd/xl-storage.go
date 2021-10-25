@@ -163,16 +163,19 @@ func getValidPath(path string) (string, error) {
 	// Disallow relative paths, figure out absolute paths.
 	path, err = filepath.Abs(path)
 	if err != nil {
+		err = fmt.Errorf("getValidPath: abs: %w", err)
 		return path, err
 	}
 
 	fi, err := Lstat(path)
 	if err != nil && !osIsNotExist(err) {
+		err = fmt.Errorf("getValidPath: Lstat(%v): %w", path, err)
 		return path, err
 	}
 	if osIsNotExist(err) {
 		// Disk not found create it.
 		if err = mkdirAll(path, 0777); err != nil {
+			err = fmt.Errorf("getValidPath: mkdirAll(%v): %w", path, err)
 			return path, err
 		}
 	}
@@ -228,6 +231,7 @@ func newXLStorage(ep Endpoint) (*xlStorage, error) {
 	} else {
 		rootDisk, err = disk.IsRootDisk(path, SlashSeparator)
 		if err != nil {
+			err = fmt.Errorf("newXLStorage: isRootDisk(%v) : %w", path, err)
 			return nil, err
 		}
 		if !rootDisk {
@@ -237,6 +241,7 @@ func newXLStorage(ep Endpoint) (*xlStorage, error) {
 			if rootDiskSize := env.Get(config.EnvRootDiskThresholdSize, ""); rootDiskSize != "" {
 				info, err := disk.GetInfo(path)
 				if err != nil {
+					err = fmt.Errorf("newXLStorage: getinfo (%v) : %w", path, err)
 					return nil, err
 				}
 				size, err := humanize.ParseBytes(rootDiskSize)
@@ -264,6 +269,7 @@ func newXLStorage(ep Endpoint) (*xlStorage, error) {
 
 	// Create all necessary bucket folders if possible.
 	if err = p.MakeVolBulk(context.TODO(), minioMetaBucket, minioMetaTmpBucket, minioMetaMultipartBucket, dataUsageBucket, minioMetaSpeedTestBucket); err != nil {
+		err = fmt.Errorf("newXLStorage: make vol bulk: %w", err)
 		return nil, err
 	}
 
@@ -274,10 +280,12 @@ func newXLStorage(ep Endpoint) (*xlStorage, error) {
 	filePath := pathJoin(p.diskPath, minioMetaTmpBucket, tmpFile)
 	w, err := OpenFileDirectIO(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0666)
 	if err != nil {
+		err = fmt.Errorf("newXLStorage: open file direct io (%s) %w", filePath, err)
 		return p, err
 	}
 	if _, err = w.Write(alignedBuf[:]); err != nil {
 		w.Close()
+		err = fmt.Errorf("newXLStorage: write aligned buf %w", err)
 		return p, err
 	}
 	w.Close()
@@ -1341,11 +1349,13 @@ func (s *xlStorage) openFileSync(filePath string, mode int) (f *os.File, err err
 	// Create top level directories if they don't exist.
 	// with mode 0777 mkdir honors system umask.
 	if err = mkdirAll(pathutil.Dir(filePath), 0777); err != nil {
+		logger.LogIf(context.Background(), err)
 		return nil, osErrToFileErr(err)
 	}
 
 	w, err := OpenFile(filePath, mode|writeMode, 0666)
 	if err != nil {
+		logger.LogIf(context.Background(), err)
 		// File path cannot be verified since one of the parents is a file.
 		switch {
 		case isSysErrIsDir(err):
@@ -1591,6 +1601,7 @@ func (s *xlStorage) writeAll(ctx context.Context, volume string, path string, b 
 
 	filePath := pathJoin(volumeDir, path)
 	if err = checkPathLength(filePath); err != nil {
+		err = fmt.Errorf("writeAll: checkPathLength: %w", err)
 		return err
 	}
 
@@ -1601,12 +1612,14 @@ func (s *xlStorage) writeAll(ctx context.Context, volume string, path string, b 
 		w, err = s.openFileNoSync(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 	}
 	if err != nil {
+		err = fmt.Errorf("writeAll: openFileSync: %w", err)
 		return err
 	}
 	defer w.Close()
 
 	n, err := w.Write(b)
 	if err != nil {
+		err = fmt.Errorf("writeAll: write: %w", err)
 		return err
 	}
 

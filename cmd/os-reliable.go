@@ -18,9 +18,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
+
+	"github.com/minio/minio/internal/logger"
 )
 
 // Wrapper functions to os.RemoveAll, which calls reliableRemoveAll
@@ -79,10 +82,12 @@ func mkdirAll(dirPath string, mode os.FileMode) (err error) {
 	}
 
 	if err = checkPathLength(dirPath); err != nil {
+		err = fmt.Errorf("mkdirAll: checkPathLength: %w", err)
 		return err
 	}
 
 	if err = reliableMkdirAll(dirPath, mode); err != nil {
+		logger.LogIf(context.Background(), err)
 		// File path cannot be verified since one of the parents is a file.
 		if isSysErrNotDir(err) {
 			return errFileAccessDenied

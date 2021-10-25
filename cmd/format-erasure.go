@@ -349,6 +349,7 @@ func saveFormatErasure(disk StorageAPI, format *formatErasureV3, heal bool) erro
 	diskID := format.Erasure.This
 
 	if err := makeFormatErasureMetaVolumes(disk); err != nil {
+		err = fmt.Errorf("saveFormatErasure: make format: %w", err)
 		return err
 	}
 
@@ -365,11 +366,13 @@ func saveFormatErasure(disk StorageAPI, format *formatErasureV3, heal bool) erro
 
 	// write to unique file.
 	if err = disk.WriteAll(context.TODO(), minioMetaBucket, tmpFormat, formatBytes); err != nil {
+		err = fmt.Errorf("saveFormatErasure: write: %w", err)
 		return err
 	}
 
 	// Rename file `uuid.json` --> `format.json`.
 	if err = disk.RenameFile(context.TODO(), minioMetaBucket, tmpFormat, minioMetaBucket, formatConfigFile); err != nil {
+		err = fmt.Errorf("saveFormatErasure: rename: %w", err)
 		return err
 	}
 
@@ -421,6 +424,7 @@ func loadFormatErasure(disk StorageAPI) (format *formatErasureV3, err error) {
 			// No other data found, its a fresh disk.
 			return nil, errUnformattedDisk
 		}
+		err = fmt.Errorf("loadFormatErasure : %w", err)
 		return nil, err
 	}
 
