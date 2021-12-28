@@ -342,27 +342,35 @@ func initServer(ctx context.Context, newObject ObjectLayer) ([]BucketInfo, error
 			logger.Info("Waiting for all MinIO sub-systems to be initialized.. lock acquired")
 		}
 
-		// Migrate all backend configs to encrypted backend configs, optionally
-		// handles rotating keys for encryption, if there is any retriable failure
-		// that shall be retried if there is an error.
-		if err = handleEncryptedConfigBackend(newObject); err == nil {
-			// Upon success migrating the config, initialize all sub-systems
-			// if all sub-systems initialized successfully return right away
-			var buckets []BucketInfo
-			buckets, err = initConfigSubsystem(lkctx.Context(), newObject)
-			if err == nil {
+		if globalEndpoints.FirstLocal() {
+			// Migrate all backend configs to encrypted backend configs, optionally
+			// handles rotating keys for encryption, if there is any retriable failure
+			// that shall be retried if there is an error.
+			if err = handleEncryptedConfigBackend(newObject); err != nil {
+				// Unlock the transaction lock and allow other nodes to acquire the lock if possible.
 				txnLk.Unlock(lkctx.Cancel)
-				// All successful return.
-				if globalIsDistErasure {
-					// These messages only meant primarily for distributed setup, so only log during distributed setup.
-					logger.Info("All MinIO sub-systems initialized successfully")
+				if configRetriableErrors(err) {
+					logger.Info("Waiting for all MinIO sub-systems to be initialized.. possible cause (%v)", err)
+					time.Sleep(time.Duration(r.Float64() * float64(5*time.Second)))
 				}
-				return buckets, nil
+				logger.LogIf(lkctx.Context(), err)
+				continue
 			}
 		}
 
-		// Unlock the transaction lock and allow other nodes to acquire the lock if possible.
+		// Upon success migrating the config, initialize all sub-systems
+		// if all sub-systems initialized successfully return right away
+		var buckets []BucketInfo
+		buckets, err = initConfigSubsystem(lkctx.Context(), newObject)
 		txnLk.Unlock(lkctx.Cancel)
+		if err == nil {
+			// All successful return.
+			if globalIsDistErasure {
+				// These messages only meant primarily for distributed setup, so only log during distributed setup.
+				logger.Info("All MinIO sub-systems initialized successfully")
+			}
+			return buckets, nil
+		}
 
 		if configRetriableErrors(err) {
 			logger.Info("Waiting for all MinIO sub-systems to be initialized.. possible cause (%v)", err)
@@ -370,8 +378,7 @@ func initServer(ctx context.Context, newObject ObjectLayer) ([]BucketInfo, error
 			continue
 		}
 
-		// Any other unhandled return right here.
-		return nil, fmt.Errorf("Unable to initialize sub-systems: %w", err)
+		logger.LogIf(lkctx.Context(), err)
 	}
 }
 

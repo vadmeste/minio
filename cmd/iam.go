@@ -232,55 +232,51 @@ func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etc
 			continue
 		}
 
-		if etcdClient != nil {
-			// ****  WARNING ****
-			// Migrating to encrypted backend on etcd should happen before initialization of
-			// IAM sub-system, make sure that we do not move the above codeblock elsewhere.
-			if err := migrateIAMConfigsEtcdToEncrypted(retryCtx, etcdClient); err != nil {
-				txnLk.Unlock(lkctx.Cancel)
-				if errors.Is(err, errEtcdUnreachable) {
-					logger.Info("Connection to etcd timed out. Retrying..")
+		if globalEndpoints.FirstLocal() {
+			if etcdClient != nil {
+				// ****  WARNING ****
+				// Migrating to encrypted backend on etcd should happen before initialization of
+				// IAM sub-system, make sure that we do not move the above codeblock elsewhere.
+				if err := migrateIAMConfigsEtcdToEncrypted(retryCtx, etcdClient); err != nil {
+					txnLk.Unlock(lkctx.Cancel)
+					if errors.Is(err, errEtcdUnreachable) {
+						logger.Info("Connection to etcd timed out. Retrying..")
+					} else {
+						logger.LogIf(ctx, fmt.Errorf("Unable to decrypt an encrypted ETCD backend for IAM users and policies: %w", err))
+						logger.LogIf(ctx, errors.New("IAM sub-system is partially initialized, some users may not be available"))
+					}
 					continue
 				}
-				logger.LogIf(ctx, fmt.Errorf("Unable to decrypt an encrypted ETCD backend for IAM users and policies: %w", err))
+			}
+
+			// These messages only meant primarily for distributed setup, so only log during distributed setup.
+			if globalIsDistErasure {
+				logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. lock acquired")
+			}
+
+			// Migrate IAM configuration, if necessary.
+			if err := sys.doIAMConfigMigration(retryCtx); err != nil {
+				txnLk.Unlock(lkctx.Cancel)
+				if configRetriableErrors(err) {
+					logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. possible cause (%v)", err)
+					continue
+				}
+				logger.LogIf(ctx, fmt.Errorf("Unable to migrate IAM users and policies to new format: %w", err))
 				logger.LogIf(ctx, errors.New("IAM sub-system is partially initialized, some users may not be available"))
 				return
 			}
 		}
 
-		// These messages only meant primarily for distributed setup, so only log during distributed setup.
-		if globalIsDistErasure {
-			logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. lock acquired")
-		}
-
-		// Migrate IAM configuration, if necessary.
-		if err := sys.doIAMConfigMigration(retryCtx); err != nil {
-			txnLk.Unlock(lkctx.Cancel)
-			if configRetriableErrors(err) {
-				logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. possible cause (%v)", err)
-				continue
-			}
-			logger.LogIf(ctx, fmt.Errorf("Unable to migrate IAM users and policies to new format: %w", err))
-			logger.LogIf(ctx, errors.New("IAM sub-system is partially initialized, some users may not be available"))
-			return
-		}
-
-		// Successfully migrated, proceed to load the users.
+		err := sys.Load(retryCtx)
 		txnLk.Unlock(lkctx.Cancel)
-		break
-	}
-
-	// Load IAM data from storage.
-	for {
-		if err := sys.Load(retryCtx); err != nil {
+		if err != nil {
 			if configRetriableErrors(err) {
 				logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. possible cause (%v)", err)
-				time.Sleep(time.Duration(r.Float64() * float64(5*time.Second)))
-				continue
-			}
-			if err != nil {
+			} else {
 				logger.LogIf(ctx, fmt.Errorf("Unable to initialize IAM sub-system, some users may not be available %w", err))
 			}
+			time.Sleep(time.Duration(r.Float64() * float64(5*time.Second)))
+			continue
 		}
 		break
 	}
