@@ -275,6 +275,8 @@ func shouldHealObjectOnDisk(erErr, dataErr error, meta FileInfo, latestMeta File
 
 // Heals an object by re-writing corrupt/missing erasure blocks.
 func (er erasureObjects) healObject(ctx context.Context, bucket string, object string, versionID string, opts madmin.HealOpts) (result madmin.HealResultItem, err error) {
+	fmt.Println("heal object", bucket, object)
+
 	if !opts.DryRun {
 		defer NSUpdated(bucket, object)
 	}
@@ -908,6 +910,7 @@ func isObjectDangling(metaArr []FileInfo, errs []error, dataErrs []error) (valid
 
 // HealObject - heal the given object, automatically deletes the object if stale/corrupted if `remove` is true.
 func (er erasureObjects) HealObject(ctx context.Context, bucket, object, versionID string, opts madmin.HealOpts) (hr madmin.HealResultItem, err error) {
+	// fmt.Println("HealObject", bucket, object, versionID)
 	defer func() {
 		if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
 			err = nil

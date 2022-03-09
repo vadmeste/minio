@@ -20,6 +20,7 @@ package cmd
 import (
 	"context"
 	"runtime"
+	"time"
 
 	"github.com/minio/madmin-go"
 )
@@ -56,6 +57,7 @@ func systemIO() int {
 }
 
 func waitForLowHTTPReq() {
+	time.Sleep(time.Second)
 	var currentIO func() int
 	if httpServer := newHTTPServerFn(); httpServer != nil {
 		currentIO = httpServer.GetRequestCount

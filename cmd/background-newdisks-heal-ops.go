@@ -23,24 +23,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dustin/go-humanize"
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/set"
-	"github.com/minio/minio/internal/color"
 	"github.com/minio/minio/internal/logger"
-	"github.com/minio/pkg/console"
 )
 
 const (
-	defaultMonitorNewDiskInterval = time.Second * 10
+	defaultMonitorNewDiskInterval = time.Second * 3
 	healingTrackerFilename        = ".healing.bin"
 )
+
+var newDiskHealingTimeout = newDynamicTimeout(30*time.Second, 10*time.Second)
 
 //go:generate msgp -file $GOFILE -unexported
 
@@ -82,6 +80,10 @@ type healingTracker struct {
 
 	// Filled during heal.
 	HealedBuckets []string
+
+	UntilBucket string
+	UntilObject string
+
 	// Add future tracking capabilities
 	// Be sure that they are included in toHealingDisk
 }
@@ -193,6 +195,7 @@ func (h *healingTracker) bucketDone(bucket string) {
 	h.ResumeItemsFailed = h.ItemsFailed
 	h.ResumeBytesDone = h.BytesDone
 	h.ResumeBytesFailed = h.BytesFailed
+
 	h.HealedBuckets = append(h.HealedBuckets, bucket)
 	for i, b := range h.QueuedBuckets {
 		if b == bucket {
@@ -200,6 +203,9 @@ func (h *healingTracker) bucketDone(bucket string) {
 			h.QueuedBuckets = append(h.QueuedBuckets[:i], h.QueuedBuckets[i+1:]...)
 		}
 	}
+
+	h.Bucket = ""
+	h.Object = ""
 }
 
 // setQueuedBuckets will add buckets, but exclude any that is already in h.HealedBuckets.
@@ -299,6 +305,230 @@ func getLocalDisksToHeal() (disksToHeal Endpoints) {
 	return disksToHeal
 }
 
+type freshDisksHealer struct {
+	ctx context.Context
+
+	healCtx    context.Context
+	healCancel context.CancelFunc
+	stopCh     chan struct{}
+
+	z *erasureServerPools
+}
+
+func (e *freshDisksHealer) updateHealingTrack(endpoint Endpoint) error {
+	disk, format, err := connectEndpoint(endpoint)
+	if err != nil {
+		return err
+	}
+
+	poolIndex := globalEndpoints.GetLocalPoolIdx(disk.Endpoint())
+	if poolIndex < 0 {
+		return errors.New("unexpected pool index")
+	}
+
+	// Calculate the set index where the current endpoint belongs
+	e.z.serverPools[poolIndex].erasureDisksMu.RLock()
+	// Protect reading reference format.
+	setIndex, _, err := findDiskIndex(e.z.serverPools[poolIndex].format, format)
+	e.z.serverPools[poolIndex].erasureDisksMu.RUnlock()
+	if err != nil {
+		return err
+	}
+
+	// So someone changed the drives underneath, healing tracker missing.
+	tracker, err := loadHealingTracker(e.ctx, disk)
+	if err != nil {
+		logger.LogIf(e.ctx, fmt.Errorf("Healing tracker missing on '%s', disk was swapped again on %s pool: %w",
+			disk, humanize.Ordinal(poolIndex+1), err))
+		tracker = newHealingTracker(disk)
+	}
+
+	if len(tracker.QueuedBuckets) > 0 {
+		// This is a new tracker, update it
+		return nil
+	}
+
+	buckets, _ := e.z.ListBuckets(e.ctx)
+
+	// Buckets data are dispersed in multiple zones/sets, make
+	// sure to heal all bucket metadata configuration.
+	buckets = append(buckets, BucketInfo{
+		Name: pathJoin(minioMetaBucket, minioConfigPrefix),
+	}, BucketInfo{
+		Name: pathJoin(minioMetaBucket, bucketMetaPrefix),
+	})
+
+	// Heal latest buckets first.
+	sort.Slice(buckets, func(i, j int) bool {
+		a, b := strings.HasPrefix(buckets[i].Name, minioMetaBucket), strings.HasPrefix(buckets[j].Name, minioMetaBucket)
+		if a != b {
+			return a
+		}
+		return buckets[i].Created.After(buckets[j].Created)
+	})
+
+	// Load bucket totals
+	cache := dataUsageCache{}
+	if err := cache.load(e.ctx, e.z.serverPools[poolIndex].sets[setIndex], dataUsageCacheName); err == nil {
+		dataUsageInfo := cache.dui(dataUsageRoot, nil)
+		tracker.ObjectsTotalCount = dataUsageInfo.ObjectsTotalCount
+		tracker.ObjectsTotalSize = dataUsageInfo.ObjectsTotalSize
+	}
+
+	tracker.PoolIndex, tracker.SetIndex, tracker.DiskIndex = disk.GetDiskLoc()
+	tracker.setQueuedBuckets(buckets)
+	return tracker.save(e.ctx)
+}
+
+func healingResumeMiddleHealing(trackers healingTrackers) (pool, set int, bucket, object string, until bool) {
+	for _, t := range trackers {
+		if t.Bucket == "" {
+			continue
+		}
+		if bucket == "" {
+			pool, set, bucket, object = t.PoolIndex, t.SetIndex, t.Bucket, t.Object
+			continue
+		}
+		if t.Bucket < bucket {
+			pool, set, bucket, object = t.PoolIndex, t.SetIndex, t.Bucket, t.Object
+		}
+	}
+
+	if bucket != "" {
+		return
+	}
+
+	until = true
+
+	for _, t := range trackers {
+		if t.UntilBucket == "" {
+			continue
+		}
+		if bucket == "" {
+			pool, set, bucket, object = t.PoolIndex, t.SetIndex, t.UntilBucket, t.UntilObject
+			continue
+		}
+		if t.UntilBucket < bucket {
+			pool, set, bucket, object = t.PoolIndex, t.SetIndex, t.UntilBucket, t.UntilObject
+		}
+	}
+	return
+}
+
+func healingResumeNextBucket(trackers healingTrackers) (pool, set int, bucket string) {
+	for _, t := range trackers {
+		for _, b := range t.QueuedBuckets {
+			if bucket == "" {
+				pool, set, bucket = t.PoolIndex, t.SetIndex, b
+				continue
+			}
+			if b < bucket {
+				pool, set, bucket = t.PoolIndex, t.SetIndex, b
+			}
+		}
+	}
+
+	return
+}
+
+func (e *freshDisksHealer) stop() {
+	if e.healCancel != nil {
+		e.healCancel()
+		<-e.stopCh
+	}
+}
+
+func (e *freshDisksHealer) resume() {
+	e.healCtx, e.healCancel = context.WithCancel(e.ctx)
+	e.stopCh = make(chan struct{})
+	go func() {
+		defer close(e.stopCh)
+
+		for {
+			finished, err := e.run()
+			if finished || contextCanceled(e.healCtx) {
+				break
+			}
+
+			logger.LogIf(e.ctx, err)
+		}
+	}()
+}
+
+func (e *freshDisksHealer) run() (bool, error) {
+	var trackers healingTrackers
+	for _, disk := range globalLocalDrives {
+		// So someone changed the drives underneath, healing tracker missing.
+		tracker, err := loadHealingTracker(e.healCtx, disk)
+		if err != nil {
+			if errors.Is(err, errFileNotFound) {
+				continue
+			}
+			tracker = newHealingTracker(disk)
+		}
+		trackers = append(trackers, tracker)
+	}
+
+	if len(trackers) == 0 {
+		return true, nil
+	}
+
+	fmt.Println("scan tracking files")
+	for _, t := range trackers {
+		fmt.Println(t.disk, t.Bucket, t.Object, "|", t.UntilBucket, t.UntilObject)
+	}
+
+	var start, end string
+
+	poolIndex, setIndex, bucket, object, reverse := healingResumeMiddleHealing(trackers)
+	if bucket != "" {
+		start = object
+		if reverse {
+			start = ""
+			end = object
+		} else {
+			trackers.updateStartAt(e.ctx, bucket, object)
+		}
+	} else {
+		poolIndex, setIndex, bucket = healingResumeNextBucket(trackers)
+		trackers.updateStartAt(e.ctx, "", "")
+	}
+
+	// Prevent parallel erasure set healing
+	locker := e.z.NewNSLock(minioMetaBucket, fmt.Sprintf("new-disk-healing/%d/%d", poolIndex, setIndex))
+	lkctx, err := locker.GetLock(e.healCtx, newDiskHealingTimeout)
+	if err != nil {
+		return false, err
+	}
+	ctx := lkctx.Context()
+	defer locker.Unlock(lkctx.Cancel)
+
+	err = e.z.serverPools[poolIndex].sets[setIndex].healBucketAndContents(ctx, bucket, start, end, trackers)
+	if err != nil {
+		trackers.update(e.ctx)
+		return false, err
+	}
+
+	select {
+	// If context is canceled don't mark as done...
+	case <-ctx.Done():
+		trackers.update(e.ctx)
+		return false, e.healCtx.Err()
+	default:
+		trackers.bucketDone(bucket)
+		trackers.update(e.ctx)
+		trackers.cleanup(e.ctx)
+	}
+
+	// fmt.Println("finished healing", bucket, object)
+
+	return false, nil
+}
+
+func newFreshDisksHealer(ctx context.Context, z *erasureServerPools) *freshDisksHealer {
+	return &freshDisksHealer{ctx: ctx, z: z}
+}
+
 // monitorLocalDisksAndHeal - ensures that detected new disks are healed
 //  1. Only the concerned erasure set will be listed and healed
 //  2. Only the node hosting the disk is responsible to perform the heal
@@ -307,147 +537,38 @@ func monitorLocalDisksAndHeal(ctx context.Context, z *erasureServerPools, bgSeq 
 	diskCheckTimer := time.NewTimer(defaultMonitorNewDiskInterval)
 	defer diskCheckTimer.Stop()
 
+	fdh := newFreshDisksHealer(ctx, z)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-diskCheckTimer.C:
-			var erasureSetInPoolDisksToHeal []map[int][]StorageAPI
-
 			healDisks := globalBackgroundHealState.getHealLocalDiskEndpoints()
-			if len(healDisks) > 0 {
-				// Reformat disks
-				bgSeq.queueHealTask(healSource{bucket: SlashSeparator}, madmin.HealItemMetadata)
+			if len(healDisks) == 0 {
+				// Should not happen
+				break
+			}
+			globalBackgroundHealState.popHealLocalDisks(healDisks...)
 
-				// Ensure that reformatting disks is finished
-				bgSeq.queueHealTask(healSource{bucket: nopHeal}, madmin.HealItemMetadata)
+			fdh.stop()
 
-				logger.Info(fmt.Sprintf("Found drives to heal %d, proceeding to heal - 'mc admin heal alias/ --verbose' to check the status.",
-					len(healDisks)))
-
-				erasureSetInPoolDisksToHeal = make([]map[int][]StorageAPI, len(z.serverPools))
-				for i := range z.serverPools {
-					erasureSetInPoolDisksToHeal[i] = map[int][]StorageAPI{}
-				}
+			// Reformat disks immediately
+			_, err := z.HealFormat(context.Background(), false)
+			if err != nil && !errors.Is(err, errNoHealRequired) {
+				logger.LogIf(ctx, err)
+				continue
 			}
 
-			if serverDebugLog && len(healDisks) > 0 {
-				console.Debugf(color.Green("healDisk:")+" disk check timer fired, attempting to heal %d drives\n", len(healDisks))
+			for _, disk := range healDisks {
+				logger.LogIf(ctx, fdh.updateHealingTrack(disk))
 			}
 
-			// heal only if new disks found.
-			for _, endpoint := range healDisks {
-				disk, format, err := connectEndpoint(endpoint)
-				if err != nil {
-					printEndpointError(endpoint, err, true)
-					continue
-				}
-
-				poolIdx := globalEndpoints.GetLocalPoolIdx(disk.Endpoint())
-				if poolIdx < 0 {
-					continue
-				}
-
-				// Calculate the set index where the current endpoint belongs
-				z.serverPools[poolIdx].erasureDisksMu.RLock()
-				// Protect reading reference format.
-				setIndex, _, err := findDiskIndex(z.serverPools[poolIdx].format, format)
-				z.serverPools[poolIdx].erasureDisksMu.RUnlock()
-				if err != nil {
-					printEndpointError(endpoint, err, false)
-					continue
-				}
-
-				erasureSetInPoolDisksToHeal[poolIdx][setIndex] = append(erasureSetInPoolDisksToHeal[poolIdx][setIndex], disk)
-			}
-
-			buckets, _ := z.ListBuckets(ctx)
-
-			// Buckets data are dispersed in multiple zones/sets, make
-			// sure to heal all bucket metadata configuration.
-			buckets = append(buckets, BucketInfo{
-				Name: pathJoin(minioMetaBucket, minioConfigPrefix),
-			}, BucketInfo{
-				Name: pathJoin(minioMetaBucket, bucketMetaPrefix),
-			})
-
-			// Heal latest buckets first.
-			sort.Slice(buckets, func(i, j int) bool {
-				a, b := strings.HasPrefix(buckets[i].Name, minioMetaBucket), strings.HasPrefix(buckets[j].Name, minioMetaBucket)
-				if a != b {
-					return a
-				}
-				return buckets[i].Created.After(buckets[j].Created)
-			})
-
-			// TODO(klauspost): This will block until all heals are done,
-			// in the future this should be able to start healing other sets at once.
-			var wg sync.WaitGroup
-			for i, setMap := range erasureSetInPoolDisksToHeal {
-				i := i
-				for setIndex, disks := range setMap {
-					if len(disks) == 0 {
-						continue
-					}
-					wg.Add(1)
-					go func(setIndex int, disks []StorageAPI) {
-						defer wg.Done()
-						for _, disk := range disks {
-							if serverDebugLog {
-								logger.Info("Healing disk '%v' on %s pool", disk, humanize.Ordinal(i+1))
-							}
-
-							// So someone changed the drives underneath, healing tracker missing.
-							tracker, err := loadHealingTracker(ctx, disk)
-							if err != nil {
-								logger.LogIf(ctx, fmt.Errorf("Healing tracker missing on '%s', disk was swapped again on %s pool: %w",
-									disk, humanize.Ordinal(i+1), err))
-								tracker = newHealingTracker(disk)
-							}
-
-							// Load bucket totals
-							cache := dataUsageCache{}
-							if err := cache.load(ctx, z.serverPools[i].sets[setIndex], dataUsageCacheName); err == nil {
-								dataUsageInfo := cache.dui(dataUsageRoot, nil)
-								tracker.ObjectsTotalCount = dataUsageInfo.ObjectsTotalCount
-								tracker.ObjectsTotalSize = dataUsageInfo.ObjectsTotalSize
-							}
-
-							tracker.PoolIndex, tracker.SetIndex, tracker.DiskIndex = disk.GetDiskLoc()
-							tracker.setQueuedBuckets(buckets)
-							if err := tracker.save(ctx); err != nil {
-								logger.LogIf(ctx, err)
-								// Unable to write healing tracker, permission denied or some
-								// other unexpected error occurred. Proceed to look for new
-								// disks to be healed again, we cannot proceed further.
-								return
-							}
-
-							err = z.serverPools[i].sets[setIndex].healErasureSet(ctx, tracker.QueuedBuckets, tracker)
-							if err != nil {
-								logger.LogIf(ctx, err)
-								continue
-							}
-
-							if serverDebugLog {
-								logger.Info("Healing disk '%s' on %s pool, %s set complete", disk,
-									humanize.Ordinal(i+1), humanize.Ordinal(setIndex+1))
-								logger.Info("Summary:\n")
-								tracker.printTo(os.Stdout)
-								logger.Info("\n")
-							}
-							logger.LogIf(ctx, tracker.delete(ctx))
-
-							// Only upon success pop the healed disk.
-							globalBackgroundHealState.popHealLocalDisks(disk.Endpoint())
-						}
-					}(setIndex, disks)
-				}
-			}
-			wg.Wait()
-
-			// Reset for next interval.
-			diskCheckTimer.Reset(defaultMonitorNewDiskInterval)
+			fdh.resume()
 		}
+
+		// Reset for next interval.
+		diskCheckTimer.Reset(defaultMonitorNewDiskInterval)
+
 	}
 }

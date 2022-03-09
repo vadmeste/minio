@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -161,180 +162,237 @@ func mustGetHealSequence(ctx context.Context) *healSequence {
 	}
 }
 
-// healErasureSet lists and heals all objects in a specific erasure set
-func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, tracker *healingTracker) error {
+func (er *erasureObjects) healBucketAndContents(ctx context.Context, bucket, startObject, endObject string, trackers healingTrackers) error {
+	fmt.Println("!! healbucketAndContents, bucket=", bucket, ", startObject=", startObject, ", endObject=", endObject)
+
 	bgSeq := mustGetHealSequence(ctx)
 	scanMode := madmin.HealNormalScan
 
-	// Make sure to copy since `buckets slice`
-	// is modified in place by tracker.
-	healBuckets := make([]string, len(buckets))
-	copy(healBuckets, buckets)
+	// Heal current bucket
+	if _, err := er.HealBucket(ctx, bucket, madmin.HealOpts{
+		ScanMode: scanMode,
+	}); err != nil {
+		return err
+	}
 
-	var retErr error
-	// Heal all buckets with all objects
-	for _, bucket := range healBuckets {
-		if tracker.isHealed(bucket) {
-			continue
-		}
-		var forwardTo string
-		// If we resume to the same bucket, forward to last known item.
-		if tracker.Bucket != "" {
-			if tracker.Bucket == bucket {
-				forwardTo = tracker.Object
-			} else {
-				// Reset to where last bucket ended if resuming.
-				tracker.resume()
-			}
-		}
-		tracker.Object = ""
-		tracker.Bucket = bucket
-		// Heal current bucket
-		if _, err := er.HealBucket(ctx, bucket, madmin.HealOpts{
-			ScanMode: scanMode,
-		}); err != nil {
-			logger.LogIf(ctx, err)
-			continue
-		}
+	if serverDebugLog {
+		console.Debugf(color.Green("healDisk:")+" healing bucket %s content on %s erasure set\n",
+			bucket, humanize.Ordinal(trackers.getSetIndex()+1))
+	}
 
-		if serverDebugLog {
-			console.Debugf(color.Green("healDisk:")+" healing bucket %s content on %s erasure set\n",
-				bucket, humanize.Ordinal(tracker.SetIndex+1))
-		}
+	disks := er.getOnlineDisks()
+	if len(disks) == 0 {
+		return errors.New("no online disks found")
+	}
 
-		disks, _ := er.getOnlineDisksWithHealing()
-		if len(disks) == 0 {
-			// all disks are healing in this set, this is allowed
-			// so we simply proceed to next bucket, marking the bucket
-			// as done as there are no objects to heal.
-			tracker.bucketDone(bucket)
-			logger.LogIf(ctx, tracker.update(ctx))
-			continue
-		}
+	// Limit listing to 3 drives.
+	if len(disks) > 3 {
+		disks = disks[:3]
+	}
 
-		// Limit listing to 3 drives.
-		if len(disks) > 3 {
-			disks = disks[:3]
+	healEntry := func(entry metaCacheEntry) {
+		if entry.name == "" && len(entry.metadata) == 0 {
+			// ignore entries that don't have metadata.
+			return
 		}
-
-		healEntry := func(entry metaCacheEntry) {
-			if entry.name == "" && len(entry.metadata) == 0 {
-				// ignore entries that don't have metadata.
+		if entry.isDir() {
+			// ignore healing entry.name's with `/` suffix.
+			return
+		}
+		// We might land at .metacache, .trash, .multipart
+		// no need to heal them skip, only when bucket
+		// is '.minio.sys'
+		if bucket == minioMetaBucket {
+			if wildcard.Match("buckets/*/.metacache/*", entry.name) {
 				return
 			}
-			if entry.isDir() {
-				// ignore healing entry.name's with `/` suffix.
+			if wildcard.Match("tmp/.trash/*", entry.name) {
 				return
 			}
-			// We might land at .metacache, .trash, .multipart
-			// no need to heal them skip, only when bucket
-			// is '.minio.sys'
-			if bucket == minioMetaBucket {
-				if wildcard.Match("buckets/*/.metacache/*", entry.name) {
-					return
-				}
-				if wildcard.Match("tmp/.trash/*", entry.name) {
-					return
-				}
-				if wildcard.Match("multipart/*", entry.name) {
-					return
-				}
-			}
-
-			fivs, err := entry.fileInfoVersions(bucket)
-			if err != nil {
-				err := bgSeq.queueHealTask(healSource{
-					bucket:    bucket,
-					object:    entry.name,
-					versionID: "",
-				}, madmin.HealItemObject)
-				if err != nil {
-					tracker.ItemsFailed++
-					logger.LogIf(ctx, fmt.Errorf("unable to heal object %s/%s: %w", bucket, entry.name, err))
-				} else {
-					tracker.ItemsHealed++
-				}
-				bgSeq.logHeal(madmin.HealItemObject)
+			if wildcard.Match("multipart/*", entry.name) {
 				return
 			}
-
-			for _, version := range fivs.Versions {
-				if _, err := er.HealObject(ctx, bucket, version.Name,
-					version.VersionID, madmin.HealOpts{
-						ScanMode: scanMode,
-						Remove:   healDeleteDangling,
-					}); err != nil {
-					// If not deleted, assume they failed.
-					tracker.ItemsFailed++
-					tracker.BytesFailed += uint64(version.Size)
-					if version.VersionID != "" {
-						logger.LogIf(ctx, fmt.Errorf("unable to heal object %s/%s-v(%s): %w", bucket, version.Name, version.VersionID, err))
-					} else {
-						logger.LogIf(ctx, fmt.Errorf("unable to heal object %s/%s: %w", bucket, version.Name, err))
-					}
-				} else {
-					tracker.ItemsHealed++
-					tracker.BytesDone += uint64(version.Size)
-				}
-				bgSeq.logHeal(madmin.HealItemObject)
-			}
-			tracker.Object = entry.name
-			if time.Since(tracker.LastUpdate) > time.Minute {
-				logger.LogIf(ctx, tracker.update(ctx))
-			}
-
-			// Wait and proceed if there are active requests
-			waitForLowHTTPReq()
 		}
 
-		// How to resolve partial results.
-		resolver := metadataResolutionParams{
-			dirQuorum: 1,
-			objQuorum: 1,
-			bucket:    bucket,
-		}
-
-		err := listPathRaw(ctx, listPathRawOptions{
-			disks:          disks,
-			bucket:         bucket,
-			recursive:      true,
-			forwardTo:      forwardTo,
-			minDisks:       1,
-			reportNotFound: false,
-			agreed:         healEntry,
-			partial: func(entries metaCacheEntries, nAgreed int, errs []error) {
-				entry, ok := entries.resolve(&resolver)
-				if !ok {
-					// check if we can get one entry atleast
-					// proceed to heal nonetheless.
-					entry, _ = entries.firstFound()
-				}
-				healEntry(*entry)
-			},
-			finished: nil,
-		})
+		fivs, err := entry.fileInfoVersions(bucket)
 		if err != nil {
-			// Set this such that when we return this function
-			// we let the caller retry this disk again for the
-			// buckets it failed to list.
-			retErr = err
-			logger.LogIf(ctx, err)
-			continue
+			err := bgSeq.queueHealTask(healSource{
+				bucket:    bucket,
+				object:    entry.name,
+				versionID: "",
+			}, madmin.HealItemObject)
+			if err != nil {
+				trackers.incItemsFailed()
+				logger.LogIf(ctx, fmt.Errorf("unable to heal object %s/%s: %w", bucket, entry.name, err))
+			} else {
+				trackers.incItemsFailed()
+			}
+			bgSeq.logHeal(madmin.HealItemObject)
+			return
 		}
 
-		select {
-		// If context is canceled don't mark as done...
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			tracker.bucketDone(bucket)
-			logger.LogIf(ctx, tracker.update(ctx))
+		for _, version := range fivs.Versions {
+			if _, err := er.HealObject(ctx, bucket, version.Name,
+				version.VersionID, madmin.HealOpts{
+					ScanMode: scanMode,
+					Remove:   healDeleteDangling,
+				}); err != nil {
+				// If not deleted, assume they failed.
+				trackers.incItemsFailed()
+				trackers.incBytesFailed(uint64(version.Size))
+				if version.VersionID != "" {
+					logger.LogIf(ctx, fmt.Errorf("unable to heal object %s/%s-v(%s): %w", bucket, version.Name, version.VersionID, err))
+				} else {
+					logger.LogIf(ctx, fmt.Errorf("unable to heal object %s/%s: %w", bucket, version.Name, err))
+				}
+			} else {
+				trackers.incItemsHealed()
+				trackers.incBytesDone(uint64(version.Size))
+			}
+			bgSeq.logHeal(madmin.HealItemObject)
+		}
+		trackers.setBucket(bucket)
+		trackers.setObject(entry.name)
+		// if time.Since(trackers.getLastUpdate()) > time.Minute {
+		logger.LogIf(ctx, trackers.update(ctx))
+		// }
+
+		// Wait and proceed if there are active requests
+		waitForLowHTTPReq()
+	}
+
+	// How to resolve partial results.
+	resolver := metadataResolutionParams{
+		dirQuorum: 1,
+		objQuorum: 1,
+		bucket:    bucket,
+	}
+
+	return listPathRaw(ctx, listPathRawOptions{
+		disks:          disks,
+		bucket:         bucket,
+		recursive:      true,
+		forwardTo:      startObject,
+		endAt:          endObject,
+		minDisks:       1,
+		reportNotFound: false,
+		agreed:         healEntry,
+		partial: func(entries metaCacheEntries, nAgreed int, errs []error) {
+			entry, ok := entries.resolve(&resolver)
+			if !ok {
+				// check if we can get one entry atleast
+				// proceed to heal nonetheless.
+				entry, _ = entries.firstFound()
+			}
+			healEntry(*entry)
+		},
+		finished: nil,
+	})
+}
+
+type healingTrackers []*healingTracker
+
+func (ht healingTrackers) isHealed(bucket string) bool {
+	for _, h := range ht {
+		if !h.isHealed(bucket) {
+			return false
 		}
 	}
-	tracker.Object = ""
-	tracker.Bucket = ""
+	return true
+}
 
-	return retErr
+func (ht healingTrackers) bucketDone(bucket string) bool {
+	for _, h := range ht {
+		if h.UntilBucket != "" {
+			continue
+		}
+		h.bucketDone(bucket)
+	}
+	return true
+}
+
+func (ht healingTrackers) cleanup(ctx context.Context) {
+	for _, h := range ht {
+		if len(h.HealedBuckets) > 0 && len(h.QueuedBuckets) == 0 {
+			fmt.Println("remove", h.disk)
+			h.delete(ctx)
+		}
+	}
+}
+
+func (ht healingTrackers) update(ctx context.Context) (err error) {
+	for _, h := range ht {
+		logger.LogIf(ctx, h.update(ctx))
+	}
+	return
+}
+
+func (ht healingTrackers) setLastUpdate(t time.Time) {
+	for _, h := range ht {
+		h.LastUpdate = t
+	}
+}
+
+func (ht healingTrackers) getLastUpdate() time.Time {
+	return ht[0].LastUpdate
+}
+
+func (ht healingTrackers) setObject(obj string) {
+	for _, h := range ht {
+		h.Object = obj
+	}
+}
+
+func (ht healingTrackers) setBucket(bucket string) {
+	for _, h := range ht {
+		h.Bucket = bucket
+	}
+}
+
+func (ht healingTrackers) getSetIndex() int {
+	return ht[0].SetIndex
+}
+
+func (ht healingTrackers) incItemsFailed() {
+	for _, h := range ht {
+		h.ItemsFailed++
+	}
+}
+
+func (ht healingTrackers) incItemsHealed() {
+	for _, h := range ht {
+		h.ItemsHealed++
+	}
+}
+
+func (ht healingTrackers) incBytesFailed(bytes uint64) {
+	for _, h := range ht {
+		h.BytesFailed++
+	}
+}
+
+func (ht healingTrackers) incBytesDone(bytes uint64) {
+	for _, h := range ht {
+		h.BytesDone++
+	}
+}
+
+func (ht healingTrackers) updateStartAt(ctx context.Context, bucket, object string) {
+	if bucket == "" || object == "" {
+		return
+	}
+	fmt.Println("update until at", bucket, object)
+	for _, h := range ht {
+		if h.Bucket != "" || h.UntilBucket != "" {
+			continue
+		}
+
+		fmt.Println("set middle to", h.Endpoint)
+		h.UntilBucket = bucket
+		h.UntilObject = object
+	}
+
+	ht.update(ctx)
 }
 
 // healObject heals given object path in deep to fix bitrot.

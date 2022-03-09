@@ -53,6 +53,8 @@ type WalkDirOptions struct {
 
 	// ForwardTo will forward to the given object path.
 	ForwardTo string
+
+	EndAt string
 }
 
 // WalkDir will traverse a directory and return all entries found.
@@ -233,7 +235,11 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 			if contextCanceled(ctx) {
 				return ctx.Err()
 			}
+
 			meta := metaCacheEntry{name: PathJoin(current, entry)}
+			if opts.EndAt != "" && meta.name > opts.EndAt {
+				return nil
+			}
 
 			// If directory entry on stack before this, pop it now.
 			for len(dirStack) > 0 && dirStack[len(dirStack)-1] < meta.name {
