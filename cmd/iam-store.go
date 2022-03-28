@@ -429,9 +429,6 @@ func setDefaultCannedPolicies(policies map[string]PolicyDoc) {
 func (store *IAMStoreSys) LoadIAMCache(ctx context.Context) error {
 	newCache := newIamCache()
 
-	cache := store.lock()
-	defer store.unlock()
-
 	if iamOS, ok := store.IAMStorageAPI.(*IAMObjectStore); ok {
 		err := iamOS.loadAllFromObjStore(ctx, newCache)
 		if err != nil {
@@ -482,6 +479,12 @@ func (store *IAMStoreSys) LoadIAMCache(ctx context.Context) error {
 
 		newCache.buildUserGroupMemberships()
 	}
+
+	// Reduce IAM critical section - NOTE: can lead to temporary
+	// inconsistency when IAM changes race with this global refresh
+	// operation.
+	cache := store.lock()
+	defer store.unlock()
 
 	cache.iamGroupPolicyMap = newCache.iamGroupPolicyMap
 	cache.iamGroupsMap = newCache.iamGroupsMap
