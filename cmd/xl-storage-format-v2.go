@@ -1535,6 +1535,10 @@ func readXLMetaNoData(r io.Reader, size int64) ([]byte, error) {
 				return nil, err
 			}
 
+			if int64(len(buf)) < want {
+				return nil, fmt.Errorf("buffer shorter than expected (buflen: %d, want: %d): %w", len(buf), want, errFileCorrupt)
+			}
+
 			tmp = buf[want:]
 			_, after, err := msgp.ReadUint32Bytes(tmp)
 			if err != nil {
