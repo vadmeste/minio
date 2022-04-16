@@ -247,6 +247,10 @@ github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb/go.mod h1:PkYb9DJNAw
 github.com/blang/semver v3.5.0+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
 github.com/blang/semver v3.5.1+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
 github.com/blang/semver/v4 v4.0.0/go.mod h1:IbckMUScFkM3pff0VJDNKRiT6TG/YpiHIM2yvyW5YoQ=
+github.com/bombsimon/wsl/v2 v2.0.0/go.mod h1:mf25kr/SqFEPhhcxW1+7pxzGlW+hIl/hYTKY95VwV8U=
+github.com/bombsimon/wsl/v2 v2.2.0/go.mod h1:Azh8c3XGEJl9LyX0/sFC+CKMc7Ssgua0g+6abzXN4Pg=
+github.com/bombsimon/wsl/v3 v3.0.0/go.mod h1:st10JtZYLE4D5sC7b8xV4zTKZwAQjCH/Hy2Pm1FNZIc=
+github.com/bombsimon/wsl/v3 v3.1.0/go.mod h1:st10JtZYLE4D5sC7b8xV4zTKZwAQjCH/Hy2Pm1FNZIc=
 github.com/briandowns/spinner v1.18.1 h1:yhQmQtM1zsqFsouh09Bk/jCjd50pC3EOGsh28gLVvwY=
 github.com/briandowns/spinner v1.18.1/go.mod h1:mQak9GHqbspjC/5iUx3qMlIho8xBS/ppAL/hX5SmPJU=
 github.com/buger/jsonparser v1.1.1 h1:2PnMjfWD7wBILjqQbt530v576A/cAbQvEW9gGIpYMUs=
@@ -1071,6 +1075,7 @@ github.com/miekg/dns v1.1.26/go.mod h1:bPDLeHnStXmXAq1m/Ch/hvfNHr14JKNPMBo3VZKju
 github.com/miekg/dns v1.1.31/go.mod h1:KNUDUusw/aVsxyTYZM1oqvCicbwhgbNgztCETuNZ7xM=
 github.com/miekg/dns v1.1.46 h1:uzwpxRtSVxtcIZmz/4Uz6/Rn7G11DvsaslXoy5LxQio=
 github.com/miekg/dns v1.1.46/go.mod h1:e3IlAVfNqAllflbibAZEWOXOQ+Ynzk/dDozDxY7XnME=
+github.com/minio/argon2 v1.0.0/go.mod h1:XtOGJ7MjwUJDPtCqqrisx5QwVB/jDx+adQHigJVsQHQ=
 github.com/minio/cli v1.22.0 h1:VTQm7lmXm3quxO917X3p+el1l0Ca5X3S4PM2ruUYO68=
 github.com/minio/cli v1.22.0/go.mod h1:bYxnK0uS629N3Bq+AOZZ+6lwF77Sodk4+UL9vNuXhOY=
 github.com/minio/colorjson v1.0.1 h1:+hvfP8C1iMB95AT+ZFDRE+Knn9QPd9lg0CRJY9DRpos=
@@ -1093,6 +1098,9 @@ github.com/minio/highwayhash v1.0.2/go.mod h1:BQskDq+xkJ12lmlUUi7U0M5Swg3EWR+dLT
 github.com/minio/kes v0.18.0/go.mod h1:zrimNafasyumYOBjHonPLLIUgCuRzCef0uQ6IojITZA=
 github.com/minio/kes v0.19.0 h1:rKzkDXT4ay7FBW34KgXK+y85bie4x4Oiq29ONRuMzh0=
 github.com/minio/kes v0.19.0/go.mod h1:e9YGKbwFCV7LbqNPMfZBazfNUsFGJ5LG4plSeWL8mmg=
+github.com/minio/madmin-go v1.1.23/go.mod h1:wv8zCroSCnpjjQdmgsdJEkFH2oD4w9J40OZqbhxjiJ4=
+github.com/minio/madmin-go v1.3.0/go.mod h1:b+BL64YlLY/NnE/LCPGbSgIcNX6WSWHx8BOb9wrYShk=
+github.com/minio/madmin-go v1.3.5/go.mod h1:vGKGboQgGIWx4DuDUaXixjlIEZOCIp6ivJkQoiVaACc=
 github.com/minio/madmin-go v1.3.11 h1:Cj02kzG2SD1pnZW2n1joe00yqb6NFE40Jt2gp+5mWFQ=
 github.com/minio/madmin-go v1.3.11/go.mod h1:ez87VmMtsxP7DRxjKJKD4RDNW+nhO2QF9KSzwxBDQ98=
 github.com/minio/mc v0.0.0-20220412070834-8df32e87d634 h1:YL/JBg+7JyXMxKhBSwZ8ZByGk5iLU+WjKOmZcGhyOBU=
