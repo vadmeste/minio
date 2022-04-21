@@ -229,17 +229,19 @@ function __init__()
     mkdir -p "$MINIO_CONFIG_DIR"
     mkdir -p "$MINT_DATA_DIR"
 
-    MC_BUILD_DIR="mc-$RANDOM"
-    if ! git clone --quiet https://github.com/minio/mc "$MC_BUILD_DIR"; then
-        echo "failed to download https://github.com/minio/mc"
-        purge "${MC_BUILD_DIR}"
-        exit 1
-    fi
+    # MC_BUILD_DIR="mc-$RANDOM"
+    # if ! git clone --quiet https://github.com/minio/mc "$MC_BUILD_DIR"; then
+    #     echo "failed to download https://github.com/minio/mc"
+    #     purge "${MC_BUILD_DIR}"
+    #     exit 1
+    # fi
 
-    (cd "${MC_BUILD_DIR}" && go build -o "$WORK_DIR/mc")
+    # (cd "${MC_BUILD_DIR}" && go build -o "$WORK_DIR/mc")
 
     # remove mc source.
-    purge "${MC_BUILD_DIR}"
+    # purge "${MC_BUILD_DIR}"
+
+    wget -O $WORK_DIR/mc https://dl.minio.io/client/mc/release/linux-amd64/mc && chmod +x $WORK_DIR/mc
 
     shred -n 1 -s 1M - 1>"$FILE_1_MB" 2>/dev/null
     shred -n 1 -s 65M - 1>"$FILE_65_MB" 2>/dev/null

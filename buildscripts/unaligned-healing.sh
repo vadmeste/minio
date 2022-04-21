@@ -32,17 +32,19 @@ function start_minio_16drive() {
     export _MINIO_SHARD_DISKTIME_DELTA="5s" # do not change this as its needed for tests
     export MINIO_CI_CD=1
 
-    MC_BUILD_DIR="mc-$RANDOM"
-    if ! git clone --quiet https://github.com/minio/mc "$MC_BUILD_DIR"; then
-	echo "failed to download https://github.com/minio/mc"
-	purge "${MC_BUILD_DIR}"
-	exit 1
-    fi
+  #   MC_BUILD_DIR="mc-$RANDOM"
+  #   if ! git clone --quiet https://github.com/minio/mc "$MC_BUILD_DIR"; then
+	# echo "failed to download https://github.com/minio/mc"
+	# purge "${MC_BUILD_DIR}"
+	# exit 1
+  #   fi
 
-    (cd "${MC_BUILD_DIR}" && go build -o "$WORK_DIR/mc")
+  #   (cd "${MC_BUILD_DIR}" && go build -o "$WORK_DIR/mc")
 
-    # remove mc source.
-    purge "${MC_BUILD_DIR}"
+  #   # remove mc source.
+  #   purge "${MC_BUILD_DIR}"
+    mkdir -p $WORK_DIR
+    wget -O $WORK_DIR/mc https://dl.minio.io/client/mc/release/linux-amd64/mc && chmod +x $WORK_DIR/mc
 
     "${MINIO_OLD[@]}" --address ":$start_port" "${WORK_DIR}/xl{1...16}" > "${WORK_DIR}/server1.log" 2>&1 &
     pid=$!
