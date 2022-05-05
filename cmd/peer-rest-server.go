@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -800,6 +801,7 @@ var errUnsupportedSignal = fmt.Errorf("unsupported signal")
 
 // SignalServiceHandler - signal service handler.
 func (s *peerRESTServer) SignalServiceHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("SignalServiceHandler started")
 	if !s.IsValid(w, r) {
 		s.writeErrorResponse(w, errors.New("Invalid request"))
 		return
@@ -832,14 +834,20 @@ func (s *peerRESTServer) SignalServiceHandler(w http.ResponseWriter, r *http.Req
 			s.writeErrorResponse(w, errServerNotInitialized)
 			return
 		}
+		now := time.Now()
 		srvCfg, err := getValidConfig(objAPI)
 		if err != nil {
+			log.Println("SignalServiceHandler: getValidConfig() err =", err)
 			s.writeErrorResponse(w, err)
 			return
 		}
+		log.Println("SignalServiceHandler: getValidConfig() took", time.Since(now))
+		now = time.Now()
 		if err = applyDynamicConfig(r.Context(), objAPI, srvCfg); err != nil {
+			log.Println("SignalServiceHandler: getValidConfig() err =", err)
 			s.writeErrorResponse(w, err)
 		}
+		log.Println("SignalServiceHandler: applyDynamicConfig() took", time.Since(now))
 		return
 	default:
 		s.writeErrorResponse(w, errUnsupportedSignal)

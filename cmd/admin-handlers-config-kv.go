@@ -22,9 +22,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/minio/madmin-go"
@@ -97,9 +99,11 @@ func (a adminAPIHandlers) DelConfigKVHandler(w http.ResponseWriter, r *http.Requ
 }
 
 func applyDynamic(ctx context.Context, objectAPI ObjectLayer, cfg config.Config, subSys string,
-	r *http.Request, w http.ResponseWriter) {
+	r *http.Request, w http.ResponseWriter,
+) {
 	// Apply dynamic values.
 	if err := applyDynamicConfigForSubSys(GlobalContext, objectAPI, cfg, subSys); err != nil {
+		log.Println("applyDynamicConfigForSubSys() returned an error =", err)
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
@@ -110,6 +114,8 @@ func applyDynamic(ctx context.Context, objectAPI ObjectLayer, cfg config.Config,
 
 // SetConfigKVHandler - PUT /minio/admin/v3/set-config-kv
 func (a adminAPIHandlers) SetConfigKVHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("SetConfigKVHandler set config KV called")
+
 	ctx := newContext(r, w, "SetConfigKV")
 
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
@@ -133,44 +139,71 @@ func (a adminAPIHandlers) SetConfigKVHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	log.Println("SetConfigKVHandler -  started to update the config")
+
+	now := time.Now()
 	cfg, err := readServerConfig(ctx, objectAPI)
 	if err != nil {
+		log.Println("SetConfigKVHandler - readServerConfig() err =", err)
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
+	log.Println("SetConfigKVHandler - readServerConfig() took", time.Since(now))
+
 	dynamic, err := cfg.ReadConfig(bytes.NewReader(kvBytes))
 	if err != nil {
+		log.Println("SetConfigKVHandler - cfg.ReadConfig() err =", err)
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
 	subSys, _, _, err := config.GetSubSys(string(kvBytes))
 	if err != nil {
+		log.Println("SetConfigKVHandler - config.GetSubSys() err =", err)
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
+	log.Println("SetConfigKVHandler -", subSys, "dynamic =", dynamic)
+
+	now = time.Now()
 	if err = validateConfig(cfg, subSys); err != nil {
+		log.Println("SetConfigKVHandler validateConfig() err =", err)
 		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), err.Error(), r.URL)
 		return
 	}
 
+	log.Println("SetConfigKVHandler - validating config took", time.Since(now))
+
+	now = time.Now()
+
 	// Update the actual server config on disk.
 	if err = saveServerConfig(ctx, objectAPI, cfg); err != nil {
+		log.Println("SetConfigKVHandler - saveServerConfig() err =", err)
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
+
+	log.Println("SetConfigKVHandler - saveServerConfig() took", time.Since(now))
+
+	now = time.Now()
 
 	// Write to the config input KV to history.
 	if err = saveServerConfigHistory(ctx, objectAPI, kvBytes); err != nil {
+		log.Println("SetConfigKVHandler - saveServerHistory() err =", err)
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
+	log.Println("SetConfigKVHandler - saving server config history", time.Since(now))
+
 	if dynamic {
+		now = time.Now()
 		applyDynamic(ctx, objectAPI, cfg, subSys, r, w)
+		log.Println("SetConfigKVHandler - applying the dynamic change took", time.Since(now))
 	}
+
 	writeSuccessResponseHeadersOnly(w)
 }
 
