@@ -24,6 +24,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/minio/madmin-go"
 	"github.com/minio/minio/internal/config"
@@ -580,6 +581,12 @@ func lookupConfigs(s config.Config, objAPI ObjectLayer) {
 }
 
 func applyDynamicConfigForSubSys(ctx context.Context, objAPI ObjectLayer, s config.Config, subSys string) error {
+	now := time.Now()
+	log.Println("applyDynamicConfigForSubSys() for", subSys, " started")
+	defer func() {
+		log.Println("applyDynamicConfigForSubSys() for", subSys, "took", time.Since(now))
+	}()
+
 	switch subSys {
 	case config.APISubSys:
 		log.Println("lookup API config started")
