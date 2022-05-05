@@ -22,9 +22,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"path"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	jsoniter "github.com/json-iterator/go"
@@ -155,14 +157,22 @@ func saveServerConfig(ctx context.Context, objAPI ObjectLayer, cfg interface{}) 
 func readServerConfig(ctx context.Context, objAPI ObjectLayer) (config.Config, error) {
 	srvCfg := config.New()
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
+
+	now := time.Now()
+
 	data, err := readConfig(ctx, objAPI, configFile)
 	if err != nil {
+		log.Println("readServerConfig(): error during readConfig()", err)
 		if errors.Is(err, errConfigNotFound) {
 			lookupConfigs(srvCfg, objAPI)
 			return srvCfg, nil
 		}
 		return nil, err
 	}
+
+	log.Println("readServerConfig(): readConfig() took", time.Since(now))
+
+	now = time.Now()
 
 	if GlobalKMS != nil && !utf8.Valid(data) {
 		data, err = config.DecryptBytes(GlobalKMS, data, kms.Context{
@@ -173,6 +183,8 @@ func readServerConfig(ctx context.Context, objAPI ObjectLayer) (config.Config, e
 			return nil, err
 		}
 	}
+
+	log.Println("readServerConfig(): decryption took", time.Since(now))
 
 	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	if err = json.Unmarshal(data, &srvCfg); err != nil {

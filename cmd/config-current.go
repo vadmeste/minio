@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -581,15 +582,18 @@ func lookupConfigs(s config.Config, objAPI ObjectLayer) {
 func applyDynamicConfigForSubSys(ctx context.Context, objAPI ObjectLayer, s config.Config, subSys string) error {
 	switch subSys {
 	case config.APISubSys:
+		log.Println("lookup API config started")
 		apiConfig, err := api.LookupConfig(s[config.APISubSys][config.Default])
 		if err != nil {
 			logger.LogIf(ctx, fmt.Errorf("Invalid api configuration: %w", err))
 		}
+		log.Println("lookup API config ended")
 		var setDriveCounts []int
 		if objAPI != nil {
 			setDriveCounts = objAPI.SetDriveCounts()
 		}
 		globalAPIConfig.init(apiConfig, setDriveCounts)
+		log.Println("global API config reinitialized")
 	case config.CompressionSubSys:
 		cmpCfg, err := compress.LookupConfig(s[config.CompressionSubSys][config.Default])
 		if err != nil {
