@@ -55,6 +55,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/fatih/color"
 
@@ -1185,12 +1186,11 @@ func newTestSignedRequestV4(method, urlStr string, contentLength int64, body io.
 	return req, nil
 }
 
-// Function to generate random string for bucket/object names.
-func randString(n int) string {
-	src := rand.NewSource(UTCNow().UnixNano())
+var src = rand.NewSource(time.Now().UnixNano())
 
+func randString(n int) string {
 	b := make([]byte, n)
-	// A rand.Int63() generates 63 random bits, enough for letterIdxMax letters!
+	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
 	for i, cache, remain := n-1, src.Int63(), letterIdxMax; i >= 0; {
 		if remain == 0 {
 			cache, remain = src.Int63(), letterIdxMax
@@ -1202,7 +1202,8 @@ func randString(n int) string {
 		cache >>= letterIdxBits
 		remain--
 	}
-	return string(b)
+
+	return *(*string)(unsafe.Pointer(&b))
 }
 
 // generate random object name.
