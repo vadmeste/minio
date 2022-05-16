@@ -85,6 +85,7 @@ const (
 	peerRESTUserOrGroup    = "user-or-group"
 	peerRESTIsGroup        = "is-group"
 	peerRESTSignal         = "signal"
+	peerRESTSubSys         = "sub-sys"
 	peerRESTProfiler       = "profiler"
 	peerRESTTraceErr       = "err"
 	peerRESTTraceInternal  = "internal"
