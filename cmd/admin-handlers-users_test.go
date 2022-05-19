@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -166,28 +167,10 @@ func (s *TestSuiteIAM) getUserClient(c *check, accessKey, secretKey, sessionToke
 }
 
 func TestIAMInternalIDPServerSuite(t *testing.T) {
-	baseTestCases := []TestSuiteCommon{
-		// Init and run test on FS backend with signature v4.
-		{serverType: "FS", signer: signerV4},
-		// Init and run test on FS backend, with tls enabled.
-		{serverType: "FS", signer: signerV4, secure: true},
-		// Init and run test on Erasure backend.
-		{serverType: "Erasure", signer: signerV4},
-		// Init and run test on ErasureSet backend.
-		{serverType: "ErasureSet", signer: signerV4},
+	if runtime.GOOS == globalWindowsOSName {
+		t.Skip("windows is clunky disable these tests")
 	}
-	testCases := []*TestSuiteIAM{}
-	for _, bt := range baseTestCases {
-		testCases = append(testCases,
-			newTestSuiteIAM(bt, false),
-			newTestSuiteIAM(bt, true),
-		)
-	}
-	for i, testCase := range testCases {
-		etcdStr := ""
-		if testCase.withEtcdBackend {
-			etcdStr = " (with etcd backend)"
-		}
+	for i, testCase := range iamTestSuites {
 		t.Run(
 			fmt.Sprintf("Test: %d, ServerType: %s%s", i+1, testCase.serverType, etcdStr),
 			func(t *testing.T) {
