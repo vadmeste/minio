@@ -53,6 +53,9 @@ type WalkDirOptions struct {
 
 	// ForwardTo will forward to the given object path.
 	ForwardTo string
+
+	// EndAt will list until the specified object name (included)
+	EndAt string
 }
 
 // WalkDir will traverse a directory and return all entries found.
@@ -84,6 +87,11 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 		return err
 	}
 	defer close(out)
+
+	// Quit when base dir is already higher than EndAt option
+	if opts.EndAt != "" && opts.BaseDir > opts.EndAt {
+		return nil
+	}
 
 	// Fast exit track to check if we are listing an object with
 	// a trailing slash, this will avoid to list the object content.
@@ -119,7 +127,19 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 			if idx := strings.IndexByte(forward, '/'); idx > 0 {
 				forward = forward[:idx]
 			}
+			forward += "/"
 		}
+
+		endAt := ""
+		if len(opts.EndAt) > 0 && strings.HasPrefix(opts.EndAt, current) {
+			endAt = strings.TrimPrefix(opts.EndAt, current)
+			// Trim further directories and trailing slash.
+			if idx := strings.IndexByte(endAt, '/'); idx > 0 {
+				endAt = endAt[:idx]
+			}
+			endAt += "/"
+		}
+
 		if contextCanceled(ctx) {
 			return ctx.Err()
 		}
@@ -156,6 +176,13 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 				entries[i] = ""
 				continue
 			}
+			if len(endAt) > 0 && entry > endAt {
+				// Do do not retain the file, since its
+				// lexially higher than 'end-At'
+				entries[i] = ""
+				continue
+			}
+
 			if strings.HasSuffix(entry, slashSeparator) {
 				if strings.HasSuffix(entry, globalDirSuffixWithSlash) {
 					// Add without extension so it is sorted correctly.
@@ -233,6 +260,15 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 			}
 		}
 
+		if len(endAt) > 0 {
+			for i, entry := range entries {
+				if entry > endAt {
+					entries = entries[:i]
+					break
+				}
+			}
+		}
+
 		for _, entry := range entries {
 			if entry == "" {
 				continue
@@ -248,11 +284,6 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 				out <- metaCacheEntry{name: pop}
 				if opts.Recursive {
 					// Scan folder we found. Should be in correct sort order where we are.
-					forward = ""
-					if len(opts.ForwardTo) > 0 && strings.HasPrefix(opts.ForwardTo, pop) {
-						forward = strings.TrimPrefix(opts.ForwardTo, pop)
-					}
-
 					err := scanDir(pop)
 					if err != nil && !IsErrIgnored(err, context.Canceled) {
 						logger.LogIf(ctx, err)
@@ -339,6 +370,7 @@ func (client *storageRESTClient) WalkDir(ctx context.Context, opts WalkDirOption
 	values.Set(storageRESTReportNotFound, strconv.FormatBool(opts.ReportNotFound))
 	values.Set(storageRESTPrefixFilter, opts.FilterPrefix)
 	values.Set(storageRESTForwardFilter, opts.ForwardTo)
+	values.Set(storageRESTEndAt, opts.EndAt)
 	respBody, err := client.call(ctx, storageRESTMethodWalkDir, values, nil, -1)
 	if err != nil {
 		logger.LogIf(ctx, err)
@@ -372,6 +404,7 @@ func (s *storageRESTServer) WalkDirHandler(w http.ResponseWriter, r *http.Reques
 
 	prefix := r.Form.Get(storageRESTPrefixFilter)
 	forward := r.Form.Get(storageRESTForwardFilter)
+	endAt := r.Form.Get(storageRESTEndAt)
 	writer := streamHTTPResponse(w)
 	defer func() {
 		if r := recover(); r != nil {
@@ -386,5 +419,6 @@ func (s *storageRESTServer) WalkDirHandler(w http.ResponseWriter, r *http.Reques
 		ReportNotFound: reportNotFound,
 		FilterPrefix:   prefix,
 		ForwardTo:      forward,
+		EndAt:          endAt,
 	}, writer))
 }

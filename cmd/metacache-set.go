@@ -1131,6 +1131,9 @@ type listPathRawOptions struct {
 	// Forward to this prefix before returning results.
 	forwardTo string
 
+	// List until endAt object name
+	endAt string
+
 	// Minimum number of good disks to continue.
 	// An error will be returned if this many disks returned an error.
 	minDisks       int
@@ -1216,6 +1219,7 @@ func listPathRaw(ctx context.Context, opts listPathRawOptions) (err error) {
 					ReportNotFound: opts.reportNotFound,
 					FilterPrefix:   opts.filterPrefix,
 					ForwardTo:      opts.forwardTo,
+					EndAt:          opts.endAt,
 				}, w)
 			}
 
@@ -1235,6 +1239,7 @@ func listPathRaw(ctx context.Context, opts listPathRawOptions) (err error) {
 					ReportNotFound: opts.reportNotFound,
 					FilterPrefix:   opts.filterPrefix,
 					ForwardTo:      opts.forwardTo,
+					EndAt:          opts.endAt,
 				}, w)
 				if werr == nil {
 					break

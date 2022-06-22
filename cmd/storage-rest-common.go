@@ -18,7 +18,7 @@
 package cmd
 
 const (
-	storageRESTVersion       = "v45" // Added ReadXL API
+	storageRESTVersion       = "v46" // Add EndAt parameter in WalkDir API
 	storageRESTVersionPrefix = SlashSeparator + storageRESTVersion
 	storageRESTPrefix        = minioReservedBucketPath + "/storage"
 )
@@ -73,6 +73,7 @@ const (
 	storageRESTCount          = "count"
 	storageRESTPrefixFilter   = "prefix"
 	storageRESTForwardFilter  = "forward"
+	storageRESTEndAt          = "end-at"
 	storageRESTRecursive      = "recursive"
 	storageRESTReportNotFound = "report-notfound"
 	storageRESTBitrotAlgo     = "bitrot-algo"
