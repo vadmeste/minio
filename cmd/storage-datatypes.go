@@ -40,6 +40,7 @@ type DiskInfo struct {
 	Used       uint64
 	UsedInodes uint64
 	FreeInodes uint64
+	DevID      int32
 	FSType     string
 	RootDisk   bool
 	Healing    bool

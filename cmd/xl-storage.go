@@ -576,6 +576,7 @@ func (s *xlStorage) DiskInfo(context.Context) (info DiskInfo, err error) {
 			if err != nil {
 				return dcinfo, err
 			}
+			dcinfo.DevID = di.DevID
 			dcinfo.Total = di.Total
 			dcinfo.Free = di.Free
 			dcinfo.Used = di.Used

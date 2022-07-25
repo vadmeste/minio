@@ -44,5 +44,12 @@ func GetInfo(path string) (info Info, err error) {
 		return info, fmt.Errorf("detected free space (%d) > total disk space (%d), fs corruption at (%s). please run 'fsck'", info.Free, info.Total, path)
 	}
 	info.Used = info.Total - info.Free
+
+	st := syscall.Stat_t{}
+	err = syscall.Stat(path, &st)
+	if err != nil {
+		return Info{}, err
+	}
+	info.DevID = st.Dev
 	return info, nil
 }

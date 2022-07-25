@@ -30,4 +30,5 @@ type Info struct {
 	Files  uint64
 	Ffree  uint64
 	FSType string
+	DevID  int32
 }

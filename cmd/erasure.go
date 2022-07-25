@@ -200,6 +200,7 @@ func getDisksInfo(disks []StorageAPI, endpoints []Endpoint) (disksInfo []madmin.
 				UsedSpace:      info.Used,
 				AvailableSpace: info.Free,
 				UUID:           info.ID,
+				DevID:          info.DevID,
 				RootDisk:       info.RootDisk,
 				Healing:        info.Healing,
 				State:          diskErrToDriveState(err),

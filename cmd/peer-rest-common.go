@@ -18,7 +18,7 @@
 package cmd
 
 const (
-	peerRESTVersion       = "v23" // Added /metrics
+	peerRESTVersion       = "v24" // Update /metrics
 	peerRESTVersionPrefix = SlashSeparator + peerRESTVersion
 	peerRESTPrefix        = minioReservedBucketPath + "/peer"
 	peerRESTPath          = peerRESTPrefix + peerRESTVersionPrefix
@@ -90,6 +90,7 @@ const (
 	peerRESTDuration     = "duration"
 	peerRESTStorageClass = "storage-class"
 	peerRESTTypes        = "types"
+	peerRESTDisk         = "disk"
 
 	peerRESTListenBucket = "bucket"
 	peerRESTListenPrefix = "prefix"
