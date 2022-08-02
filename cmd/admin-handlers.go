@@ -2795,7 +2795,7 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var key [32]byte
+	var key [16]byte
 	// MUST use crypto/rand
 	n, err := crand.Read(key[:])
 	if err != nil || n != len(key) {
@@ -2803,21 +2803,16 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), r.URL)
 		return
 	}
-	stream, err := sio.AES_256_GCM.Stream(key[:])
+	stream, err := sio.AES_128_GCM.Stream(key[:])
 	if err != nil {
 		logger.LogIf(ctx, err)
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), r.URL)
 		return
 	}
-	// Zero nonce, we only use each key once, and 32 bytes is plenty.
-	nonce := make([]byte, stream.NonceSize())
-	encw := stream.EncryptWriter(w, nonce, nil)
-
-	defer encw.Close()
 
 	// Write a version for making *incompatible* changes.
 	// The AdminClient will reject any version it does not know.
-	w.Write([]byte{1})
+	w.Write([]byte{2})
 
 	// Write key first (without encryption)
 	_, err = w.Write(key[:])
@@ -2826,9 +2821,11 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	nonceMap := make(map[string][]byte)
+
 	// Initialize a zip writer which will provide a zipped content
 	// of profiling data of all nodes
-	zipWriter := zip.NewWriter(encw)
+	zipWriter := zip.NewWriter(w)
 	defer zipWriter.Close()
 	rawDataFn := func(r io.Reader, host, disk, filename string, si StatInfo) error {
 		// Prefix host+disk
@@ -2863,9 +2860,22 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 			logger.LogIf(ctx, zerr)
 			return nil
 		}
-		if _, err = io.Copy(zwriter, r); err != nil {
+
+		// Zero nonce, we only use each key once, and 32 bytes is plenty.
+		nonce := make([]byte, stream.NonceSize())
+		_, err := rand.Read(nonce)
+		if err != nil {
 			logger.LogIf(ctx, err)
+			return nil
 		}
+
+		encr := stream.EncryptReader(r, nonce, nil)
+		if _, err = io.Copy(zwriter, encr); err != nil {
+			logger.LogIf(ctx, err)
+			return nil
+		}
+
+		nonceMap[filename] = nonce
 		return nil
 	}
 	err = o.GetRawData(ctx, volume, file, rawDataFn)
@@ -2880,6 +2890,11 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 	if !errors.Is(err, errFileNotFound) {
 		logger.LogIf(ctx, err)
 	}
+
+	if nonceJSON, err := json.Marshal(nonceMap); err == nil {
+		embedFileInZip(zipWriter, "encryption.meta", nonceJSON)
+	}
+
 	// save args passed to inspect command
 	inspectArgs := []string{fmt.Sprintf(" Inspect path: %s%s%s\n", volume, slashSeparator, file)}
 	cmdLine := []string{"Server command line args: "}
@@ -2889,11 +2904,7 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 	cmdLine = append(cmdLine, "\n")
 	inspectArgs = append(inspectArgs, cmdLine...)
 	inspectArgsBytes := []byte(strings.Join(inspectArgs, " "))
-	if err = rawDataFn(bytes.NewReader(inspectArgsBytes), "", "", "inspect-input.txt", StatInfo{
-		Size: int64(len(inspectArgsBytes)),
-	}); err != nil {
-		logger.LogIf(ctx, err)
-	}
+	embedFileInZip(zipWriter, "inspect-input.txt", inspectArgsBytes)
 
 	appendClusterMetaInfoToZip(ctx, zipWriter)
 }
