@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/minio/minio/internal/crypto"
 	"github.com/minio/minio/internal/event"
@@ -38,6 +39,12 @@ type EventNotifier struct {
 	targetResCh                chan event.TargetIDResult
 	bucketRulesMap             map[string]event.RulesMap
 	bucketRemoteTargetRulesMap map[string]map[event.TargetID]event.RulesMap
+
+	// Store events in a queue because the object layer can be ready
+	// before the configuration subsystem and we do not have information
+	// yet about the configured target notifications.
+	initialized bool
+	bootQueue   chan eventArgs
 }
 
 // NewEventNotifier - creates new event notification object.
@@ -48,6 +55,7 @@ func NewEventNotifier() *EventNotifier {
 		targetResCh:                make(chan event.TargetIDResult),
 		bucketRulesMap:             make(map[string]event.RulesMap),
 		bucketRemoteTargetRulesMap: make(map[string]map[event.TargetID]event.RulesMap),
+		bootQueue:                  make(chan eventArgs, 10000),
 	}
 }
 
@@ -64,7 +72,7 @@ func (evnot *EventNotifier) GetARNList(onlyActive bool) []string {
 		// This list is only meant for external targets, filter
 		// this out pro-actively.
 		if !strings.HasPrefix(targetID.ID, "httpclient+") {
-			if onlyActive && !target.HasQueueStore() {
+			if onlyActive {
 				if _, err := target.IsActive(); err != nil {
 					continue
 				}
@@ -91,18 +99,16 @@ func (evnot *EventNotifier) set(bucket BucketInfo, meta BucketMetadata) {
 	evnot.AddRulesMap(bucket.Name, config.ToRulesMap())
 }
 
-// InitBucketTargets - initializes notification system from notification.xml of all buckets.
+// InitBucketTargets - initializes event notification system from notification.xml of all buckets.
 func (evnot *EventNotifier) InitBucketTargets(ctx context.Context, objAPI ObjectLayer) error {
-	if objAPI == nil {
-		return errServerNotInitialized
-	}
-
 	// In gateway mode, notifications are not supported - except NAS gateway.
 	if globalIsGateway && !objAPI.IsNotificationSupported() {
 		return nil
 	}
 
-	logger.LogIf(ctx, evnot.targetList.Add(globalConfigTargetList.Targets()...))
+	if err := evnot.targetList.Add(globalConfigTargetList.Targets()...); err != nil {
+		return err
+	}
 
 	go func() {
 		for res := range evnot.targetResCh {
@@ -114,6 +120,17 @@ func (evnot *EventNotifier) InitBucketTargets(ctx context.Context, objAPI Object
 		}
 	}()
 
+	evnot.Lock()
+	evnot.initialized = true
+	evnot.Unlock()
+
+	// Close the boot queue and start emptying it
+	close(evnot.bootQueue)
+	go func() {
+		for event := range evnot.bootQueue {
+			evnot.Send(event)
+		}
+	}()
 	return nil
 }
 
@@ -166,14 +183,8 @@ func (evnot *EventNotifier) ConfiguredTargetIDs() []event.TargetID {
 			}
 		}
 	}
-	// Filter out targets configured via env
-	var tIDs []event.TargetID
-	for _, targetID := range targetIDs {
-		if !globalEnvTargetList.Exists(targetID) {
-			tIDs = append(tIDs, targetID)
-		}
-	}
-	return tIDs
+
+	return targetIDs
 }
 
 // RemoveNotification - removes all notification configuration for bucket name.
@@ -207,9 +218,22 @@ func (evnot *EventNotifier) RemoveAllRemoteTargets() {
 	}
 }
 
+func (evnot *EventNotifier) sendToBootQueue(args eventArgs) {
+	t := time.NewTimer(10 * time.Second)
+	defer t.Stop()
+	select {
+	case evnot.bootQueue <- args:
+	case <-t.C:
+	}
+}
+
 // Send - sends event data to all matching targets.
 func (evnot *EventNotifier) Send(args eventArgs) {
 	evnot.RLock()
+	if !evnot.initialized {
+		evnot.sendToBootQueue(args)
+		return
+	}
 	targetIDSet := evnot.bucketRulesMap[args.BucketName].Match(args.EventName, args.Object.Name)
 	evnot.RUnlock()
 
