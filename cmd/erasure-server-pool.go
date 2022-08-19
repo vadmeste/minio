@@ -1713,15 +1713,15 @@ func (z *erasureServerPools) Walk(ctx context.Context, bucket, prefix string, re
 							cancel()
 							return
 						}
-						if opts.WalkAscending {
-							for i := len(fivs.Versions) - 1; i >= 0; i-- {
-								version := fivs.Versions[i]
-								results <- version.ToObjectInfo(bucket, version.Name)
-							}
-							return
-						}
+
+						versionsSorter(fivs.Versions).reverse()
+
 						for _, version := range fivs.Versions {
-							results <- version.ToObjectInfo(bucket, version.Name)
+							select {
+							case <-ctx.Done():
+								return
+							case results <- version.ToObjectInfo(bucket, version.Name):
+							}
 						}
 					}
 
@@ -1763,6 +1763,7 @@ func (z *erasureServerPools) Walk(ctx context.Context, bucket, prefix string, re
 
 					if err := listPathRaw(ctx, lopts); err != nil {
 						logger.LogIf(ctx, fmt.Errorf("listPathRaw returned %w: opts(%#v)", err, lopts))
+						cancel()
 						return
 					}
 				}()
