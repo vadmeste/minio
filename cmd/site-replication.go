@@ -25,6 +25,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"reflect"
 	"sort"
@@ -3356,7 +3357,33 @@ func (c *SiteReplicationSys) PeerEditReq(ctx context.Context, arg madmin.PeerInf
 
 const siteHealTimeInterval = 10 * time.Second
 
+var siteReplicationHealLockTimeout = newDynamicTimeout(30*time.Second, 10*time.Second)
+
 func (c *SiteReplicationSys) startHealRoutine(ctx context.Context, objAPI ObjectLayer) {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// Run the site replication healing in a loop
+	for {
+		c.healRoutine(ctx, objAPI)
+		duration := time.Duration(r.Float64() * float64(time.Minute))
+		if duration < time.Second {
+			// Make sure to sleep atleast a second to avoid high CPU ticks.
+			duration = time.Second
+		}
+		time.Sleep(duration)
+	}
+}
+
+func (c *SiteReplicationSys) healRoutine(ctx context.Context, objAPI ObjectLayer) {
+	// Make sure only one node running site replication on the cluster.
+	locker := objAPI.NewNSLock(minioMetaBucket, "site-replication/heal.lock")
+	lkctx, err := locker.GetLock(ctx, siteReplicationHealLockTimeout)
+	if err != nil {
+		return
+	}
+	ctx = lkctx.Context()
+	defer lkctx.Cancel()
+	// No unlock for "leader" lock.
+
 	healTimer := time.NewTimer(siteHealTimeInterval)
 	defer healTimer.Stop()
 
