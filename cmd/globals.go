@@ -350,6 +350,9 @@ var (
 	globalNetPerfMinDuration = time.Second * 10
 	globalNetPerfRX          netPerfRX
 
+	// globalInlineData indicates if smaller objects must be inlined.
+	globalInlineData bool
+
 	// Add new variable global values here.
 )
 

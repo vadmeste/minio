@@ -856,22 +856,26 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 	shardFileSize := erasure.ShardFileSize(data.Size())
 	writers := make([]io.Writer, len(onlineDisks))
 	var inlineBuffers []*bytes.Buffer
-	if shardFileSize >= 0 {
-		if !opts.Versioned && shardFileSize < smallFileThreshold {
-			inlineBuffers = make([]*bytes.Buffer, len(onlineDisks))
-		} else if shardFileSize < smallFileThreshold/8 {
-			inlineBuffers = make([]*bytes.Buffer, len(onlineDisks))
-		}
-	} else {
-		// If compressed, use actual size to determine.
-		if sz := erasure.ShardFileSize(data.ActualSize()); sz > 0 {
-			if !opts.Versioned && sz < smallFileThreshold {
+
+	if globalInlineData {
+		if shardFileSize >= 0 {
+			if !opts.Versioned && shardFileSize < smallFileThreshold {
 				inlineBuffers = make([]*bytes.Buffer, len(onlineDisks))
-			} else if sz < smallFileThreshold/8 {
+			} else if shardFileSize < smallFileThreshold/8 {
 				inlineBuffers = make([]*bytes.Buffer, len(onlineDisks))
+			}
+		} else {
+			// If compressed, use actual size to determine.
+			if sz := erasure.ShardFileSize(data.ActualSize()); sz > 0 {
+				if !opts.Versioned && sz < smallFileThreshold {
+					inlineBuffers = make([]*bytes.Buffer, len(onlineDisks))
+				} else if sz < smallFileThreshold/8 {
+					inlineBuffers = make([]*bytes.Buffer, len(onlineDisks))
+				}
 			}
 		}
 	}
+
 	for i, disk := range onlineDisks {
 		if disk == nil {
 			continue

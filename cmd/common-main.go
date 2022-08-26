@@ -88,6 +88,8 @@ func init() {
 		}
 	}
 
+	globalInlineData = env.Get("MINIO_API_INLINE_DATA", config.EnableOn) == config.EnableOn
+
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	logger.Init(GOPATH, GOROOT)
