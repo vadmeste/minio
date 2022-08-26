@@ -522,7 +522,7 @@ const (
 
 // diskMaxConcurrent is the maximum number of running concurrent operations
 // for local and (incoming) remote disk ops respectively.
-var diskMaxConcurrent = 1024
+var diskMaxConcurrent = 256
 
 func init() {
 	if s, ok := os.LookupEnv("_MINIO_DISK_MAX_CONCURRENT"); ok && s != "" {
