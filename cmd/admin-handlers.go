@@ -2883,7 +2883,6 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 	// Zero nonce, we only use each key once, and 32 bytes is plenty.
 	nonce := make([]byte, stream.NonceSize())
 	encw := stream.EncryptWriter(dataW, nonce, nil)
-	defer encw.Close()
 
 	// Initialize a zip writer which will provide a zipped content
 	// of profiling data of all nodes
@@ -2940,8 +2939,8 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 		logger.LogIf(ctx, err)
 	}
 
-	dataZipW.Close()
-	encw.Close()
+	logger.LogIf(ctx, dataZipW.Close())
+	logger.LogIf(ctx, encw.Close())
 
 	// save args passed to inspect command
 	inspectArgs := []string{fmt.Sprintf(" Inspect path: %s%s%s\n", volume, slashSeparator, file)}
