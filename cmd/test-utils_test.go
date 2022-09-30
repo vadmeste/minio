@@ -869,7 +869,7 @@ func preSignV4(req *http.Request, accessKeyID, secretAccessKey string, expires i
 
 	queryStr := strings.ReplaceAll(query.Encode(), "+", "%20")
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, unsignedPayload, queryStr, req.URL.Path, req.Method)
-	stringToSign := getStringToSign(canonicalRequest, date, scope)
+	stringToSign := getStringToSign(signV4Algorithm, canonicalRequest, date, scope)
 	signingKey := getSigningKey(secretAccessKey, date, region, serviceS3)
 	signature := getSignature(signingKey, stringToSign)
 

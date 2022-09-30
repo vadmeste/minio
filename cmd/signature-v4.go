@@ -45,9 +45,10 @@ import (
 
 // AWS Signature Version '4' constants.
 const (
-	signV4Algorithm = "AWS4-HMAC-SHA256"
-	iso8601Format   = "20060102T150405Z"
-	yyyymmdd        = "20060102"
+	signV4Algorithm  = "AWS4-HMAC-SHA256"
+	signV4AAlgorithm = "AWS4-ECDSA-P256-SHA256"
+	iso8601Format    = "20060102T150405Z"
+	yyyymmdd         = "20060102"
 )
 
 type serviceType string
@@ -128,8 +129,8 @@ func getScope(t time.Time, region string) string {
 }
 
 // getStringToSign a string based on selected query values.
-func getStringToSign(canonicalRequest string, t time.Time, scope string) string {
-	stringToSign := signV4Algorithm + "\n" + t.Format(iso8601Format) + "\n"
+func getStringToSign(algo, canonicalRequest string, t time.Time, scope string) string {
+	stringToSign := algo + "\n" + t.Format(iso8601Format) + "\n"
 	stringToSign += scope + "\n"
 	canonicalRequestBytes := sha256.Sum256([]byte(canonicalRequest))
 	stringToSign += hex.EncodeToString(canonicalRequestBytes[:])
@@ -177,7 +178,7 @@ func doesPolicySignatureV4Match(formValues http.Header) (auth.Credentials, APIEr
 	region := globalSite.Region
 
 	// Parse credential tag.
-	credHeader, s3Err := parseCredentialHeader("Credential="+formValues.Get(xhttp.AmzCredential), region, serviceS3)
+	credHeader, s3Err := parseCredentialHeader("Credential="+formValues.Get(xhttp.AmzCredential), region, serviceS3, false)
 	if s3Err != ErrNone {
 		return auth.Credentials{}, s3Err
 	}
@@ -207,12 +208,12 @@ func doesPolicySignatureV4Match(formValues http.Header) (auth.Credentials, APIEr
 //   - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
 //
 // returns ErrNone if the signature matches.
-func doesPresignedSignatureMatch(hashedPayload string, r *http.Request, region string, stype serviceType) APIErrorCode {
+func doesPresignedSignatureMatch(hashedPayload string, r *http.Request, region string, stype serviceType, isV4A bool) APIErrorCode {
 	// Copy request
 	req := *r
 
 	// Parse request query string.
-	pSignValues, err := parsePreSignV4(req.Form, region, stype)
+	pSignValues, err := parsePreSignV4(req.Form, region, stype, isV4A)
 	if err != ErrNone {
 		return err
 	}
@@ -254,7 +255,11 @@ func doesPresignedSignatureMatch(hashedPayload string, r *http.Request, region s
 		query.Set(xhttp.AmzSecurityToken, cred.SessionToken)
 	}
 
-	query.Set(xhttp.AmzAlgorithm, signV4Algorithm)
+	if isV4A {
+		query.Set(xhttp.AmzAlgorithm, signV4AAlgorithm)
+	} else {
+		query.Set(xhttp.AmzAlgorithm, signV4Algorithm)
+	}
 
 	// Construct the query.
 	query.Set(xhttp.AmzDate, t.Format(iso8601Format))
@@ -308,33 +313,45 @@ func doesPresignedSignatureMatch(hashedPayload string, r *http.Request, region s
 		return ErrInvalidToken
 	}
 
-	// Verify finally if signature is same.
-
 	// Get canonical request.
 	presignedCanonicalReq := getCanonicalRequest(extractedSignedHeaders, hashedPayload, encodedQuery, req.URL.Path, req.Method)
 
-	// Get string to sign from canonical request.
-	presignedStringToSign := getStringToSign(presignedCanonicalReq, t, pSignValues.Credential.getScope())
+	// Verify finally if signature is same.
+	if isV4A {
+		stringToSign := getStringToSign(signV4AAlgorithm, presignedCanonicalReq, t, pSignValues.Credential.getScope())
+		stringToSignHash := makeHash(sha256.New(), []byte(stringToSign))
+		providedSignature, err := hex.DecodeString(req.Form.Get(xhttp.AmzSignature))
+		if err != nil {
+			return ErrSignatureDoesNotMatch
+		}
+		verified, err := verifyV4ASignature(cred.AccessKey, cred.SecretKey, stringToSignHash, providedSignature)
+		if err == nil && verified {
+			return ErrNone
+		}
+	} else {
+		// Get string to sign from canonical request.
+		presignedStringToSign := getStringToSign(signV4Algorithm, presignedCanonicalReq, t, pSignValues.Credential.getScope())
 
-	// Get hmac presigned signing key.
-	presignedSigningKey := getSigningKey(cred.SecretKey, pSignValues.Credential.scope.date,
-		pSignValues.Credential.scope.region, stype)
+		// Get hmac presigned signing key.
+		presignedSigningKey := getSigningKey(cred.SecretKey, pSignValues.Credential.scope.date,
+			pSignValues.Credential.scope.region, stype)
 
-	// Get new signature.
-	newSignature := getSignature(presignedSigningKey, presignedStringToSign)
+		// Get new signature.
+		newSignature := getSignature(presignedSigningKey, presignedStringToSign)
 
-	// Verify signature.
-	if !compareSignatureV4(req.Form.Get(xhttp.AmzSignature), newSignature) {
-		return ErrSignatureDoesNotMatch
+		// Verify signature.
+		if compareSignatureV4(req.Form.Get(xhttp.AmzSignature), newSignature) {
+			return ErrNone
+		}
 	}
-	return ErrNone
+	return ErrSignatureDoesNotMatch
 }
 
 // doesSignatureMatch - Verify authorization header with calculated header in accordance with
 //   - http://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html
 //
 // returns ErrNone if signature matches.
-func doesSignatureMatch(hashedPayload string, r *http.Request, region string, stype serviceType) APIErrorCode {
+func doesSignatureMatch(hashedPayload string, r *http.Request, region string, stype serviceType, isV4A bool) APIErrorCode {
 	// Copy request.
 	req := *r
 
@@ -342,7 +359,7 @@ func doesSignatureMatch(hashedPayload string, r *http.Request, region string, st
 	v4Auth := req.Header.Get(xhttp.Authorization)
 
 	// Parse signature version '4' header.
-	signV4Values, err := parseSignV4(v4Auth, region, stype)
+	signV4Values, err := parseSignV4(v4Auth, region, stype, isV4A)
 	if err != ErrNone {
 		return err
 	}
@@ -378,21 +395,30 @@ func doesSignatureMatch(hashedPayload string, r *http.Request, region string, st
 	// Get canonical request.
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, req.URL.Path, req.Method)
 
-	// Get string to sign from canonical request.
-	stringToSign := getStringToSign(canonicalRequest, t, signV4Values.Credential.getScope())
-
-	// Get hmac signing key.
-	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date,
-		signV4Values.Credential.scope.region, stype)
-
-	// Calculate signature.
-	newSignature := getSignature(signingKey, stringToSign)
-
-	// Verify if signature match.
-	if !compareSignatureV4(newSignature, signV4Values.Signature) {
-		return ErrSignatureDoesNotMatch
+	if isV4A {
+		stringToSign := getStringToSign(signV4AAlgorithm, canonicalRequest, t, signV4Values.Credential.getScope())
+		stringToSignHash := makeHash(sha256.New(), []byte(stringToSign))
+		providedSignature, err := hex.DecodeString(signV4Values.Signature)
+		if err != nil {
+			return ErrSignatureDoesNotMatch
+		}
+		verified, err := verifyV4ASignature(cred.AccessKey, cred.SecretKey, stringToSignHash, providedSignature)
+		if err == nil && verified {
+			return ErrNone
+		}
+	} else {
+		// Get string to sign from canonical request.
+		stringToSign := getStringToSign(signV4Algorithm, canonicalRequest, t, signV4Values.Credential.getScope())
+		// Get hmac signing key.
+		signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date,
+			signV4Values.Credential.scope.region, stype)
+		// Calculate signature.
+		computedSignature := getSignature(signingKey, stringToSign)
+		// Verify if signature match.
+		if compareSignatureV4(computedSignature, signV4Values.Signature) {
+			return ErrNone
+		}
 	}
 
-	// Return error none.
-	return ErrNone
+	return ErrSignatureDoesNotMatch
 }

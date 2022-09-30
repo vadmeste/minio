@@ -53,16 +53,33 @@ func isRequestSignatureV4(r *http.Request) bool {
 	return strings.HasPrefix(r.Header.Get(xhttp.Authorization), signV4Algorithm)
 }
 
+func isRequestSignatureV4A(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get(xhttp.Authorization), signV4AAlgorithm)
+}
+
 // Verify if request has AWS Signature Version '2'.
 func isRequestSignatureV2(r *http.Request) bool {
 	return (!strings.HasPrefix(r.Header.Get(xhttp.Authorization), signV4Algorithm) &&
+		!strings.HasPrefix(r.Header.Get(xhttp.Authorization), signV4AAlgorithm) &&
 		strings.HasPrefix(r.Header.Get(xhttp.Authorization), signV2Algorithm))
 }
 
 // Verify if request has AWS PreSign Version '4'.
 func isRequestPresignedSignatureV4(r *http.Request) bool {
-	_, ok := r.Form[xhttp.AmzCredential]
-	return ok
+	v, ok := r.Form[xhttp.AmzAlgorithm]
+	if !ok {
+		return false
+	}
+	return strings.HasPrefix(v[0], signV4Algorithm)
+}
+
+// Verify if request has AWS PreSign Version '4a'.
+func isRequestPresignedSignatureV4A(r *http.Request) bool {
+	v, ok := r.Form[xhttp.AmzAlgorithm]
+	if !ok {
+		return false
+	}
+	return strings.HasPrefix(v[0], signV4AAlgorithm)
 }
 
 // Verify request has AWS PreSign Version '2'.
@@ -93,10 +110,12 @@ const (
 	authTypeUnknown authType = iota
 	authTypeAnonymous
 	authTypePresigned
+	authTypePresignedV4A
 	authTypePresignedV2
 	authTypePostPolicy
 	authTypeStreamingSigned
 	authTypeSigned
+	authTypeSignedV4A
 	authTypeSignedV2
 	authTypeJWT
 	authTypeSTS
@@ -120,8 +139,12 @@ func getRequestAuthType(r *http.Request) authType {
 		return authTypeStreamingSigned
 	} else if isRequestSignatureV4(r) {
 		return authTypeSigned
+	} else if isRequestSignatureV4A(r) {
+		return authTypeSignedV4A
 	} else if isRequestPresignedSignatureV4(r) {
 		return authTypePresigned
+	} else if isRequestPresignedSignatureV4A(r) {
+		return authTypePresignedV4A
 	} else if isRequestJWT(r) {
 		return authTypeJWT
 	} else if isRequestPostPolicySignatureV4(r) {
@@ -134,20 +157,20 @@ func getRequestAuthType(r *http.Request) authType {
 	return authTypeUnknown
 }
 
-func validateAdminSignature(ctx context.Context, r *http.Request, region string) (auth.Credentials, map[string]interface{}, bool, APIErrorCode) {
+func validateAdminSignature(ctx context.Context, r *http.Request, region string) (ret1 auth.Credentials, ret2 map[string]interface{}, ret3 bool, ret4 APIErrorCode) {
 	var cred auth.Credentials
 	var owner bool
 	s3Err := ErrAccessDenied
 	if _, ok := r.Header[xhttp.AmzContentSha256]; ok &&
 		getRequestAuthType(r) == authTypeSigned {
 		// We only support admin credentials to access admin APIs.
-		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3)
+		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3, false)
 		if s3Err != ErrNone {
 			return cred, nil, owner, s3Err
 		}
 
 		// we only support V4 (no presign) with auth body
-		s3Err = isReqAuthenticated(ctx, r, region, serviceS3)
+		s3Err = isReqAuthenticatedV4(ctx, r, region, serviceS3, false)
 	}
 	if s3Err != ErrNone {
 		reqInfo := (&logger.ReqInfo{}).AppendTags("requestHeaders", dumpRequest(r))
@@ -310,7 +333,9 @@ func authenticateRequest(ctx context.Context, r *http.Request, action policy.Act
 
 	var cred auth.Credentials
 	var owner bool
-	switch getRequestAuthType(r) {
+
+	authType := getRequestAuthType(r)
+	switch authType {
 	case authTypeUnknown, authTypeStreamingSigned:
 		return ErrSignatureVersionNotSupported
 	case authTypePresignedV2, authTypeSignedV2:
@@ -318,16 +343,17 @@ func authenticateRequest(ctx context.Context, r *http.Request, action policy.Act
 			return s3Err
 		}
 		cred, owner, s3Err = getReqAccessKeyV2(r)
-	case authTypeSigned, authTypePresigned:
+	case authTypeSigned, authTypeSignedV4A, authTypePresigned, authTypePresignedV4A:
 		region := globalSite.Region
 		switch action {
 		case policy.GetBucketLocationAction, policy.ListAllMyBucketsAction:
 			region = ""
 		}
-		if s3Err = isReqAuthenticated(ctx, r, region, serviceS3); s3Err != ErrNone {
+		isV4A := authType == authTypeSignedV4A || authType == authTypePresignedV4A
+		if s3Err = isReqAuthenticatedV4(ctx, r, region, serviceS3, isV4A); s3Err != ErrNone {
 			return s3Err
 		}
-		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3)
+		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3, isV4A)
 	}
 	if s3Err != ErrNone {
 		return s3Err
@@ -475,18 +501,19 @@ func isReqAuthenticatedV2(r *http.Request) (s3Error APIErrorCode) {
 
 func reqSignatureV4Verify(r *http.Request, region string, stype serviceType) (s3Error APIErrorCode) {
 	sha256sum := getContentSha256Cksum(r, stype)
-	switch {
-	case isRequestSignatureV4(r):
-		return doesSignatureMatch(sha256sum, r, region, stype)
-	case isRequestPresignedSignatureV4(r):
-		return doesPresignedSignatureMatch(sha256sum, r, region, stype)
+	aType := getRequestAuthType(r)
+	switch aType {
+	case authTypeSigned, authTypeSignedV4A:
+		return doesSignatureMatch(sha256sum, r, region, stype, aType == authTypeSignedV4A)
+	case authTypePresigned, authTypePresignedV4A:
+		return doesPresignedSignatureMatch(sha256sum, r, region, stype, aType == authTypePresignedV4A)
 	default:
 		return ErrAccessDenied
 	}
 }
 
 // Verify if request has valid AWS Signature Version '4'.
-func isReqAuthenticated(ctx context.Context, r *http.Request, region string, stype serviceType) (s3Error APIErrorCode) {
+func isReqAuthenticatedV4(ctx context.Context, r *http.Request, region string, stype serviceType, isV4A bool) (s3Error APIErrorCode) {
 	if errCode := reqSignatureV4Verify(r, region, stype); errCode != ErrNone {
 		return errCode
 	}
@@ -499,7 +526,7 @@ func isReqAuthenticated(ctx context.Context, r *http.Request, region string, sty
 	// Extract either 'X-Amz-Content-Sha256' header or 'X-Amz-Content-Sha256' query parameter (if V4 presigned)
 	// Do not verify 'X-Amz-Content-Sha256' if skipSHA256.
 	var contentSHA256 []byte
-	if skipSHA256 := skipContentSha256Cksum(r); !skipSHA256 && isRequestPresignedSignatureV4(r) {
+	if skipSHA256 := skipContentSha256Cksum(r); !skipSHA256 && (isRequestPresignedSignatureV4(r) || isRequestPresignedSignatureV4A(r)) {
 		if sha256Sum, ok := r.Form[xhttp.AmzContentSha256]; ok && len(sha256Sum) > 0 {
 			contentSHA256, err = hex.DecodeString(sha256Sum[0])
 			if err != nil {
@@ -527,8 +554,10 @@ func isReqAuthenticated(ctx context.Context, r *http.Request, region string, sty
 var supportedS3AuthTypes = map[authType]struct{}{
 	authTypeAnonymous:       {},
 	authTypePresigned:       {},
+	authTypePresignedV4A:    {},
 	authTypePresignedV2:     {},
 	authTypeSigned:          {},
+	authTypeSignedV4A:       {},
 	authTypeSignedV2:        {},
 	authTypePostPolicy:      {},
 	authTypeStreamingSigned: {},
@@ -547,7 +576,7 @@ func setAuthHandler(h http.Handler) http.Handler {
 		tc, ok := r.Context().Value(contextTraceReqKey).(*traceCtxt)
 
 		aType := getRequestAuthType(r)
-		if aType == authTypeSigned || aType == authTypeSignedV2 || aType == authTypeStreamingSigned {
+		if aType == authTypeSigned || aType == authTypeSignedV4A || aType == authTypeSignedV2 || aType == authTypeStreamingSigned {
 			// Verify if date headers are set, if not reject the request
 			amzDate, errCode := parseAmzDateHeader(r)
 			if errCode != ErrNone {
@@ -604,12 +633,13 @@ func validateSignature(atype authType, r *http.Request) (auth.Credentials, bool,
 			return cred, owner, s3Err
 		}
 		cred, owner, s3Err = getReqAccessKeyV2(r)
-	case authTypePresigned, authTypeSigned:
+	case authTypePresigned, authTypeSigned, authTypePresignedV4A, authTypeSignedV4A:
 		region := globalSite.Region
-		if s3Err = isReqAuthenticated(GlobalContext, r, region, serviceS3); s3Err != ErrNone {
+		isV4A := atype == authTypePresignedV4A || atype == authTypeSignedV4A
+		if s3Err = isReqAuthenticatedV4(GlobalContext, r, region, serviceS3, isV4A); s3Err != ErrNone {
 			return cred, owner, s3Err
 		}
-		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3)
+		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3, isV4A)
 	}
 	if s3Err != ErrNone {
 		return cred, owner, s3Err
@@ -672,8 +702,9 @@ func isPutActionAllowed(ctx context.Context, atype authType, bucketName, objectN
 		return ErrSignatureVersionNotSupported
 	case authTypeSignedV2, authTypePresignedV2:
 		cred, owner, s3Err = getReqAccessKeyV2(r)
-	case authTypeStreamingSigned, authTypePresigned, authTypeSigned:
-		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3)
+	case authTypeStreamingSigned, authTypePresigned, authTypeSigned, authTypePresignedV4A, authTypeSignedV4A:
+		isV4A := atype == authTypePresignedV4A || atype == authTypeSignedV4A
+		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3, isV4A)
 	}
 	if s3Err != ErrNone {
 		return s3Err

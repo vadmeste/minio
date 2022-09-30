@@ -239,7 +239,7 @@ func TestParseCredentialHeader(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		actualCredential, actualErrCode := parseCredentialHeader(testCase.inputCredentialStr, "us-west-1", "s3")
+		actualCredential, actualErrCode := parseCredentialHeader(testCase.inputCredentialStr, "us-west-1", "s3", false)
 		// validating the credential fields.
 		if testCase.expectedErrCode != actualErrCode {
 			t.Fatalf("Test %d: Expected the APIErrCode to be %s, got %s", i+1, errorCodes[testCase.expectedErrCode].Code, errorCodes[actualErrCode].Code)
@@ -494,7 +494,7 @@ func TestParseSignV4(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		parsedAuthField, actualErrCode := parseSignV4(testCase.inputV4AuthStr, "", "s3")
+		parsedAuthField, actualErrCode := parseSignV4(testCase.inputV4AuthStr, "", "s3", false)
 
 		if testCase.expectedErrCode != actualErrCode {
 			t.Fatalf("Test %d: Expected the APIErrCode to be %d, got %d", i+1, testCase.expectedErrCode, actualErrCode)
@@ -857,7 +857,7 @@ func TestParsePreSignV4(t *testing.T) {
 			inputQuery.Set(testCase.inputQueryKeyVals[j], testCase.inputQueryKeyVals[j+1])
 		}
 		// call the function under test.
-		parsedPreSign, actualErrCode := parsePreSignV4(inputQuery, "", serviceS3)
+		parsedPreSign, actualErrCode := parsePreSignV4(inputQuery, "", serviceS3, false)
 		if testCase.expectedErrCode != actualErrCode {
 			t.Fatalf("Test %d: Expected the APIErrCode to be %d, got %d", i+1, testCase.expectedErrCode, actualErrCode)
 		}

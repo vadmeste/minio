@@ -102,7 +102,7 @@ func TestGetRequestAuthType(t *testing.T) {
 					Host:     "127.0.0.1:9000",
 					Scheme:   httpScheme,
 					Path:     SlashSeparator,
-					RawQuery: "X-Amz-Credential=EXAMPLEINVALIDEXAMPL%2Fs3%2F20160314%2Fus-east-1",
+					RawQuery: "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=EXAMPLEINVALIDEXAMPL%2Fs3%2F20160314%2Fus-east-1",
 				},
 			},
 			authT: authTypePresigned,
@@ -178,19 +178,34 @@ func TestS3SupportedAuthType(t *testing.T) {
 			authT: authTypePresignedV2,
 			pass:  true,
 		},
-		// Test 8 - JWT is not supported s3 type.
+		// Test 8 - supported s3 type with signature v4a.
+		{
+			authT: authTypeSignedV4A,
+			pass:  true,
+		},
+		// Test 9 - supported s3 type with presign v4a
+		{
+			authT: authTypePresignedV4A,
+			pass:  true,
+		},
+		// Test 10 - JWT is not supported s3 type.
 		{
 			authT: authTypeJWT,
 			pass:  false,
 		},
-		// Test 9 - unknown auth header is not supported s3 type.
+		// Test 11 - unknown auth header is not supported s3 type.
 		{
 			authT: authTypeUnknown,
 			pass:  false,
 		},
-		// Test 10 - some new auth type is not supported s3 type.
+		// Test 12 - sts auth type is not supported s3 type.
 		{
-			authT: authType(9),
+			authT: authTypeSTS,
+			pass:  false,
+		},
+		// Test 12 - some new auth type is not supported s3 type.
+		{
+			authT: authType(11),
 			pass:  false,
 		},
 	}
@@ -245,10 +260,10 @@ func TestIsRequestPresignedSignatureV4(t *testing.T) {
 		expectedResult  bool
 	}{
 		// Test case - 1.
-		// Test case with query key ""X-Amz-Credential" set.
 		{"", "", false},
 		// Test case - 2.
-		{"X-Amz-Credential", "", true},
+		// Test case with query key ""X-Amz-Algorithm" set.
+		{"X-Amz-Algorithm", "AWS4-HMAC-SHA256", true},
 		// Test case - 3.
 		{"X-Amz-Content-Sha256", "", false},
 	}
@@ -403,7 +418,7 @@ func TestIsReqAuthenticated(t *testing.T) {
 
 	// Validates all testcases.
 	for i, testCase := range testCases {
-		s3Error := isReqAuthenticated(ctx, testCase.req, globalSite.Region, serviceS3)
+		s3Error := isReqAuthenticatedV4(ctx, testCase.req, globalSite.Region, serviceS3, false)
 		if s3Error != testCase.s3Error {
 			if _, err := io.ReadAll(testCase.req.Body); toAPIErrorCode(ctx, err) != testCase.s3Error {
 				t.Fatalf("Test %d: Unexpected S3 error: want %d - got %d (got after reading request %s)", i, testCase.s3Error, s3Error, toAPIError(ctx, err).Code)

@@ -114,15 +114,15 @@ func TestSkipContentSha256Cksum(t *testing.T) {
 		// Test case - 3.
 		// Test case with "X-Amz-Content-Sha256" header set to  "UNSIGNED-PAYLOAD"
 		// When "X-Amz-Content-Sha256" header is set to  "UNSIGNED-PAYLOAD", validation of content sha256 has to be skipped.
-		{"X-Amz-Content-Sha256", unsignedPayload, "X-Amz-Credential", "", true},
+		{"X-Amz-Content-Sha256", unsignedPayload, "X-Amz-Algorithm", "AWS4-HMAC-SHA256", true},
 
 		// Test case - 4.
 		// Enabling PreSigned Signature v4, but X-Amz-Content-Sha256 not set has to be skipped.
-		{"", "", "X-Amz-Credential", "", true},
+		{"", "", "X-Amz-Algorithm", "AWS4-HMAC-SHA256", true},
 
 		// Test case - 5.
 		// Enabling PreSigned Signature v4, but X-Amz-Content-Sha256 set and its not UNSIGNED-PAYLOAD, we shouldn't skip.
-		{"X-Amz-Content-Sha256", "somevalue", "X-Amz-Credential", "", false},
+		{"X-Amz-Content-Sha256", "somevalue", "X-Amz-Algorithm", "AWS4-HMAC-SHA256", false},
 
 		// Test case - 6.
 		// Test case with "X-Amz-Content-Sha256" header set to  "UNSIGNED-PAYLOAD" and its not presigned, we should skip.
@@ -130,7 +130,7 @@ func TestSkipContentSha256Cksum(t *testing.T) {
 
 		// Test case - 7.
 		// "X-Amz-Content-Sha256" not set and  PreSigned Signature v4 not enabled, sha256 checksum calculation is not skipped.
-		{"", "", "X-Amz-Credential", "", true},
+		{"", "", "X-Amz-Algorithm", "AWS4-HMAC-SHA256", true},
 
 		// Test case - 8.
 		// "X-Amz-Content-Sha256" has a proper value cannot skip.
@@ -322,9 +322,9 @@ func TestGetContentSha256Cksum(t *testing.T) {
 		{"shastring", "", "shastring"},
 		{emptySHA256, "", emptySHA256},
 		{"", "", emptySHA256},
-		{"", "X-Amz-Credential=random", unsignedPayload},
-		{"", "X-Amz-Credential=random&X-Amz-Content-Sha256=" + unsignedPayload, unsignedPayload},
-		{"", "X-Amz-Credential=random&X-Amz-Content-Sha256=shastring", "shastring"},
+		{"", "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=random", unsignedPayload},
+		{"", "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=random&X-Amz-Content-Sha256=" + unsignedPayload, unsignedPayload},
+		{"", "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=random&X-Amz-Content-Sha256=shastring", "shastring"},
 	}
 
 	for i, testCase := range testCases {

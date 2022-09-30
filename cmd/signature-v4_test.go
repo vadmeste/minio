@@ -297,7 +297,7 @@ func TestDoesPresignedSignatureMatch(t *testing.T) {
 		req.ParseForm()
 
 		// Check if it matches!
-		err := doesPresignedSignatureMatch(payloadSHA256, req, testCase.region, serviceS3)
+		err := doesPresignedSignatureMatch(payloadSHA256, req, testCase.region, serviceS3, false)
 		if err != testCase.expected {
 			t.Errorf("(%d) expected to get %s, instead got %s", i, niceError(testCase.expected), niceError(err))
 		}

@@ -197,8 +197,12 @@ func extractMetadataFromMime(ctx context.Context, v textproto.MIMEHeader, m map[
 
 // Returns access credentials in the request Authorization header.
 func getReqAccessCred(r *http.Request, region string) (cred auth.Credentials) {
-	cred, _, _ = getReqAccessKeyV4(r, region, serviceS3)
-	if cred.AccessKey == "" {
+	rAuthType := getRequestAuthType(r)
+	switch rAuthType {
+	case authTypePresigned, authTypeSigned, authTypePresignedV4A, authTypeSignedV4A:
+		isV4A := rAuthType == authTypePresignedV4A || rAuthType == authTypeSignedV4A
+		cred, _, _ = getReqAccessKeyV4(r, region, serviceS3, isV4A)
+	case authTypePresignedV2, authTypeSignedV2:
 		cred, _, _ = getReqAccessKeyV2(r)
 	}
 	return cred

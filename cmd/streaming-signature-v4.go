@@ -75,7 +75,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	v4Auth := req.Header.Get(xhttp.Authorization)
 
 	// Parse signature version '4' header.
-	signV4Values, errCode := parseSignV4(v4Auth, globalSite.Region, serviceS3)
+	signV4Values, errCode := parseSignV4(v4Auth, globalSite.Region, serviceS3, false)
 	if errCode != ErrNone {
 		return cred, "", "", time.Time{}, errCode
 	}
@@ -124,7 +124,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, payload, queryStr, req.URL.Path, req.Method)
 
 	// Get string to sign from canonical request.
-	stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
+	stringToSign := getStringToSign(signV4Algorithm, canonicalRequest, date, signV4Values.Credential.getScope())
 
 	// Get hmac signing key.
 	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date, region, serviceS3)
