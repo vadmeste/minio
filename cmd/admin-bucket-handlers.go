@@ -1102,9 +1102,10 @@ func (a adminAPIHandlers) ReplicationDiffHandler(w http.ResponseWriter, r *http.
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
 		return
 	}
+
 	// check if user has permissions to perform this operation
-	if s3Error := checkRequestAuthType(ctx, r, policy.ListBucketVersionsAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL)
+	if _, adminAPIErr := checkAdminRequestAuth(ctx, r, policy.ListBucketVersionsAction, bucket); adminAPIErr != ErrNone {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(adminAPIErr), r.URL)
 		return
 	}
 

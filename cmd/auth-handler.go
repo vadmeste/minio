@@ -162,8 +162,8 @@ func validateAdminSignature(ctx context.Context, r *http.Request, region string)
 // checkAdminRequestAuth checks for authentication and authorization for the incoming
 // request. It only accepts V2 and V4 requests. Presigned, JWT and anonymous requests
 // are automatically rejected.
-func checkAdminRequestAuth(ctx context.Context, r *http.Request, action iampolicy.AdminAction, region string) (auth.Credentials, APIErrorCode) {
-	cred, claims, owner, s3Err := validateAdminSignature(ctx, r, region)
+func checkAdminRequestAuth(ctx context.Context, r *http.Request, action iampolicy.Action, bucket string) (auth.Credentials, APIErrorCode) {
+	cred, claims, owner, s3Err := validateAdminSignature(ctx, r, "")
 	if s3Err != ErrNone {
 		return cred, s3Err
 	}
@@ -174,6 +174,7 @@ func checkAdminRequestAuth(ctx context.Context, r *http.Request, action iampolic
 		ConditionValues: getConditionValues(r, "", cred.AccessKey, claims),
 		IsOwner:         owner,
 		Claims:          claims,
+		BucketName:      bucket,
 	}) {
 		// Request is allowed return the appropriate access key.
 		return cred, ErrNone

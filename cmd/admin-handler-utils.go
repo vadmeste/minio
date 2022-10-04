@@ -34,7 +34,7 @@ import (
 // If any of the supplied actions are allowed it will be successful.
 // If nil ObjectLayer is returned, the operation is not permitted.
 // When nil ObjectLayer has been returned an error has always been sent to w.
-func validateAdminReq(ctx context.Context, w http.ResponseWriter, r *http.Request, actions ...iampolicy.AdminAction) (ObjectLayer, auth.Credentials) {
+func validateAdminReq(ctx context.Context, w http.ResponseWriter, r *http.Request, actions ...iampolicy.Action) (ObjectLayer, auth.Credentials) {
 	// Get current object layer instance.
 	objectAPI := newObjectLayerFn()
 	if objectAPI == nil || globalNotificationSys == nil {
