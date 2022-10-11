@@ -394,44 +394,62 @@ func writeUniqueFileInfo(ctx context.Context, disks []StorageAPI, bucket, prefix
 	return evalDisks(disks, mErrs), err
 }
 
+func commonECConfig(partsMetadata []FileInfo, errs []error) (int, int, error) {
+	type erasureConfig struct {
+		data, parity int
+	}
+
+	occMap := make(map[erasureConfig]int)
+
+	for i := range partsMetadata {
+		if errs[i] != nil {
+			continue
+		}
+		occMap[erasureConfig{data: partsMetadata[i].Erasure.DataBlocks, parity: partsMetadata[i].Erasure.ParityBlocks}]++
+	}
+
+	var (
+		maxOcc   int
+		commonEC erasureConfig
+	)
+
+	for ec, occ := range occMap {
+		if occ > maxOcc {
+			maxOcc = occ
+			commonEC = ec
+		}
+	}
+
+	if maxOcc < len(partsMetadata)/2 {
+		return 0, 0, errErasureReadQuorum
+	}
+
+	return commonEC.data, commonEC.parity, nil
+}
+
 // Returns per object readQuorum and writeQuorum
 // readQuorum is the min required disks to read data.
 // writeQuorum is the min required disks to write data.
 func objectQuorumFromMeta(ctx context.Context, partsMetaData []FileInfo, errs []error, defaultParityCount int) (objectReadQuorum, objectWriteQuorum int, err error) {
-	// get the latest updated Metadata and a count of all the latest updated FileInfo(s)
-	latestFileInfo, err := getLatestFileInfo(ctx, partsMetaData, defaultParityCount, errs)
+	// Check first if we can reduce all errors to nil
+	reducedErr := reduceReadQuorumErrs(ctx, errs, objectOpIgnoredErrs, len(partsMetaData)/2)
+	if reducedErr != nil {
+		return 0, 0, reducedErr
+	}
+
+	// special case when parity is '0'
+	if defaultParityCount == 0 {
+		return len(partsMetaData), len(partsMetaData), nil
+	}
+
+	dataBlocks, parityBlocks, err := commonECConfig(partsMetaData, errs)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	if latestFileInfo.Deleted {
-		// special case when parity is '0'
-		if defaultParityCount == 0 {
-			return len(partsMetaData), len(partsMetaData), nil
-		}
-		// For delete markers do not use 'defaultParityCount' as it is not expected to be the case.
-		// Use maximum allowed read quorum instead, writeQuorum+1 is returned for compatibility sake
-		// but there are no callers that shall be using this.
-		readQuorum := len(partsMetaData) / 2
-		return readQuorum, readQuorum + 1, nil
-	}
-
-	parityBlocks := globalStorageClass.GetParityForSC(latestFileInfo.Metadata[xhttp.AmzStorageClass])
-	if parityBlocks < 0 {
-		parityBlocks = defaultParityCount
-	}
-
-	// For erasure code upgraded objects choose the parity
-	// blocks saved internally, instead of 'defaultParityCount'
-	if _, ok := latestFileInfo.Metadata[minIOErasureUpgraded]; ok {
-		if latestFileInfo.Erasure.ParityBlocks != 0 {
-			parityBlocks = latestFileInfo.Erasure.ParityBlocks
-		}
-	}
-
-	dataBlocks := latestFileInfo.Erasure.DataBlocks
 	if dataBlocks == 0 {
-		dataBlocks = len(partsMetaData) - parityBlocks
+		// Delete markers
+		dataBlocks = len(partsMetaData) / 2
 	}
 
 	writeQuorum := dataBlocks
