@@ -416,6 +416,7 @@ func (a adminAPIHandlers) MetricsHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
+	jobID := r.Form.Get("by-jobID")
 
 	hosts := strings.Split(r.Form.Get("hosts"), ",")
 	byHost := strings.EqualFold(r.Form.Get("by-host"), "true")
@@ -437,12 +438,20 @@ func (a adminAPIHandlers) MetricsHandler(w http.ResponseWriter, r *http.Request)
 	enc := json.NewEncoder(w)
 	for n > 0 {
 		var m madmin.RealtimeMetrics
-		mLocal := collectLocalMetrics(types, hostMap, diskMap)
+		mLocal := collectLocalMetrics(types, collectMetricsOpts{
+			hosts: hostMap,
+			disks: diskMap,
+			jobID: jobID,
+		})
 		m.Merge(&mLocal)
 
 		// Allow half the interval for collecting remote...
 		cctx, cancel := context.WithTimeout(ctx, interval/2)
-		mRemote := collectRemoteMetrics(cctx, types, hostMap, diskMap)
+		mRemote := collectRemoteMetrics(cctx, types, collectMetricsOpts{
+			hosts: hostMap,
+			disks: diskMap,
+			jobID: jobID,
+		})
 		cancel()
 		m.Merge(&mRemote)
 		if !byHost {
@@ -454,7 +463,7 @@ func (a adminAPIHandlers) MetricsHandler(w http.ResponseWriter, r *http.Request)
 
 		m.Final = n <= 1
 
-		// Marshal API response
+		// Marshal API reesponse
 		if err := enc.Encode(&m); err != nil {
 			n = 0
 		}
@@ -1794,8 +1803,8 @@ func getServerInfo(ctx context.Context, r *http.Request) madmin.InfoMessage {
 	kmsStat := fetchKMSStatus()
 
 	ldap := madmin.LDAP{}
-	if globalLDAPConfig.Enabled {
-		ldapConn, err := globalLDAPConfig.Connect()
+	if globalLDAPConfig.Enabled() {
+		ldapConn, err := globalLDAPConfig.LDAP.Connect()
 		//nolint:gocritic
 		if err != nil {
 			ldap.Status = string(madmin.ItemOffline)
@@ -1964,11 +1973,6 @@ func (a adminAPIHandlers) HealthInfoHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	deadline := 10 * time.Second // Default deadline is 10secs for health diagnostics.
-	if query.Get(string(madmin.HealthDataTypePerfNet)) != "" ||
-		query.Get(string(madmin.HealthDataTypePerfDrive)) != "" ||
-		query.Get(string(madmin.HealthDataTypePerfObj)) != "" {
-		deadline = 1 * time.Hour
-	}
 	if dstr := r.Form.Get("deadline"); dstr != "" {
 		var err error
 		deadline, err = time.ParseDuration(dstr)
@@ -2230,87 +2234,6 @@ func (a adminAPIHandlers) HealthInfoHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	getAndWriteDrivePerfInfo := func() {
-		if query.Get(string(madmin.HealthDataTypePerfDrive)) == "true" {
-			opts := madmin.DriveSpeedTestOpts{
-				Serial:    false,
-				BlockSize: 4 * humanize.MiByte,
-				FileSize:  1 * humanize.GiByte,
-			}
-
-			localDPI := driveSpeedTest(ctx, opts)
-			healthInfo.Perf.DrivePerf = append(healthInfo.Perf.DrivePerf, localDPI)
-
-			perfCh := globalNotificationSys.DriveSpeedTest(ctx, opts)
-			for perfInfo := range perfCh {
-				healthInfo.Perf.DrivePerf = append(healthInfo.Perf.DrivePerf, perfInfo)
-			}
-			partialWrite(healthInfo)
-		}
-	}
-
-	getAndWriteObjPerfInfo := func() {
-		if query.Get(string(madmin.HealthDataTypePerfObj)) == "true" {
-			concurrent := 32
-
-			storageInfo, _ := objectAPI.StorageInfo(ctx)
-
-			size := 64 * humanize.MiByte
-			autotune := true
-
-			sufficientCapacity, canAutotune, capacityErrMsg := validateObjPerfOptions(ctx, storageInfo, concurrent, size, autotune)
-			if !sufficientCapacity {
-				healthInfo.Perf.Error = capacityErrMsg
-				partialWrite(healthInfo)
-				return
-			}
-
-			if !canAutotune {
-				autotune = false
-			}
-
-			bucketExists, err := makeObjectPerfBucket(ctx, objectAPI, globalObjectPerfBucket)
-			if err != nil {
-				healthInfo.Perf.Error = "Unable to create bucket: " + err.Error()
-				partialWrite(healthInfo)
-				return
-			}
-
-			if !bucketExists {
-				defer deleteObjectPerfBucket(objectAPI)
-			}
-
-			opts := speedTestOpts{
-				objectSize:       size,
-				concurrencyStart: concurrent,
-				duration:         10 * time.Second,
-				autotune:         autotune,
-			}
-
-			perfCh := objectSpeedTest(ctx, opts)
-			for perfInfo := range perfCh {
-				healthInfo.Perf.ObjPerf = append(healthInfo.Perf.ObjPerf, perfInfo)
-			}
-			partialWrite(healthInfo)
-		}
-	}
-
-	getAndWriteNetPerfInfo := func() {
-		if query.Get(string(madmin.HealthDataTypePerfObj)) == "true" {
-			if !globalIsDistErasure {
-				return
-			}
-
-			netPerf := globalNotificationSys.Netperf(ctx, time.Second*10)
-			for _, np := range netPerf {
-				np.Endpoint = anonAddr(np.Endpoint)
-				healthInfo.Perf.NetPerf = append(healthInfo.Perf.NetPerf, np)
-			}
-
-			partialWrite(healthInfo)
-		}
-	}
-
 	anonymizeNetwork := func(network map[string]string) map[string]string {
 		anonNetwork := map[string]string{}
 		for endpoint, status := range network {
@@ -2340,16 +2263,13 @@ func (a adminAPIHandlers) HealthInfoHandler(w http.ResponseWriter, r *http.Reque
 		getAndWriteMemInfo()
 		getAndWriteProcInfo()
 		getAndWriteMinioConfig()
-		getAndWriteDrivePerfInfo()
-		getAndWriteObjPerfInfo()
-		getAndWriteNetPerfInfo()
 		getAndWriteSysErrors()
 		getAndWriteSysServices()
 		getAndWriteSysConfig()
 
 		if query.Get("minioinfo") == "true" {
 			infoMessage := getServerInfo(ctx, r)
-			servers := []madmin.ServerInfo{}
+			servers := make([]madmin.ServerInfo, 0, len(infoMessage.Servers))
 			for _, server := range infoMessage.Servers {
 				anonEndpoint := anonAddr(server.Endpoint)
 				servers = append(servers, madmin.ServerInfo{
@@ -2368,6 +2288,11 @@ func (a adminAPIHandlers) HealthInfoHandler(w http.ResponseWriter, r *http.Reque
 						Frees:      server.MemStats.Frees,
 						HeapAlloc:  server.MemStats.HeapAlloc,
 					},
+					GoMaxProcs:     server.GoMaxProcs,
+					NumCPU:         server.NumCPU,
+					RuntimeVersion: server.RuntimeVersion,
+					GCStats:        server.GCStats,
+					MinioEnvVars:   server.MinioEnvVars,
 				})
 			}
 

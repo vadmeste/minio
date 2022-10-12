@@ -45,6 +45,10 @@ const (
 
 	// RetCompliance - compliance mode.
 	RetCompliance RetMode = "COMPLIANCE"
+
+	// RFC3339 a subset of the ISO8601 timestamp format. e.g 2014-04-29T18:30:38Z
+	iso8601TimeFormat = "2006-01-02T15:04:05.000Z" // Reply date format with millisecond precision.
+
 )
 
 // Valid - returns if retention mode is valid
@@ -305,9 +309,12 @@ func (rDate *RetentionDate) UnmarshalXML(d *xml.Decoder, startElement xml.StartE
 	// While AWS documentation mentions that the date specified
 	// must be present in ISO 8601 format, in reality they allow
 	// users to provide RFC 3339 compliant dates.
-	retDate, err := time.Parse(time.RFC3339, dateStr)
+	retDate, err := time.Parse(iso8601TimeFormat, dateStr)
 	if err != nil {
-		return ErrInvalidRetentionDate
+		retDate, err = time.Parse(time.RFC3339, dateStr)
+		if err != nil {
+			return ErrInvalidRetentionDate
+		}
 	}
 
 	*rDate = RetentionDate{retDate}
@@ -317,10 +324,10 @@ func (rDate *RetentionDate) UnmarshalXML(d *xml.Decoder, startElement xml.StartE
 // MarshalXML encodes expiration date if it is non-zero and encodes
 // empty string otherwise
 func (rDate *RetentionDate) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error {
-	if *rDate == (RetentionDate{time.Time{}}) {
+	if rDate.IsZero() {
 		return nil
 	}
-	return e.EncodeElement(rDate.Format(time.RFC3339), startElement)
+	return e.EncodeElement(rDate.Format(iso8601TimeFormat), startElement)
 }
 
 // ObjectRetention specified in
@@ -410,9 +417,12 @@ func ParseObjectLockRetentionHeaders(h http.Header) (rmode RetMode, r RetentionD
 	// While AWS documentation mentions that the date specified
 	// must be present in ISO 8601 format, in reality they allow
 	// users to provide RFC 3339 compliant dates.
-	retDate, err = time.Parse(time.RFC3339, dateStr)
+	retDate, err = time.Parse(iso8601TimeFormat, dateStr)
 	if err != nil {
-		return rmode, r, ErrInvalidRetentionDate
+		retDate, err = time.Parse(time.RFC3339, dateStr)
+		if err != nil {
+			return rmode, r, ErrInvalidRetentionDate
+		}
 	}
 	_, replReq := h[textproto.CanonicalMIMEHeaderKey(xhttp.MinIOSourceReplicationRequest)]
 
@@ -452,6 +462,9 @@ func GetObjectRetentionMeta(meta map[string]string) ObjectRetention {
 		tillStr, ok = meta[AmzObjectLockRetainUntilDate]
 	}
 	if ok {
+		if t, e := time.Parse(iso8601TimeFormat, tillStr); e == nil {
+			retainTill = RetentionDate{t.UTC()}
+		}
 		if t, e := time.Parse(time.RFC3339, tillStr); e == nil {
 			retainTill = RetentionDate{t.UTC()}
 		}

@@ -40,16 +40,17 @@ require (
 	github.com/klauspost/readahead v1.4.0
 	github.com/klauspost/reedsolomon v1.11.0
 	github.com/lib/pq v1.10.7
+	github.com/lithammer/shortuuid/v4 v4.0.0
 	github.com/miekg/dns v1.1.50
-	github.com/minio/cli v1.23.0
-	github.com/minio/console v0.20.4
+	github.com/minio/cli v1.24.0
+	github.com/minio/console v0.20.6-0.20221003060434-413870e995a9
 	github.com/minio/csvparser v1.0.0
 	github.com/minio/dperf v0.4.2
 	github.com/minio/highwayhash v1.0.2
 	github.com/minio/kes v0.21.0
-	github.com/minio/madmin-go v1.4.29
+	github.com/minio/madmin-go v1.6.2
 	github.com/minio/minio-go/v7 v7.0.40-0.20220928095841-8848d8affe8a
-	github.com/minio/pkg v1.4.2
+	github.com/minio/pkg v1.5.0
 	github.com/minio/selfupdate v0.5.0
 	github.com/minio/sha256-simd v1.0.0
 	github.com/minio/simdjson-go v0.4.2
@@ -74,7 +75,7 @@ require (
 	github.com/secure-io/sio-go v0.3.1
 	github.com/shirou/gopsutil/v3 v3.22.8
 	github.com/streadway/amqp v1.0.0
-	github.com/tinylib/msgp v1.1.7-0.20211026165309-e818a1881b0e
+	github.com/tinylib/msgp v1.1.7-0.20220719154719-f3635b96e483
 	github.com/valyala/bytebufferpool v1.0.0
 	github.com/xdg/scram v1.0.5
 	github.com/yargevad/filepathx v1.0.0
@@ -88,6 +89,7 @@ require (
 	golang.org/x/sys v0.0.0-20220915200043-7b5979e65e41
 	golang.org/x/time v0.0.0-20220722155302-e5dcc9cfc0b9
 	google.golang.org/api v0.96.0
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
@@ -165,7 +167,7 @@ require (
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
 	github.com/minio/colorjson v1.0.2 // indirect
 	github.com/minio/filepath v1.0.0 // indirect
-	github.com/minio/mc v0.0.0-20220916091647-ad4441ef2b4b // indirect
+	github.com/minio/mc v0.0.0-20221001175248-68ca2bf457e4 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -222,6 +224,5 @@ require (
 	gopkg.in/h2non/filetype.v1 v1.0.5 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

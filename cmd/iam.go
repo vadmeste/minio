@@ -163,7 +163,7 @@ func (sys *IAMSys) LoadServiceAccount(ctx context.Context, accessKey string) err
 
 // initStore initializes IAM stores
 func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client) {
-	if sys.ldapConfig.Enabled {
+	if sys.ldapConfig.Enabled() {
 		sys.SetUsersSysType(LDAPUsersSysType)
 	}
 
@@ -222,8 +222,6 @@ func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etc
 	s := globalServerConfig
 	globalServerConfigMu.RUnlock()
 
-	ldapCfg := s[config.IdentityLDAPSubSys][config.Default]
-
 	var err error
 	globalOpenIDConfig, err = openid.LookupConfig(s,
 		NewGatewayHTTPTransport(), xhttp.DrainBody, globalSite.Region)
@@ -232,7 +230,7 @@ func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etc
 	}
 
 	// Initialize if LDAP is enabled
-	globalLDAPConfig, err = xldap.Lookup(ldapCfg, globalRootCAs)
+	globalLDAPConfig, err = xldap.Lookup(s, globalRootCAs)
 	if err != nil {
 		logger.LogIf(ctx, fmt.Errorf("Unable to parse LDAP configuration: %w", err))
 	}
@@ -347,7 +345,7 @@ func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etc
 				}
 			}
 		}()
-	case sys.ldapConfig.Enabled:
+	case sys.ldapConfig.Enabled():
 		go func() {
 			timer := time.NewTimer(refreshInterval)
 			defer timer.Stop()
@@ -774,7 +772,7 @@ func (sys *IAMSys) ListUsers(ctx context.Context) (map[string]madmin.UserInfo, e
 }
 
 // ListLDAPUsers - list LDAP users which has
-func (sys *IAMSys) ListLDAPUsers() (map[string]madmin.UserInfo, error) {
+func (sys *IAMSys) ListLDAPUsers(ctx context.Context) (map[string]madmin.UserInfo, error) {
 	if !sys.Initialized() {
 		return nil, errServerNotInitialized
 	}
@@ -783,16 +781,19 @@ func (sys *IAMSys) ListLDAPUsers() (map[string]madmin.UserInfo, error) {
 		return nil, errIAMActionNotAllowed
 	}
 
-	<-sys.configLoaded
-
-	ldapUsers := make(map[string]madmin.UserInfo)
-	for user, policy := range sys.store.GetUsersWithMappedPolicies() {
-		ldapUsers[user] = madmin.UserInfo{
-			PolicyName: policy,
-			Status:     madmin.AccountEnabled,
+	select {
+	case <-sys.configLoaded:
+		ldapUsers := make(map[string]madmin.UserInfo)
+		for user, policy := range sys.store.GetUsersWithMappedPolicies() {
+			ldapUsers[user] = madmin.UserInfo{
+				PolicyName: policy,
+				Status:     madmin.AccountEnabled,
+			}
 		}
+		return ldapUsers, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return ldapUsers, nil
 }
 
 // IsTempUser - returns if given key is a temporary user.

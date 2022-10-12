@@ -1465,7 +1465,7 @@ func (es *erasureSingle) DeleteObject(ctx context.Context, bucket, object string
 	}
 
 	if opts.Expiration.Expire {
-		action := evalActionFromLifecycle(ctx, *lc, rcfg, goi, false)
+		action := evalActionFromLifecycle(ctx, *lc, rcfg, goi)
 		var isErr bool
 		switch action {
 		case lifecycle.NoneAction:
@@ -2897,7 +2897,7 @@ func (es *erasureSingle) ListObjects(ctx context.Context, bucket, prefix, marker
 		objInfo, err := es.GetObjectInfo(ctx, bucket, prefix, ObjectOptions{NoLock: true})
 		if err == nil {
 			if opts.Lifecycle != nil {
-				action := evalActionFromLifecycle(ctx, *opts.Lifecycle, opts.Retention, objInfo, false)
+				action := evalActionFromLifecycle(ctx, *opts.Lifecycle, opts.Retention, objInfo)
 				switch action {
 				case lifecycle.DeleteVersionAction, lifecycle.DeleteAction:
 					fallthrough
@@ -3050,12 +3050,22 @@ func (es *erasureSingle) Walk(ctx context.Context, bucket, prefix string, result
 				versionsSorter(fivs.Versions).reverse()
 
 				for _, version := range fivs.Versions {
+					send := true
+					if opts.WalkFilter != nil && !opts.WalkFilter(version) {
+						send = false
+					}
+
+					if !send {
+						continue
+					}
+
 					versioned := vcfg != nil && vcfg.Versioned(version.Name)
+					objInfo := version.ToObjectInfo(bucket, version.Name, versioned)
 
 					select {
 					case <-ctx.Done():
 						return
-					case results <- version.ToObjectInfo(bucket, version.Name, versioned):
+					case results <- objInfo:
 					}
 				}
 			}
@@ -3079,7 +3089,7 @@ func (es *erasureSingle) Walk(ctx context.Context, bucket, prefix string, result
 				path:           path,
 				filterPrefix:   filterPrefix,
 				recursive:      true,
-				forwardTo:      "",
+				forwardTo:      opts.WalkMarker,
 				minDisks:       1,
 				reportNotFound: false,
 				agreed:         loadEntry,
