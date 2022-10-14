@@ -18,18 +18,14 @@
 package main
 
 import (
+	"errors"
 	"io"
-	"io/ioutil"
 
 	"github.com/minio/madmin-go/estream"
 )
 
-func extractInspectV2(privKeyPath string, r io.Reader, w io.Writer) error {
-	privKeyBytes, err := ioutil.ReadFile(privKeyPath)
-	if err != nil {
-		return err
-	}
-	privKey, err := bytesToPrivateKey(privKeyBytes)
+func extractInspectV2(pk []byte, r io.Reader, w io.Writer) error {
+	privKey, err := bytesToPrivateKey(pk)
 	if err != nil {
 		return err
 	}
@@ -40,11 +36,21 @@ func extractInspectV2(privKeyPath string, r io.Reader, w io.Writer) error {
 	}
 
 	sr.SetPrivateKey(privKey)
+	sr.ReturnNonDecryptable(true)
 	for {
 		stream, err := sr.NextStream()
 		if err != nil {
 			if err == io.EOF {
-				return io.ErrUnexpectedEOF
+				return errors.New("")
+			}
+			if err == estream.ErrNoKey {
+				if stream.Name == "inspect.zip" {
+					return errors.New("incorrect private key")
+				}
+				if err := stream.Skip(); err != nil {
+					return err
+				}
+				continue
 			}
 			return err
 		}
@@ -52,8 +58,7 @@ func extractInspectV2(privKeyPath string, r io.Reader, w io.Writer) error {
 			_, err := io.Copy(w, stream)
 			return err
 		}
-		_, err = io.Copy(io.Discard, stream)
-		if err != nil {
+		if err := stream.Skip(); err != nil {
 			return err
 		}
 	}

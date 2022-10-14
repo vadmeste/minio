@@ -2676,13 +2676,12 @@ func getClusterMetaInfo(ctx context.Context) []byte {
 
 func bytesToPublicKey(pub []byte) (*rsa.PublicKey, error) {
 	block, _ := pem.Decode(pub)
-	ifc, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if block != nil {
+		pub = block.Bytes
+	}
+	key, err := x509.ParsePKCS1PublicKey(pub)
 	if err != nil {
 		return nil, err
-	}
-	key, ok := ifc.(*rsa.PublicKey)
-	if !ok {
-		return nil, errors.New("not an RSA public key")
 	}
 	return key, nil
 }
@@ -2759,8 +2758,14 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(200)
 		stream := estream.NewWriter(w)
 		defer stream.Close()
-		err := stream.AddKeyPlain()
-		if err == nil {
+
+		clusterKey, err := bytesToPublicKey(minioAdminPublicKey)
+		if err != nil {
+			logger.LogIf(ctx, stream.AddError(err.Error()))
+			return
+		}
+		err = stream.AddKeyEncrypted(clusterKey)
+		if err != nil {
 			logger.LogIf(ctx, stream.AddError(err.Error()))
 			return
 		}
@@ -2820,6 +2825,10 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 		// of profiling data of all nodes
 		inspectZipW = zip.NewWriter(encw)
 		defer inspectZipW.Close()
+
+		if b := getClusterMetaInfo(ctx); len(b) > 0 {
+			logger.LogIf(ctx, embedFileInZip(inspectZipW, "cluster.info", b))
+		}
 	}
 
 	rawDataFn := func(r io.Reader, host, disk, filename string, si StatInfo) error {
