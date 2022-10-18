@@ -52,6 +52,7 @@ func main() {
 	if *keyHex == "" {
 		if b, err := os.ReadFile(*privKeyPath); err == nil {
 			privateKey = b
+			fmt.Println("Using private key from", *privKeyPath)
 		}
 
 		// Prompt for decryption key if no --key or --private-key are provided

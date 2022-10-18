@@ -2883,15 +2883,15 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// save args passed to inspect command
-	inspectArgs := []string{fmt.Sprintf(" Inspect path: %s%s%s\n", volume, slashSeparator, file)}
-	cmdLine := []string{"Server command line args: "}
+	var sb bytes.Buffer
+	fmt.Fprintf(&sb, "Inspect path: %s%s%s\n", volume, slashSeparator, file)
+	sb.WriteString("Server command line args:")
 	for _, pool := range globalEndpoints {
-		cmdLine = append(cmdLine, pool.CmdLine)
+		sb.WriteString(" ")
+		sb.WriteString(pool.CmdLine)
 	}
-	cmdLine = append(cmdLine, "\n")
-	inspectArgs = append(inspectArgs, cmdLine...)
-	inspectArgsBytes := []byte(strings.Join(inspectArgs, " "))
-	logger.LogIf(ctx, embedFileInZip(inspectZipW, "inspect-input.txt", inspectArgsBytes))
+	sb.WriteString("\n")
+	logger.LogIf(ctx, embedFileInZip(inspectZipW, "inspect-input.txt", sb.Bytes()))
 }
 
 func createHostAnonymizerForFSMode() map[string]string {

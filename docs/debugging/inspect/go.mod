@@ -21,4 +21,4 @@ require (
 	golang.org/x/sys v0.0.0-20220928140112-f11e5e49a4ec // indirect
 )
 
-replace github.com/minio/madmin-go => github.com/klauspost/madmin-go v1.0.15-0.20221012163854-fd15cf0ad215
+replace github.com/minio/madmin-go => github.com/klauspost/madmin-go v1.0.15-0.20221018080536-5c0ac8af2ed3

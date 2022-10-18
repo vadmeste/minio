@@ -228,8 +228,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/minio/madmin-go => github.com/klauspost/madmin-go v1.0.15-0.20221012163854-fd15cf0ad215
+replace github.com/minio/madmin-go => github.com/klauspost/madmin-go v1.0.15-0.20221018080536-5c0ac8af2ed3
 
 replace github.com/minio/mc => github.com/klauspost/mc v0.0.0-20221014120903-10af4c8890f4
 
-replace github.com/minio/console => github.com/klauspost/console v0.10.5-0.20221017140042-f27594d23dcc
+replace github.com/minio/console => github.com/klauspost/console 71cdbf6826dd1f5d4537bf63eea2fd511af67587

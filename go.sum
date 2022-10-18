@@ -536,8 +536,8 @@ github.com/klauspost/compress v1.13.6/go.mod h1:/3/Vjq9QcHkK5uEr5lBEmyoZ1iFhe47e
 github.com/klauspost/compress v1.15.9/go.mod h1:PhcZ0MbTNciWF3rruxRgKxI5NkcHHrHUDtV4Yw2GlzU=
 github.com/klauspost/compress v1.15.11 h1:Lcadnb3RKGin4FYM/orgq0qde+nc15E5Cbqg4B9Sx9c=
 github.com/klauspost/compress v1.15.11/go.mod h1:QPwzmACJjUTFsnSHH934V6woptycfrDDJnH7hvFVbGM=
-github.com/klauspost/console v0.10.5-0.20221017140042-f27594d23dcc h1:RDFmlNby/AJngFD83jB8MMWMowhO1WhIjFUHW7RJBpk=
-github.com/klauspost/console v0.10.5-0.20221017140042-f27594d23dcc/go.mod h1:+03XHFWuBYXd6NXPrQK+MrE2xxWWAec9cBEX++07JKo=
+github.com/klauspost/console v0.10.5-0.20221018125658-71cdbf6826dd h1:BdfsC8f8Ld0Q8pLbbqE+qn5IC7z5km8nll9YsXdUa8A=
+github.com/klauspost/console v0.10.5-0.20221018125658-71cdbf6826dd/go.mod h1:+03XHFWuBYXd6NXPrQK+MrE2xxWWAec9cBEX++07JKo=
 github.com/klauspost/cpuid v1.2.3/go.mod h1:Pj4uuM528wm8OyEC2QMXAi2YiTZ96dNQPGgoMS4s3ek=
 github.com/klauspost/cpuid v1.3.1/go.mod h1:bYW4mA6ZgKPob1/Dlai2LviZJO7KGI3uoWLd42rAQw4=
 github.com/klauspost/cpuid/v2 v2.0.1/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
@@ -545,8 +545,8 @@ github.com/klauspost/cpuid/v2 v2.0.4/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa02
 github.com/klauspost/cpuid/v2 v2.0.9/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
 github.com/klauspost/cpuid/v2 v2.1.1 h1:t0wUqjowdm8ezddV5k0tLWVklVuvLJpoHeb4WBdydm0=
 github.com/klauspost/cpuid/v2 v2.1.1/go.mod h1:RVVoqg1df56z8g3pUjL/3lE5UfnlrJX8tyFgg4nqhuY=
-github.com/klauspost/madmin-go v1.0.15-0.20221012163854-fd15cf0ad215 h1:DXwQjFYV+ql2BEsLpsZSicBrRKHx42xr9oZgSHFB5+4=
-github.com/klauspost/madmin-go v1.0.15-0.20221012163854-fd15cf0ad215/go.mod h1:gcTL97J7FTk1bX+8aIh8INIueYMmzee0VvGTsdfJ5RU=
+github.com/klauspost/madmin-go v1.0.15-0.20221018080536-5c0ac8af2ed3 h1:S1m26ZTvYHFTfZZ0c0irTeQYPlk1UBG4vr9RIP79PY8=
+github.com/klauspost/madmin-go v1.0.15-0.20221018080536-5c0ac8af2ed3/go.mod h1:gcTL97J7FTk1bX+8aIh8INIueYMmzee0VvGTsdfJ5RU=
 github.com/klauspost/mc v0.0.0-20221014120903-10af4c8890f4 h1:VQISha58DlZROsVtj8CnDr4LdyO4LHyVxlKsCAI8WA8=
 github.com/klauspost/mc v0.0.0-20221014120903-10af4c8890f4/go.mod h1:vnZu6d8LyV3zcGlhQCvaHSvMayNBi8b6uq5yIj8AyRA=
 github.com/klauspost/pgzip v1.2.5 h1:qnWYvvKqedOF2ulHpMG72XQol4ILEJ8k2wwRl/Km8oE=

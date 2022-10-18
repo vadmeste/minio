@@ -19,7 +19,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"os"
 
 	"github.com/minio/madmin-go/estream"
 )
@@ -27,7 +29,7 @@ import (
 func extractInspectV2(pk []byte, r io.Reader, w io.Writer) error {
 	privKey, err := bytesToPrivateKey(pk)
 	if err != nil {
-		return err
+		return fmt.Errorf("decoding key returned: %w", err)
 	}
 
 	sr, err := estream.NewReader(r)
@@ -37,29 +39,39 @@ func extractInspectV2(pk []byte, r io.Reader, w io.Writer) error {
 
 	sr.SetPrivateKey(privKey)
 	sr.ReturnNonDecryptable(true)
+
+	// Debug corrupted streams.
+	if false {
+		sr.SkipEncrypted(true)
+		return sr.DebugStream(os.Stdout)
+	}
+
 	for {
 		stream, err := sr.NextStream()
 		if err != nil {
 			if err == io.EOF {
-				return errors.New("")
+				return errors.New("no data found on stream")
 			}
-			if err == estream.ErrNoKey {
+			if errors.Is(err, estream.ErrNoKey) {
 				if stream.Name == "inspect.zip" {
 					return errors.New("incorrect private key")
 				}
 				if err := stream.Skip(); err != nil {
-					return err
+					return fmt.Errorf("stream skip: %w", err)
 				}
 				continue
 			}
-			return err
+			return fmt.Errorf("next stream: %w", err)
 		}
 		if stream.Name == "inspect.zip" {
 			_, err := io.Copy(w, stream)
-			return err
+			if err != nil {
+				return fmt.Errorf("reading inspect stream: %w", err)
+			}
+			return nil
 		}
 		if err := stream.Skip(); err != nil {
-			return err
+			return fmt.Errorf("stream skip: %w", err)
 		}
 	}
 }
