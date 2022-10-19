@@ -2759,7 +2759,7 @@ func (a adminAPIHandlers) InspectDataHandler(w http.ResponseWriter, r *http.Requ
 		stream := estream.NewWriter(w)
 		defer stream.Close()
 
-		clusterKey, err := bytesToPublicKey(minioAdminPublicKey)
+		clusterKey, err := bytesToPublicKey(subnetAdminPublicKey)
 		if err != nil {
 			logger.LogIf(ctx, stream.AddError(err.Error()))
 			return
