@@ -232,4 +232,4 @@ replace github.com/minio/madmin-go => github.com/klauspost/madmin-go v1.0.15-0.2
 
 replace github.com/minio/mc => github.com/klauspost/mc v0.0.0-20221014120903-10af4c8890f4
 
-replace github.com/minio/console => github.com/klauspost/console 71cdbf6826dd1f5d4537bf63eea2fd511af67587
+replace github.com/minio/console => github.com/klauspost/console v0.10.5-0.20221018125658-71cdbf6826dd
