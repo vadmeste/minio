@@ -2702,7 +2702,7 @@ func (c *SiteReplicationSys) siteReplicationStatus(ctx context.Context, objAPI O
 				if bi, ok := sris[dIdx].Buckets[s.Bucket]; ok {
 					hasBucket = !bi.CreatedAt.Equal(timeSentinel)
 				}
-				quotaCfgSet := hasBucket && *quotaCfgs[i] != madmin.BucketQuota{}
+				quotaCfgSet := hasBucket && quotaCfgs[i] != nil && *quotaCfgs[i] != madmin.BucketQuota{}
 				ss := madmin.SRBucketStatsSummary{
 					DeploymentID:             s.DeploymentID,
 					HasBucket:                hasBucket,
