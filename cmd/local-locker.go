@@ -321,7 +321,7 @@ func (l *localLocker) Refresh(ctx context.Context, args dsync.LockArgs) (refresh
 			}
 			for i := range lris {
 				if lris[i].UID == args.UID {
-					lris[i].TimeLastRefresh = UTCNow()
+					// lris[i].TimeLastRefresh = UTCNow()
 				}
 			}
 			idx++

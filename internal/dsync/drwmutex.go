@@ -57,7 +57,7 @@ const (
 	drwMutexForceUnlockCallTimeout = 30 * time.Second
 
 	// dRWMutexRefreshInterval - default the interval between two refresh calls
-	drwMutexRefreshInterval = 10 * time.Second
+	drwMutexRefreshInterval = 1 * time.Second
 
 	// maximum time to sleep before retrying a failed blocking lock()
 	lockRetryInterval = 50 * time.Millisecond

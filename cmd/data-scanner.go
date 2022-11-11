@@ -148,6 +148,25 @@ func saveBackgroundHealInfo(ctx context.Context, objAPI ObjectLayer, info backgr
 	}
 }
 
+func concurrent(pctx context.Context, objAPI ObjectLayer) {
+	time.Sleep(5 * time.Second)
+	for i := 0; i < 200; i++ {
+		go func() {
+			for {
+				// Make sure only 1 scanner is running on the cluster.
+				func() {
+					locker := objAPI.NewNSLock(minioMetaBucket, "scanner/runDataScanner.lock")
+					lkctx, err := locker.GetLock(pctx, dataScannerLeaderLockTimeout)
+					if err != nil {
+						return
+					}
+					locker.Unlock(lkctx.Cancel)
+				}()
+			}
+		}()
+	}
+}
+
 // runDataScanner will start a data scanner.
 // The function will block until the context is canceled.
 // There should only ever be one scanner running per cluster.
@@ -164,6 +183,8 @@ func runDataScanner(pctx context.Context, objAPI ObjectLayer) {
 	ctx := lkctx.Context()
 	defer lkctx.Cancel()
 	// No unlock for "leader" lock.
+
+	go concurrent(pctx, objAPI)
 
 	// Load current bloom cycle
 	var cycleInfo currentScannerCycle

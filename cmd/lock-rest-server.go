@@ -31,10 +31,10 @@ import (
 
 const (
 	// Lock maintenance interval.
-	lockMaintenanceInterval = 1 * time.Minute
+	lockMaintenanceInterval = 1 * time.Second
 
 	// Lock validity duration
-	lockValidityDuration = 1 * time.Minute
+	lockValidityDuration = 1 * time.Second
 )
 
 // To abstract a node over network.
