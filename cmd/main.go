@@ -188,6 +188,7 @@ func printMinIOVersion(c *cli.Context) {
 
 // Main main for minio server.
 func Main(args []string) {
+
 	// Set the minio app name.
 	appName := filepath.Base(args[0])
 

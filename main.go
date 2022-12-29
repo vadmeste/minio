@@ -18,14 +18,97 @@
 package main // import "github.com/minio/minio"
 
 import (
-	"os"
-
 	// MUST be first import.
-	_ "github.com/minio/minio/internal/init"
 
+	"bytes"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/ioutil"
+	"os"
+	"reflect"
+	"strings"
+
+	"github.com/minio/minio/cmd"
 	minio "github.com/minio/minio/cmd"
+	_ "github.com/minio/minio/internal/init"
 )
 
 func main() {
+
+	write := false // true
+	source := "cmd/metrics-v2-def.go"
+
+	// Parse src but stop after processing the imports.
+	file, err := ioutil.ReadFile(source)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", file, 0)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+
+	if write {
+		fmt.Println("package cmd")
+		fmt.Println("type My struct{}")
+	}
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		if n == nil {
+			return false
+		}
+
+		// Store the most specific function declaration
+		funcDecl, ok := n.(*ast.FuncDecl)
+		if !ok {
+			return true
+		}
+
+		if funcDecl.Type.Results != nil {
+			for _, l := range funcDecl.Type.Results.List {
+				if id, ok := l.Type.(*ast.Ident); ok && id.Name == "MetricDescription" {
+					if write {
+						x := bytes.Index(file[n.Pos():n.End()], []byte{'\n'})
+						if x >= 0 {
+							fmt.Printf("func (m My) %s() MetricDescription {\n", strings.ToUpper(string(funcDecl.Name.Name[0]))+funcDecl.Name.Name[1:])
+							fmt.Println(string(file[int(n.Pos())+x : n.End()]))
+						}
+					} else {
+						x := bytes.Index(file[n.Pos():n.End()], []byte{'\n'})
+						if x >= 0 {
+							m := cmd.My{}
+							meth := reflect.ValueOf(m).MethodByName(strings.ToUpper(string(funcDecl.Name.Name[0])) + funcDecl.Name.Name[1:])
+							ii := meth.Call(nil)
+							// fmt.Println(reflect.TypeOf(ii))
+							// fmt.Println(reflect.TypeOf(ii[0]))
+							md, _ := ii[0].Interface().(cmd.MetricDescription)
+							fmt.Printf("//prom: %s_%s_%s, %s\n", md.Namespace, md.Subsystem, md.Name, md.Help)
+							fmt.Printf("func %s() MetricDescription {", funcDecl.Name.Name)
+							fmt.Println(string(file[int(n.Pos())+x : n.End()]))
+						}
+
+						/*
+							fmt.Println(funcDecl.Name.Name)
+							var fn func() MetricDescription
+							err := GetFunc(&fn, "github.com/minio/minio."+funcDecl.Name.Name)
+							if err != nil {
+								// Handle errors if you care about name possibly being invalid.
+							}
+							fmt.Println(err)
+						*/
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	return
 	minio.Main(os.Args)
 }
