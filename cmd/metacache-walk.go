@@ -19,21 +19,20 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"runtime/debug"
 	"sort"
-	"strconv"
 	"strings"
 
-	xhttp "github.com/minio/minio/internal/http"
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/logger"
 )
 
+//go:generate msgp -file $GOFILE
+
 // WalkDirOptions provides options for WalkDir operations.
+//
+//msgp:tuple WalkDirOptions
 type WalkDirOptions struct {
 	// Bucket to scanner
 	Bucket string
@@ -61,7 +60,11 @@ type WalkDirOptions struct {
 // WalkDir will traverse a directory and return all entries found.
 // On success a sorted meta cache stream will be returned.
 // Metadata has data stripped, if any.
-func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) (err error) {
+func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, out chan<- metaCacheEntry) (err error) {
+	if s.poolIndex == -1 || s.setIndex == -1 || s.diskIndex == -1 {
+		return errDiskNotFound
+	}
+
 	// Verify if volume is valid and it exists.
 	volumeDir, err := s.getVolDir(opts.Bucket)
 	if err != nil {
@@ -78,15 +81,18 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 		return err
 	}
 
-	// Use a small block size to start sending quickly
-	w := newMetacacheWriter(wr, 16<<10)
-	w.reuseBlocks = true // We are not sharing results, so reuse buffers.
-	defer w.Close()
-	out, err := w.stream()
-	if err != nil {
-		return err
-	}
-	defer close(out)
+	/*
+		// Use a small block size to start sending quickly
+		w := newMetacacheWriter(wr, 16<<10)
+		w.reuseBlocks = true // We are not sharing results, so reuse buffers.
+		defer w.Close()
+		out, err := w.stream()
+		if err != nil {
+			return err
+		}
+		defer close(out)
+	*/
+
 	var objsReturned int
 
 	objReturned := func(metadata []byte) {
@@ -351,72 +357,77 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 	return scanDir(opts.BaseDir)
 }
 
-func (p *xlStorageDiskIDCheck) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) (err error) {
+func (p *xlStorageDiskIDCheck) WalkDir(ctx context.Context, opts WalkDirOptions, out chan<- metaCacheEntry) (err error) {
 	ctx, done, err := p.TrackDiskHealth(ctx, storageMetricWalkDir, opts.Bucket, opts.BaseDir)
 	if err != nil {
 		return err
 	}
 	defer done(&err)
 
-	return p.storage.WalkDir(ctx, opts, wr)
+	return p.storage.WalkDir(ctx, opts, out)
 }
 
 // WalkDir will traverse a directory and return all entries found.
 // On success a meta cache stream will be returned, that should be closed when done.
-func (client *storageRESTClient) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) error {
-	values := make(url.Values)
-	values.Set(storageRESTVolume, opts.Bucket)
-	values.Set(storageRESTDirPath, opts.BaseDir)
-	values.Set(storageRESTRecursive, strconv.FormatBool(opts.Recursive))
-	values.Set(storageRESTReportNotFound, strconv.FormatBool(opts.ReportNotFound))
-	values.Set(storageRESTPrefixFilter, opts.FilterPrefix)
-	values.Set(storageRESTForwardFilter, opts.ForwardTo)
-	respBody, err := client.call(ctx, storageRESTMethodWalkDir, values, nil, -1)
-	if err != nil {
-		logger.LogIf(ctx, err)
-		return err
-	}
-	defer xhttp.DrainBody(respBody)
-	return waitForHTTPStream(respBody, wr)
+func (client *storageRESTClient) WalkDir(ctx context.Context, opts WalkDirOptions, out chan<- metaCacheEntry) error {
+	/*
+		values := make(url.Values)
+		values.Set(storageRESTVolume, opts.Bucket)
+		values.Set(storageRESTDirPath, opts.BaseDir)
+		values.Set(storageRESTRecursive, strconv.FormatBool(opts.Recursive))
+		values.Set(storageRESTReportNotFound, strconv.FormatBool(opts.ReportNotFound))
+		values.Set(storageRESTPrefixFilter, opts.FilterPrefix)
+		values.Set(storageRESTForwardFilter, opts.ForwardTo)
+		respBody, err := client.call(ctx, storageRESTMethodWalkDir, values, nil, -1)
+		if err != nil {
+			logger.LogIf(ctx, err)
+			return err
+		}
+		defer xhttp.DrainBody(respBody)
+		return waitForHTTPStream(respBody, wr)
+	*/
+	return nil
 }
 
 // WalkDirHandler - remote caller to list files and folders in a requested directory path.
 func (s *storageRESTServer) WalkDirHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.IsValid(w, r) {
-		return
-	}
-	volume := r.Form.Get(storageRESTVolume)
-	dirPath := r.Form.Get(storageRESTDirPath)
-	recursive, err := strconv.ParseBool(r.Form.Get(storageRESTRecursive))
-	if err != nil {
-		s.writeErrorResponse(w, err)
-		return
-	}
-
-	var reportNotFound bool
-	if v := r.Form.Get(storageRESTReportNotFound); v != "" {
-		reportNotFound, err = strconv.ParseBool(v)
-		if err != nil {
-			s.writeErrorResponse(w, err)
+	/*
+		if !s.IsValid(w, r) {
 			return
 		}
-	}
+		volume := r.Form.Get(storageRESTVolume)
+			dirPath := r.Form.Get(storageRESTDirPath)
+			recursive, err := strconv.ParseBool(r.Form.Get(storageRESTRecursive))
+			if err != nil {
+				s.writeErrorResponse(w, err)
+				return
+			}
 
-	prefix := r.Form.Get(storageRESTPrefixFilter)
-	forward := r.Form.Get(storageRESTForwardFilter)
-	writer := streamHTTPResponse(w)
-	defer func() {
-		if r := recover(); r != nil {
-			debug.PrintStack()
-			writer.CloseWithError(fmt.Errorf("panic: %v", r))
-		}
-	}()
-	writer.CloseWithError(s.storage.WalkDir(r.Context(), WalkDirOptions{
-		Bucket:         volume,
-		BaseDir:        dirPath,
-		Recursive:      recursive,
-		ReportNotFound: reportNotFound,
-		FilterPrefix:   prefix,
-		ForwardTo:      forward,
-	}, writer))
+			var reportNotFound bool
+			if v := r.Form.Get(storageRESTReportNotFound); v != "" {
+				reportNotFound, err = strconv.ParseBool(v)
+				if err != nil {
+					s.writeErrorResponse(w, err)
+					return
+				}
+			}
+
+			prefix := r.Form.Get(storageRESTPrefixFilter)
+			forward := r.Form.Get(storageRESTForwardFilter)
+			writer := streamHTTPResponse(w)
+			defer func() {
+				if r := recover(); r != nil {
+					debug.PrintStack()
+					writer.CloseWithError(fmt.Errorf("panic: %v", r))
+				}
+			}()
+			writer.CloseWithError(s.storage.WalkDir(r.Context(), WalkDirOptions{
+				Bucket:         volume,
+				BaseDir:        dirPath,
+				Recursive:      recursive,
+				ReportNotFound: reportNotFound,
+				FilterPrefix:   prefix,
+				ForwardTo:      forward,
+			}, writer))
+	*/
 }

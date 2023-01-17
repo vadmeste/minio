@@ -726,11 +726,6 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 				recursive:      true,
 				reportNotFound: true,
 				minDisks:       f.disksQuorum,
-				agreed: func(entry metaCacheEntry) {
-					if f.dataUsageScannerDebug {
-						console.Debugf(healObjectsPrefix+" got agreement: %v\n", entry.name)
-					}
-				},
 				// Some disks have data for this.
 				partial: func(entries metaCacheEntries, errs []error) {
 					entry, ok := entries.resolve(&resolver)

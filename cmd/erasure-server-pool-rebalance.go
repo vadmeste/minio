@@ -625,11 +625,6 @@ func (z *erasureServerPools) rebalanceBucket(ctx context.Context, bucket string,
 				forwardTo:      "",
 				minDisks:       len(disks) / 2, // to capture all quorum ratios
 				reportNotFound: false,
-				agreed: func(entry metaCacheEntry) {
-					workers <- struct{}{}
-					wg.Add(1)
-					go rebalanceEntry(entry)
-				},
 				partial: func(entries metaCacheEntries, _ []error) {
 					entry, ok := entries.resolve(&resolver)
 					if ok {

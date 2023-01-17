@@ -694,7 +694,6 @@ func (set *erasureObjects) listObjectsToDecommission(ctx context.Context, bi dec
 		forwardTo:      "",
 		minDisks:       len(disks) / 2, // to capture all quorum ratios
 		reportNotFound: false,
-		agreed:         fn,
 		partial: func(entries metaCacheEntries, _ []error) {
 			entry, ok := entries.resolve(&resolver)
 			if ok {

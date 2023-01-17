@@ -370,9 +370,6 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 			forwardTo:      forwardTo,
 			minDisks:       1,
 			reportNotFound: false,
-			agreed: func(entry metaCacheEntry) {
-				healEntry(entry)
-			},
 			partial: func(entries metaCacheEntries, _ []error) {
 				entry, ok := entries.resolve(&resolver)
 				if !ok {

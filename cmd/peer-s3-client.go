@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/gob"
 	"errors"
@@ -287,6 +288,45 @@ func (client *peerS3Client) DeleteBucket(ctx context.Context, bucket string, opt
 	defer xhttp.DrainBody(respBody)
 
 	return nil
+}
+
+// FIXME: do not forget to find a way to close the resp body
+func (client *peerS3Client) WalkDir(ctx context.Context, opts WalkDirOptions) (*metacacheReader, error) {
+	optsBytes, err := opts.MarshalMsg(metaDataPoolGet()[:0])
+	if err != nil {
+		return nil, err
+	}
+	defer metaDataPoolPut(optsBytes)
+	body := bytes.NewReader(optsBytes)
+
+	respBody, err := client.call(peerS3MethodWalkDir, nil, body, body.Size())
+	if err != nil {
+		return nil, err
+	}
+	return newMetacacheReader(respBody), nil
+}
+
+// MakeBucket creates bucket across all peers
+func (sys *S3PeerSys) WalkDir(ctx context.Context, opts WalkDirOptions) ([]*metacacheReader, error) {
+	var err error
+	readers := make([]*metacacheReader, len(sys.peerClients)+1)
+	for i, client := range sys.peerClients {
+		if client == nil {
+			continue
+		}
+		readers[i], err = client.WalkDir(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	r, err := walkDirLocalMetacacheReader(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	readers[len(readers)-1] = r
+	return readers, nil
 }
 
 // newPeerS3Clients creates new peer clients.

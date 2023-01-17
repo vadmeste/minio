@@ -21,9 +21,12 @@ import (
 	"context"
 	"encoding/gob"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
+	"sync"
 
+	"github.com/dustin/go-humanize"
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/minio/internal/sync/errgroup"
 	"github.com/minio/mux"
@@ -43,6 +46,7 @@ const (
 	peerS3MethodGetBucketInfo = "/get-bucket-info"
 	peerS3MethodDeleteBucket  = "/delete-bucket"
 	peerS3MethodListBuckets   = "/list-buckets"
+	peerS3MethodWalkDir       = "/walk-dir"
 )
 
 const (
@@ -312,6 +316,86 @@ func (s *peerS3Server) MakeBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// WalkDir implements peer walk-dir call.
+func (s *peerS3Server) WalkDirHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.IsValid(w, r) {
+		return
+	}
+
+	opts := WalkDirOptions{}
+
+	dec := msgpNewReader(io.LimitReader(r.Body, 1000*humanize.KiByte))
+	err := opts.DecodeMsg(dec)
+	readMsgpReaderPool.Put(dec)
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+
+	localDisks := newObjectLayerFn().LocalDisks()
+
+	// Use a small block size to start sending quickly
+	wr := newMetacacheWriter(w, len(localDisks), 16<<10)
+	wr.reuseBlocks = true // We are not sharing results, so reuse buffers.
+	defer wr.Close()
+	out, err := wr.stream()
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+	defer close(out)
+
+	err = walkDirLocal(r.Context(), localDisks, opts, out)
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+}
+
+func walkDirLocal(ctx context.Context, disks []StorageAPI, opts WalkDirOptions, out chan<- metaCacheEntry) error {
+	var wg sync.WaitGroup
+	for _, disk := range disks {
+		wg.Add(1)
+		go func(d StorageAPI) {
+			defer wg.Done()
+			werr := d.WalkDir(ctx, opts, out)
+			logger.LogIf(ctx, werr)
+		}(disk)
+	}
+	wg.Wait()
+
+	return nil
+}
+
+func walkDirLocalMetacacheReader(ctx context.Context, opts WalkDirOptions) (*metacacheReader, error) {
+	obj := newObjectLayerFn()
+	if obj == nil {
+		return nil, errServerNotInitialized
+	}
+
+	localDisks := obj.LocalDisks()
+
+	r, w := io.Pipe()
+
+	// Use a small block size to start sending quickly
+	wr := newMetacacheWriter(w, len(localDisks), 16<<10)
+	wr.reuseBlocks = true // We are not sharing results, so reuse buffers.
+	// defer wr.Close() //FIXME: when shall I close
+	out, err := wr.stream()
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		err := walkDirLocal(ctx, localDisks, opts, out)
+		logger.LogIf(ctx, err)
+		close(out)
+		wr.Close()
+		w.Close()
+	}()
+
+	return newMetacacheReader(r), nil
+}
+
 // registerPeerS3Handlers - register peer s3 router.
 func registerPeerS3Handlers(router *mux.Router) {
 	server := &peerS3Server{}
@@ -322,4 +406,5 @@ func registerPeerS3Handlers(router *mux.Router) {
 	subrouter.Methods(http.MethodPost).Path(peerS3VersionPrefix + peerS3MethodDeleteBucket).HandlerFunc(httpTraceHdrs(server.DeleteBucketHandler))
 	subrouter.Methods(http.MethodPost).Path(peerS3VersionPrefix + peerS3MethodGetBucketInfo).HandlerFunc(httpTraceHdrs(server.GetBucketInfoHandler))
 	subrouter.Methods(http.MethodPost).Path(peerS3VersionPrefix + peerS3MethodListBuckets).HandlerFunc(httpTraceHdrs(server.ListBucketsHandler))
+	subrouter.Methods(http.MethodPost).Path(peerS3VersionPrefix + peerS3MethodWalkDir).HandlerFunc(httpTraceHdrs(server.WalkDirHandler))
 }

@@ -1849,7 +1849,6 @@ func (z *erasureServerPools) Walk(ctx context.Context, bucket, prefix string, re
 						forwardTo:      opts.WalkMarker,
 						minDisks:       1,
 						reportNotFound: false,
-						agreed:         loadEntry,
 						partial: func(entries metaCacheEntries, _ []error) {
 							entry, ok := entries.resolve(&resolver)
 							if !ok {
@@ -1912,12 +1911,6 @@ func listAndHeal(ctx context.Context, bucket, prefix string, set *erasureObjects
 		forwardTo:      "",
 		minDisks:       1,
 		reportNotFound: false,
-		agreed: func(entry metaCacheEntry) {
-			if err := healEntry(bucket, entry); err != nil {
-				logger.LogIf(ctx, err)
-				cancel()
-			}
-		},
 		partial: func(entries metaCacheEntries, _ []error) {
 			entry, ok := entries.resolve(&resolver)
 			if !ok {
@@ -2349,4 +2342,21 @@ func (z *erasureServerPools) CheckAbandonedParts(ctx context.Context, bucket, ob
 		return err
 	}
 	return nil
+}
+
+func (z *erasureServerPools) LocalDisks() []StorageAPI {
+	localDisks := make([]StorageAPI, 0)
+	for p := range z.serverPools {
+		for s := range z.serverPools[p].sets {
+			for _, d := range z.serverPools[p].sets[s].getDisks() {
+				if d == nil {
+					continue
+				}
+				if d.IsLocal() {
+					localDisks = append(localDisks, d)
+				}
+			}
+		}
+	}
+	return localDisks
 }

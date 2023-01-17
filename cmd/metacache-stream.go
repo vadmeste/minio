@@ -45,6 +45,7 @@ import (
 //
 // For each element:
 // 1. Bool. If false at end of stream.
+// 2. Pool/Set/Disk indexes, uint32 for each
 // 2. String. Name of object. Directories contains a trailing slash.
 // 3. Binary. Blob of metadata. Length 0 on directories.
 // ... Next element.
@@ -52,7 +53,7 @@ import (
 // Streams can be assumed to be sorted in ascending order.
 // If the stream ends before a false boolean it can be assumed it was truncated.
 
-const metacacheStreamVersion = 2
+const metacacheStreamVersion = 3
 
 // metacacheWriter provides a serializer of metacache objects.
 type metacacheWriter struct {
@@ -68,7 +69,7 @@ type metacacheWriter struct {
 // newMetacacheWriter will create a serializer that will write objects in given order to the output.
 // Provide a block size that affects latency. If 0 a default of 128KiB will be used.
 // Block size can be up to 4MiB.
-func newMetacacheWriter(out io.Writer, blockSize int) *metacacheWriter {
+func newMetacacheWriter(out io.Writer, channels int, blockSize int) *metacacheWriter {
 	if blockSize < 8<<10 {
 		blockSize = 128 << 10
 	}
@@ -83,7 +84,9 @@ func newMetacacheWriter(out io.Writer, blockSize int) *metacacheWriter {
 		if err := w.mw.WriteByte(metacacheStreamVersion); err != nil {
 			return err
 		}
-
+		if err := w.mw.WriteInt(channels); err != nil {
+			return err
+		}
 		w.closer = func() (err error) {
 			defer func() {
 				cerr := s2w.Close()
@@ -247,7 +250,9 @@ type metacacheReader struct {
 	current metaCacheEntry
 	err     error // stateful error
 	closer  func()
-	creator func() error
+	creator func() (int, error)
+
+	channels int
 }
 
 // newMetacacheReader creates a new cache reader.
@@ -262,17 +267,20 @@ func newMetacacheReader(r io.Reader) *metacacheReader {
 			dec.Reset(nil)
 			s2DecPool.Put(dec)
 		},
-		creator: func() error {
+		creator: func() (int, error) {
 			v, err := mr.ReadByte()
 			if err != nil {
-				return err
+				return 0, err
 			}
 			switch v {
 			case 1, 2:
+				return 1, nil
+			case 3:
+				// Return the number of channels or any error
+				return mr.ReadInt()
 			default:
-				return fmt.Errorf("metacacheReader: Unknown version: %d", v)
+				return 0, fmt.Errorf("metacacheReader: Unknown version: %d", v)
 			}
-			return nil
 		},
 	}
 }
@@ -281,8 +289,13 @@ func (r *metacacheReader) checkInit() {
 	if r.creator == nil || r.err != nil {
 		return
 	}
-	r.err = r.creator()
+	r.channels, r.err = r.creator()
 	r.creator = nil
+
+}
+
+func (r *metacacheReader) getChannels() int {
+	return r.channels
 }
 
 // peek will return the name of the next object.
@@ -767,7 +780,7 @@ type metacacheBlockWriter struct {
 // newMetacacheBlockWriter provides a streaming block writer.
 // Each block is the size of the capacity of the input channel.
 // The caller should close to indicate the stream has ended.
-func newMetacacheBlockWriter(in <-chan metaCacheEntry, nextBlock func(b *metacacheBlock) error) *metacacheBlockWriter {
+func newMetacacheBlockWriter(channels int, in <-chan metaCacheEntry, nextBlock func(b *metacacheBlock) error) *metacacheBlockWriter {
 	w := metacacheBlockWriter{blockEntries: cap(in)}
 	w.wg.Add(1)
 	go func() {
@@ -781,7 +794,7 @@ func newMetacacheBlockWriter(in <-chan metaCacheEntry, nextBlock func(b *metacac
 			bytebufferpool.Put(buf)
 		}()
 
-		block := newMetacacheWriter(buf, 1<<20)
+		block := newMetacacheWriter(buf, channels, 1<<20)
 		defer block.Close()
 		finishBlock := func() {
 			if err := block.Close(); err != nil {

@@ -158,11 +158,11 @@ func (d *naughtyDisk) DeleteVol(ctx context.Context, volume string, forceDelete 
 	return d.disk.DeleteVol(ctx, volume, forceDelete)
 }
 
-func (d *naughtyDisk) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) error {
+func (d *naughtyDisk) WalkDir(ctx context.Context, opts WalkDirOptions, out chan<- metaCacheEntry) error {
 	if err := d.calcError(); err != nil {
 		return err
 	}
-	return d.disk.WalkDir(ctx, opts, wr)
+	return d.disk.WalkDir(ctx, opts, out)
 }
 
 func (d *naughtyDisk) ListDir(ctx context.Context, volume, dirPath string, count int) (entries []string, err error) {

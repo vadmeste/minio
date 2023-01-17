@@ -642,12 +642,6 @@ func (er *erasureObjects) listPath(ctx context.Context, o listPathOptions, resul
 		minDisks:      listingQuorum,
 		forwardTo:     o.Marker,
 		perDiskLimit:  limit,
-		agreed: func(entry metaCacheEntry) {
-			select {
-			case <-ctxDone:
-			case results <- entry:
-			}
-		},
 		partial: func(entries metaCacheEntries, errs []error) {
 			// Results Disagree :-(
 			entry, ok := entries.resolve(&resolver)
@@ -739,7 +733,7 @@ func (er *erasureObjects) saveMetaCacheStream(ctx context.Context, mc *metaCache
 
 	// Keep destination...
 	// Write results to disk.
-	bw := newMetacacheBlockWriter(entries, func(b *metacacheBlock) error {
+	bw := newMetacacheBlockWriter(1, entries, func(b *metacacheBlock) error {
 		// if the block is 0 bytes and its a first block skip it.
 		// skip only this for Transient caches.
 		if len(b.data) == 0 && b.n == 0 && o.Transient {
@@ -814,8 +808,9 @@ func (er *erasureObjects) saveMetaCacheStream(ctx context.Context, mc *metaCache
 type listPathRawOptions struct {
 	disks         []StorageAPI
 	fallbackDisks []StorageAPI
-	bucket, path  string
-	recursive     bool
+
+	bucket, path string
+	recursive    bool
 
 	// Only return results with this prefix.
 	filterPrefix string
@@ -835,9 +830,6 @@ type listPathRawOptions struct {
 	// Callbacks with results:
 	// If set to nil, it will not be called.
 
-	// agreed is called if all disks agreed.
-	agreed func(entry metaCacheEntry)
-
 	// partial will be called when there is disagreement between disks.
 	// if disk did not return any result, but also haven't errored
 	// the entry will be empty and errs will
@@ -849,6 +841,7 @@ type listPathRawOptions struct {
 	finished func(errs []error)
 }
 
+/*
 // listPathRaw will list a path on the provided drives.
 // See listPathRawOptions on how results are delivered.
 // Directories are always returned.
@@ -1058,6 +1051,184 @@ func listPathRaw(ctx context.Context, opts listPathRawOptions) (err error) {
 				opts.agreed(current)
 			}
 			continue
+		}
+		if opts.partial != nil {
+			opts.partial(topEntries, errs)
+		}
+		// Skip the inputs we used.
+		for i, r := range readers {
+			if topEntries[i].name != "" {
+				r.skip(1)
+			}
+		}
+	}
+	return nil
+}
+*/
+
+type listStream interface {
+	peek()
+	skip(int)
+}
+
+type metacacheEntryDemultiplexer struct {
+	r     *metacacheReader
+	index int
+}
+
+func (md metacacheEntryDemultiplexer) peek() (metaCacheEntry, error) {
+}
+
+func (md metacacheEntryDemultiplexer) skip(i int) {
+}
+
+func newDemultiplexer(readers []*metacacheReader) []listStream {
+	total := 0
+	for _, r := range readers {
+		if r == nil {
+			continue
+		}
+		total += r.getChannels()
+	}
+	streams := make([]listStream, totalStreams)
+	for _, r := range readers {
+		if r == nil {
+			continue
+		}
+		for i := range r.getChannels() {
+			streams = append(streams, metacacheEntryDemultiplexer{index: i, reader: r})
+		}
+	}
+}
+
+// listPathRaw will list a path on the provided drives.
+// See listPathRawOptions on how results are delivered.
+// Directories are always returned.
+// Cache will be bypassed.
+// Context cancellation will be respected but may take a while to effectuate.
+func listPathRaw(ctx context.Context, opts listPathRawOptions) (err error) {
+
+	z, ok := newObjectLayerFn().(*erasureServerPools)
+	if !ok {
+		return errServerNotInitialized
+	}
+
+	wopts := WalkDirOptions{
+		Limit:          opts.perDiskLimit,
+		Bucket:         opts.bucket,
+		BaseDir:        opts.path,
+		Recursive:      opts.recursive,
+		ReportNotFound: opts.reportNotFound,
+		FilterPrefix:   opts.filterPrefix,
+		ForwardTo:      opts.forwardTo,
+	}
+
+	streams, err := z.s3Peer.WalkDir(ctx, wopts)
+	if err != nil {
+		return err
+	}
+
+	readers := newDemultiplexer(streams)
+
+	topEntries := make(metaCacheEntries, len(readers))
+	errs := make([]error, len(readers))
+	for {
+		// Get the top entry from each
+		var current metaCacheEntry
+		var atEOF, fnf, hasErr, agree int
+		for i := range topEntries {
+			topEntries[i] = metaCacheEntry{}
+		}
+		if contextCanceled(ctx) {
+			return ctx.Err()
+		}
+		for i, r := range readers {
+			if errs[i] != nil {
+				hasErr++
+				continue
+			}
+			entry, err := r.peek()
+			switch err {
+			case io.EOF:
+				atEOF++
+				continue
+			case nil:
+			default:
+				switch err.Error() {
+				case errFileNotFound.Error(),
+					errVolumeNotFound.Error(),
+					errUnformattedDisk.Error(),
+					errDiskNotFound.Error():
+					atEOF++
+					fnf++
+					continue
+				}
+				hasErr++
+				errs[i] = err
+				continue
+			}
+			// If no current, add it.
+			if current.name == "" {
+				topEntries[i] = entry
+				current = entry
+				agree++
+				continue
+			}
+			// If exact match, we agree.
+			if _, ok := current.matches(&entry, true); ok {
+				topEntries[i] = entry
+				agree++
+				continue
+			}
+			// If only the name matches we didn't agree, but add it for resolution.
+			if entry.name == current.name {
+				topEntries[i] = entry
+				continue
+			}
+			// We got different entries
+			if entry.name > current.name {
+				continue
+			}
+			// We got a new, better current.
+			// Clear existing entries.
+			for i := range topEntries[:i] {
+				topEntries[i] = metaCacheEntry{}
+			}
+			agree = 1
+			current = entry
+			topEntries[i] = entry
+		}
+
+		/* FIXME: check for errors
+		// Stop if we exceed number of bad disks
+		if hasErr > len(disks)-opts.minDisks && hasErr > 0 {
+			if opts.finished != nil {
+				opts.finished(errs)
+			}
+			var combinedErr []string
+			for i, err := range errs {
+				if err != nil {
+					if disks[i] != nil {
+						combinedErr = append(combinedErr,
+							fmt.Sprintf("drive %s returned: %s", disks[i], err))
+					} else {
+						combinedErr = append(combinedErr, err.Error())
+					}
+				}
+			}
+			return errors.New(strings.Join(combinedErr, ", "))
+		}
+		*/
+
+		// Break if all at EOF or error.
+		if atEOF+hasErr == len(readers) {
+			if hasErr > 0 && opts.finished != nil {
+				opts.finished(errs)
+			}
+			break
+		}
+		if fnf == len(readers) {
+			return errFileNotFound
 		}
 		if opts.partial != nil {
 			opts.partial(topEntries, errs)

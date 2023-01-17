@@ -152,7 +152,7 @@ func newFormatErasureV3(numSets int, setLen int) *formatErasureV3 {
 	if setLen == 1 {
 		format.Format = formatBackendErasureSingle
 	}
-	format.ID = mustGetUUID()
+	format.ID = "649d6fd9-1fa5-4c84-8b5e-95edbde30f21" // mustGetUUID()
 	format.Erasure.Version = formatErasureVersionV3
 	format.Erasure.DistributionAlgo = formatErasureVersionV3DistributionAlgoV3
 	format.Erasure.Sets = make([][]string, numSets)

@@ -76,7 +76,7 @@ type StorageAPI interface {
 	DeleteVol(ctx context.Context, volume string, forceDelete bool) (err error)
 
 	// WalkDir will walk a directory on disk and return a metacache stream on wr.
-	WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) error
+	WalkDir(ctx context.Context, opts WalkDirOptions, out chan<- metaCacheEntry) error
 
 	// Metadata operations
 	DeleteVersion(ctx context.Context, volume, path string, fi FileInfo, forceDelMarker bool) error
@@ -115,7 +115,7 @@ type unrecognizedDisk struct {
 	storage StorageAPI
 }
 
-func (p *unrecognizedDisk) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writer) (err error) {
+func (p *unrecognizedDisk) WalkDir(ctx context.Context, opts WalkDirOptions, out chan<- metaCacheEntry) (err error) {
 	return errDiskNotFound
 }
 
