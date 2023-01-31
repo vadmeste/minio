@@ -353,12 +353,43 @@ func (s *peerS3Server) WalkDirHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func walkDirLocal(ctx context.Context, disks []StorageAPI, opts WalkDirOptions, out chan<- metaCacheEntry) error {
+
+	outs := make([]chan<- metaCacheEntry, len(disks))
+	go func() {
+		m := make([]*metaCacheEntry, len(outs))
+		for {
+			var closed int
+			for i := 0; i < len(outs); i++ {
+				entry, ok := <-outs[i]
+				if ok {
+					m[i] = &entry
+				} else {
+					m[i] = nil
+					closed++
+				}
+			}
+
+			if closed == len(outs) {
+				return
+			}
+
+			for i := 0; i < len(m); i++ {
+				if m[i] != nil {
+					out <- *m[i]
+				} else {
+					out <- metaCacheEntry
+				}
+			}
+		}
+	}()
+
 	var wg sync.WaitGroup
-	for _, disk := range disks {
+	for idx, disk := range disks {
+		idx := idx
 		wg.Add(1)
 		go func(d StorageAPI) {
 			defer wg.Done()
-			werr := d.WalkDir(ctx, opts, out)
+			werr := d.WalkDir(ctx, opts, outs[idx])
 			logger.LogIf(ctx, werr)
 		}(disk)
 	}

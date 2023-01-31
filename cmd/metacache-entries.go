@@ -33,7 +33,8 @@ import (
 // metaCacheEntry is an object or a directory within an unknown bucket.
 type metaCacheEntry struct {
 	// name is the full name of the object including prefixes
-	name string
+	name, version string
+
 	// Metadata. If none is present it is not an object but only a prefix.
 	// Entries without metadata will only be present in non-recursive scans.
 	metadata []byte
@@ -41,8 +42,13 @@ type metaCacheEntry struct {
 	// cached contains the metadata if decoded.
 	cached *xlMetaV2
 
+	// Pool, set and disk indexes
+	p, s, d int
+
 	// Indicates the entry can be reused and only one reference to metadata is expected.
 	reusable bool
+
+	valid bool
 }
 
 // isDir returns if the entry is representing a prefix directory.

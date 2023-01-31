@@ -62,6 +62,7 @@ type metacacheWriter struct {
 	creator     func() error
 	closer      func() error
 	blockSize   int
+	channels    int
 	streamWg    sync.WaitGroup
 	reuseBlocks bool
 }
@@ -75,6 +76,7 @@ func newMetacacheWriter(out io.Writer, channels int, blockSize int) *metacacheWr
 	}
 	w := metacacheWriter{
 		mw:        nil,
+		channels:  channels,
 		blockSize: blockSize,
 	}
 	w.creator = func() error {
@@ -84,7 +86,7 @@ func newMetacacheWriter(out io.Writer, channels int, blockSize int) *metacacheWr
 		if err := w.mw.WriteByte(metacacheStreamVersion); err != nil {
 			return err
 		}
-		if err := w.mw.WriteInt(channels); err != nil {
+		if err := w.mw.WriteInt(w.channels); err != nil {
 			return err
 		}
 		w.closer = func() (err error) {
@@ -136,6 +138,13 @@ func (w *metacacheWriter) write(objs ...metaCacheEntry) error {
 		if err != nil {
 			return err
 		}
+		// Send object location
+		for _, idx := range []int{o.p, o.s, o.d} {
+			err = w.mw.WriteInt(idx)
+			if err != nil {
+				return err
+			}
+		}
 		err = w.mw.WriteString(o.name)
 		if err != nil {
 			return err
@@ -181,6 +190,12 @@ func (w *metacacheWriter) stream() (chan<- metaCacheEntry, error) {
 				w.streamErr = err
 				continue
 			}
+			for _, idx := range []int{o.p, o.s, o.d} {
+				err = w.mw.WriteInt(idx)
+				if err != nil {
+					return err
+				}
+			}
 			err = w.mw.WriteString(o.name)
 			if err != nil {
 				w.streamErr = err
@@ -222,12 +237,18 @@ func (w *metacacheWriter) Reset(out io.Writer) {
 		if err := w.mw.WriteByte(metacacheStreamVersion); err != nil {
 			return err
 		}
+		if err := w.mw.WriteInt(channels); err != nil {
+			return err
+		}
 
 		w.closer = func() error {
 			if w.streamErr != nil {
 				return w.streamErr
 			}
 			if err := w.mw.WriteBool(false); err != nil {
+				return err
+			}
+			if err := w.mw.WriteInt(w.channels); err != nil {
 				return err
 			}
 			if err := w.mw.Flush(); err != nil {
@@ -298,6 +319,18 @@ func (r *metacacheReader) getChannels() int {
 	return r.channels
 }
 
+func (r *metacacheReader) readDiskLocHelper() (int, int, int, error) {
+	var err error
+	var ints = make([]int, 3)
+	for i := range ints {
+		ints[i], err = r.mr.ReadInt()
+		if err != nil {
+			return 0, 0, 0, err
+		}
+	}
+	return ints[0], ints[1], ints[2], nil
+}
+
 // peek will return the name of the next object.
 // Will return io.EOF if there are no more objects.
 // Should be used sparingly.
@@ -323,7 +356,7 @@ func (r *metacacheReader) peek() (metaCacheEntry, error) {
 	}
 
 	var err error
-	if r.current.name, err = r.mr.ReadString(); err != nil {
+	if r.current.p, r.current.s, r.current.d, err = r.readDiskLocHelper(); err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
@@ -349,9 +382,11 @@ func (r *metacacheReader) next() (metaCacheEntry, error) {
 	var err error
 	if r.current.name != "" {
 		m.name = r.current.name
+		m.p, m.s, m.d = m.current.p, m.current.s, m.current.d
 		m.metadata = r.current.metadata
 		r.current.name = ""
 		r.current.metadata = nil
+		m.current.p, m.current.s, m.current.d = -1, -1, -1
 		return m, nil
 	}
 	if more, err := r.mr.ReadBool(); !more {
@@ -365,6 +400,13 @@ func (r *metacacheReader) next() (metaCacheEntry, error) {
 		}
 		r.err = err
 		return m, err
+	}
+	if m.p, m.s, m.d, err = r.readDiskLocHelper(); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		r.err = err
+		return metaCacheEntry{}, err
 	}
 	if m.name, err = r.mr.ReadString(); err != nil {
 		if err == io.EOF {
@@ -420,6 +462,7 @@ func (r *metacacheReader) forwardTo(s string) error {
 		}
 		r.current.name = ""
 		r.current.metadata = nil
+		r.current.p, r.current.s, r.current.d = -1, -1, -1
 	}
 	// temporary name buffer.
 	tmp := make([]byte, 0, 256)
@@ -433,6 +476,11 @@ func (r *metacacheReader) forwardTo(s string) error {
 				r.err = io.ErrUnexpectedEOF
 				return io.ErrUnexpectedEOF
 			}
+			r.err = err
+			return err
+		}
+		_, _, _, err := r.readDiskLocHelper()
+		if err != nil {
 			r.err = err
 			return err
 		}
@@ -504,6 +552,7 @@ func (r *metacacheReader) readN(n int, inclDeleted, inclDirs, inclVersions bool,
 			res = append(res, r.current)
 		}
 		r.current.name = ""
+		r.current.p, r.current.s, r.current.d = -1, -1, -1
 		r.current.metadata = nil
 	}
 
@@ -522,6 +571,13 @@ func (r *metacacheReader) readN(n int, inclDeleted, inclDirs, inclVersions bool,
 		}
 		var err error
 		var meta metaCacheEntry
+		if meta.p, meta.s, meta.d, err = r.readDiskLocHelper(); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			r.err = err
+			return metaCacheEntriesSorted{o: res}, err
+		}
 		if meta.name, err = r.mr.ReadString(); err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
@@ -571,6 +627,7 @@ func (r *metacacheReader) readAll(ctx context.Context, dst chan<- metaCacheEntry
 		case dst <- r.current:
 		}
 		r.current.name = ""
+		r.current.p, r.current.s, r.current.d = -1, -1, -1
 		r.current.metadata = nil
 	}
 	for {
@@ -585,6 +642,13 @@ func (r *metacacheReader) readAll(ctx context.Context, dst chan<- metaCacheEntry
 
 		var err error
 		var meta metaCacheEntry
+		if meta.p, meta.s, meta.d, err = r.readDiskLocHelper(); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			r.err = err
+			return err
+		}
 		if meta.name, err = r.mr.ReadString(); err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
@@ -623,6 +687,7 @@ func (r *metacacheReader) readFn(fn func(entry metaCacheEntry) bool) error {
 	if r.current.name != "" {
 		fn(r.current)
 		r.current.name = ""
+		r.current.p, r.current.s, r.current.d = -1, -1, -1
 		r.current.metadata = nil
 	}
 	for {
@@ -640,6 +705,13 @@ func (r *metacacheReader) readFn(fn func(entry metaCacheEntry) bool) error {
 
 		var err error
 		var meta metaCacheEntry
+		if meta.p, meta.s, meta.d, err = r.readDiskLocHelper(); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			r.err = err
+			return err
+		}
 		if meta.name, err = r.mr.ReadString(); err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
@@ -678,6 +750,7 @@ func (r *metacacheReader) readNames(n int) ([]string, error) {
 	}
 	if r.current.name != "" {
 		res = append(res, r.current.name)
+		r.current.p, r.current.s, r.current.d = -1, -1, -1
 		r.current.name = ""
 		r.current.metadata = nil
 	}
@@ -695,6 +768,16 @@ func (r *metacacheReader) readNames(n int) ([]string, error) {
 		}
 
 		var err error
+		// Skip the disk location (p, s, d)
+		for i := 0; i < 3; i++ {
+			if err = r.mr.Skip(); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return res, err
+			}
+		}
 		var name string
 		if name, err = r.mr.ReadString(); err != nil {
 			r.err = err
@@ -724,6 +807,7 @@ func (r *metacacheReader) skip(n int) error {
 	}
 	if r.current.name != "" {
 		n--
+		r.current.p, c.current.s, r.current.d = -1, -1, -1
 		r.current.name = ""
 		r.current.metadata = nil
 	}
@@ -740,19 +824,15 @@ func (r *metacacheReader) skip(n int) error {
 			return err
 		}
 
-		if err := r.mr.Skip(); err != nil {
-			if err == io.EOF {
-				err = io.ErrUnexpectedEOF
+		// Skip disk locations (p, s, d), name and meta
+		for i := 0; i < 5; i++ {
+			if err := r.mr.Skip(); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
 			}
-			r.err = err
-			return err
-		}
-		if err := r.mr.Skip(); err != nil {
-			if err == io.EOF {
-				err = io.ErrUnexpectedEOF
-			}
-			r.err = err
-			return err
 		}
 		n--
 	}

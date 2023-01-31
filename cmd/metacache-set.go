@@ -1066,39 +1066,105 @@ func listPathRaw(ctx context.Context, opts listPathRawOptions) (err error) {
 }
 */
 
-type listStream interface {
-	peek()
-	skip(int)
+type metaCacheResult struct {
+	entry metaCacheEntry
+	err   error
+
+	valid bool
 }
+
+/*
+type metaCacheResultChan struct {
+	in <-chan metaCacheResult
+	v  metaCacheResult
+	ok bool
+}
+
+func newMetaCacheResultChan(in <-chan metaCacheResult) *metaCacheResultChan {
+	return &metaCacheResultChan{in: in}
+}
+
+func (p *metaCacheResultChan) peek() (metaCacheResult, bool) {
+	if !p.ok {
+		p.v, p.ok = <-p.in
+	}
+	return p.v, p.ok
+}
+
+func (p *metaCacheResultChan) skip() bool {
+	if p.ok {
+		p.ok = false
+		return p.v, true
+	}
+	v, ok := <-p.in
+	return v, ok
+}
+*/
 
 type metacacheEntryDemultiplexer struct {
-	r     *metacacheReader
-	index int
+	reader *metacacheReader
+	mu     sync.Mutex
+
+	chans map[poolSetDisk]*metaCacheResult
 }
 
-func (md metacacheEntryDemultiplexer) peek() (metaCacheEntry, error) {
+func (md metacacheEntryDemultiplexer) refreshPeek() (metaCacheEntry, error) {
+	for k, v := range md.chans {
+		if v == nil {
+		}
+	}
+}
+
+func (md metacacheEntryDemultiplexer) peek(idx int) (metaCacheEntry, error) {
+	md.Lock()
+	defer md.Lock()
+
+	_, ok := chans[idx]
+	if !ok {
+		md.refreshPeek()
+	}
+
+	_, ok = chans[idx]
 }
 
 func (md metacacheEntryDemultiplexer) skip(i int) {
 }
 
-func newDemultiplexer(readers []*metacacheReader) []listStream {
-	total := 0
+func (md metacacheEntryDemultiplexer) getChannel(index int) listStream {
+	return demu.chans[index]
+}
+
+type listStream struct {
+	parent *metacacheEntryDemultiplexer
+	i      int
+}
+
+func (s listStream) peek() (metacacheEntry, bool) {
+	return s.reader.peek(s.i)
+}
+
+type poolSetDisk struct {
+	pool, set, disk int
+}
+
+func newMetacacheEntryDemultiplexer(r *metacacheReader) metacacheEntryDemultiplexer {
+	demu := metacacheEntryDemultiplexer{reader: r}
+	demu.chans = make(map[poolSetDisk]chan metaCacheResult)
+	return demu
+}
+
+func newWalkDemultiplexer(readers []*metacacheReader) []listStream {
+	var streams []listStream
 	for _, r := range readers {
 		if r == nil {
 			continue
 		}
-		total += r.getChannels()
-	}
-	streams := make([]listStream, totalStreams)
-	for _, r := range readers {
-		if r == nil {
-			continue
-		}
+		demu := newMetacacheEntryDemultiplexer(r)
 		for i := range r.getChannels() {
-			streams = append(streams, metacacheEntryDemultiplexer{index: i, reader: r})
+			streams = append(streams, demu.getChannel(i))
 		}
 	}
+	return streams
 }
 
 // listPathRaw will list a path on the provided drives.
@@ -1128,7 +1194,7 @@ func listPathRaw(ctx context.Context, opts listPathRawOptions) (err error) {
 		return err
 	}
 
-	readers := newDemultiplexer(streams)
+	readers := newWalkDemultiplexer(streams)
 
 	topEntries := make(metaCacheEntries, len(readers))
 	errs := make([]error, len(readers))
