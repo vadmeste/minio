@@ -189,8 +189,15 @@ func connectLoadInitFormats(verboseLogging bool, firstDisk bool, storageDisks []
 		return nil, err
 	}
 
+	// Return error when quorum unformatted disks - indicating we are
+	// waiting for first server to be online.
+	unformattedDisks := quorumUnformattedDisks(sErrs)
+	if unformattedDisks && !firstDisk {
+		return nil, errNotFirstDisk
+	}
+
 	// All disks report unformatted we should initialized everyone.
-	if shouldInitErasureDisks(sErrs) && firstDisk {
+	if unformattedDisks && firstDisk {
 		logger.Info("Formatting %s pool, %v set(s), %v drives per set.",
 			humanize.Ordinal(poolCount), setCount, setDriveCount)
 
@@ -201,19 +208,6 @@ func connectLoadInitFormats(verboseLogging bool, firstDisk bool, storageDisks []
 		}
 
 		return format, nil
-	}
-
-	// Return error when quorum unformatted disks - indicating we are
-	// waiting for first server to be online.
-	unformattedDisks := quorumUnformattedDisks(sErrs)
-	if unformattedDisks && !firstDisk {
-		return nil, errNotFirstDisk
-	}
-
-	// Return error when quorum unformatted disks but waiting for rest
-	// of the servers to be online.
-	if unformattedDisks && firstDisk {
-		return nil, errFirstDiskWait
 	}
 
 	format, err = getFormatErasureInQuorum(formatConfigs)
