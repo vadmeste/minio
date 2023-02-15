@@ -18,9 +18,12 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 )
@@ -56,6 +59,14 @@ func NewResponseRecorder(w http.ResponseWriter) *ResponseRecorder {
 		StatusCode:     http.StatusOK,
 		StartTime:      time.Now().UTC(),
 	}
+}
+
+func (lrw *ResponseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := lrw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("hijack not supported")
+	}
+	return h.Hijack()
 }
 
 func (lrw *ResponseRecorder) Write(p []byte) (int, error) {

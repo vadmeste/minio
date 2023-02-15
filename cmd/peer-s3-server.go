@@ -21,12 +21,17 @@ import (
 	"context"
 	"encoding/gob"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"runtime/debug"
 	"sort"
+	"strconv"
 
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/minio/internal/sync/errgroup"
 	"github.com/minio/mux"
+	"github.com/minio/websocket"
 )
 
 const (
@@ -43,6 +48,7 @@ const (
 	peerS3MethodGetBucketInfo = "/get-bucket-info"
 	peerS3MethodDeleteBucket  = "/delete-bucket"
 	peerS3MethodListBuckets   = "/list-buckets"
+	peerS3MethodWalkDirs      = "/walk-dirs"
 )
 
 const (
@@ -250,6 +256,103 @@ func makeBucketLocal(ctx context.Context, bucket string, opts MakeBucketOptions)
 	return reduceWriteQuorumErrs(ctx, errs, bucketOpIgnoredErrs, (len(globalLocalDrives)/2)+1)
 }
 
+var upgrader = websocket.Upgrader{}
+
+func (s *peerS3Server) WalkDirsHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.IsValid(w, r) {
+		return
+	}
+
+	c, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer c.Close()
+
+	pool, err := strconv.Atoi(r.Header.Get(storagePeerPool))
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+
+	set, err := strconv.Atoi(r.Header.Get(storagePeerSet))
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+
+	disk, err := strconv.Atoi(r.Header.Get(storagePeerDisk))
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+
+	volume := r.Header.Get(storagePeerVolume)
+	dirPath := r.Header.Get(storagePeerDirPath)
+	recursive, err := strconv.ParseBool(r.Header.Get(storagePeerRecursive))
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+
+	var reportNotFound bool
+	if v := r.Header.Get(storagePeerReportNotFound); v != "" {
+		reportNotFound, err = strconv.ParseBool(v)
+		if err != nil {
+			s.writeErrorResponse(w, err)
+			return
+		}
+	}
+
+	prefix := r.Header.Get(storagePeerPrefixFilter)
+	forward := r.Header.Get(storagePeerForwardFilter)
+
+	rd, wr := io.Pipe()
+	defer func() {
+		if r := recover(); r != nil {
+			debug.PrintStack()
+			wr.CloseWithError(fmt.Errorf("panic: %v", r))
+		}
+	}()
+
+	go func() {
+		z, ok := newObjectLayerFn().(*erasureServerPools)
+		if !ok {
+			wr.CloseWithError(errServerNotInitialized)
+			return
+		}
+
+		disk := z.serverPools[pool].sets[set].getDisks()[disk]
+		if disk == nil {
+			wr.CloseWithError(errDiskNotFound)
+			return
+		}
+
+		wr.CloseWithError(disk.WalkDir(r.Context(), WalkDirOptions{
+			Bucket:         volume,
+			BaseDir:        dirPath,
+			Recursive:      recursive,
+			ReportNotFound: reportNotFound,
+			FilterPrefix:   prefix,
+			ForwardTo:      forward,
+		}, wr))
+	}()
+
+	var p [128 * 1024]byte
+	// var id = pool<<32 ^ set<<16 ^ disk
+
+	for {
+		n, err := rd.Read(p[:])
+		if err != nil {
+			break
+		}
+		err = c.WriteMessage(2, p[:n])
+		if err != nil {
+			break
+		}
+	}
+}
+
 func (s *peerS3Server) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.IsValid(w, r) {
 		return
@@ -338,4 +441,6 @@ func registerPeerS3Handlers(router *mux.Router) {
 	subrouter.Methods(http.MethodPost).Path(peerS3VersionPrefix + peerS3MethodDeleteBucket).HandlerFunc(httpTraceHdrs(server.DeleteBucketHandler))
 	subrouter.Methods(http.MethodPost).Path(peerS3VersionPrefix + peerS3MethodGetBucketInfo).HandlerFunc(httpTraceHdrs(server.GetBucketInfoHandler))
 	subrouter.Methods(http.MethodPost).Path(peerS3VersionPrefix + peerS3MethodListBuckets).HandlerFunc(httpTraceHdrs(server.ListBucketsHandler))
+
+	subrouter.Methods(http.MethodGet).Path(peerS3VersionPrefix + peerS3MethodWalkDirs).HandlerFunc(server.WalkDirsHandler)
 }

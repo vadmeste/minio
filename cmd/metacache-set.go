@@ -835,8 +835,11 @@ func (er *erasureObjects) saveMetaCacheStream(ctx context.Context, mc *metaCache
 type listPathRawOptions struct {
 	disks         []StorageAPI
 	fallbackDisks []StorageAPI
-	bucket, path  string
-	recursive     bool
+
+	endpoints []string // For websocket listing
+
+	bucket, path string
+	recursive    bool
 
 	// Only return results with this prefix.
 	filterPrefix string
@@ -876,9 +879,22 @@ type listPathRawOptions struct {
 // Cache will be bypassed.
 // Context cancellation will be respected but may take a while to effectuate.
 func listPathRaw(ctx context.Context, opts listPathRawOptions) (err error) {
-	disks := opts.disks
-	if len(disks) == 0 {
+	if len(opts.disks) == 0 {
 		return fmt.Errorf("listPathRaw: 0 drives provided")
+	}
+
+	disks := make([]dirWalker, len(opts.disks))
+
+	for i, d := range opts.disks {
+		if !globalIsDistErasure || d.IsLocal() {
+			disks[i] = d
+		} else {
+			if dw, err := newWSDirWalker(d, opts); err == nil {
+				disks[i] = dw
+			} else {
+				return err
+			}
+		}
 	}
 
 	// Cancel upstream if we finish before we expect.
@@ -888,7 +904,7 @@ func listPathRaw(ctx context.Context, opts listPathRawOptions) (err error) {
 	// Keep track of fallback disks
 	var fdMu sync.Mutex
 	fds := opts.fallbackDisks
-	fallback := func(err error) StorageAPI {
+	fallback := func(err error) dirWalker {
 		if _, ok := err.(StorageErr); ok {
 			// Attempt to grab a fallback disk
 			fdMu.Lock()

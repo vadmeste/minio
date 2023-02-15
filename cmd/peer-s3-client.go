@@ -23,17 +23,32 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	xhttp "github.com/minio/minio/internal/http"
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/minio/internal/rest"
 	"github.com/minio/minio/internal/sync/errgroup"
 	xnet "github.com/minio/pkg/net"
+	"github.com/minio/websocket"
 )
 
 var errPeerOffline = errors.New("peer is offline")
+
+const (
+	storagePeerPool           = "pool"
+	storagePeerSet            = "set"
+	storagePeerDisk           = "disk"
+	storagePeerVolume         = "volume"
+	storagePeerDirPath        = "dir-path"
+	storagePeerRecursive      = "recursive"
+	storagePeerReportNotFound = "report-notfound"
+	storagePeerPrefixFilter   = "prefix"
+	storagePeerForwardFilter  = "forward"
+)
 
 // client to talk to peer Nodes.
 type peerS3Client struct {
@@ -277,6 +292,70 @@ func (client *peerS3Client) DeleteBucket(ctx context.Context, bucket string, opt
 	defer xhttp.DrainBody(respBody)
 
 	return nil
+}
+
+type wsDirWalker struct {
+	c           *websocket.Conn
+	initialized bool
+}
+
+func (wdw *wsDirWalker) WalkDir(ctx context.Context, opts WalkDirOptions, w io.Writer) error {
+	for {
+		_, message, err := wdw.c.ReadMessage()
+		if err != nil {
+			return err
+		}
+		if len(message) == 0 {
+			break
+		}
+		n, err := w.Write(message)
+		if err != nil {
+			return err
+		}
+		if n < len(message) {
+			return io.ErrUnexpectedEOF
+		}
+	}
+	return nil
+}
+
+func (wdw *wsDirWalker) IsOnline() bool {
+	return true
+}
+
+func newWSDirWalker(disk StorageAPI, opts listPathRawOptions) (*wsDirWalker, error) {
+	u, err := url.Parse(disk.Endpoint().String())
+	if err != nil {
+		return nil, err
+	}
+
+	hdrs := make(http.Header)
+
+	p, s, d := disk.GetDiskLoc()
+	hdrs.Set(storagePeerPool, strconv.Itoa(p))
+	hdrs.Set(storagePeerSet, strconv.Itoa(s))
+	hdrs.Set(storagePeerDisk, strconv.Itoa(d))
+	hdrs.Set(storagePeerVolume, opts.bucket)
+	hdrs.Set(storagePeerDirPath, opts.path)
+	hdrs.Set(storagePeerRecursive, strconv.FormatBool(opts.recursive))
+	hdrs.Set(storagePeerReportNotFound, strconv.FormatBool(opts.reportNotFound))
+	hdrs.Set(storagePeerPrefixFilter, opts.filterPrefix)
+	hdrs.Set(storagePeerForwardFilter, opts.forwardTo)
+
+	newAuthToken := newCachedAuthToken()
+	hdrs.Set("Authorization", "Bearer "+newAuthToken(""))
+	hdrs.Set("X-Minio-Time", time.Now().UTC().Format(time.RFC3339))
+
+	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://%s%s%s", u.Host, peerS3Path, peerS3MethodWalkDirs), hdrs)
+	if err != nil {
+		return nil, err
+	}
+	return &wsDirWalker{c: conn, initialized: true}, nil
+}
+
+type dirWalker interface {
+	IsOnline() bool
+	WalkDir(context.Context, WalkDirOptions, io.Writer) error
 }
 
 // newPeerS3Clients creates new peer clients.

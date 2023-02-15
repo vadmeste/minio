@@ -18,7 +18,10 @@
 package stats
 
 import (
+	"bufio"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 )
 
@@ -46,6 +49,14 @@ type OutgoingTrafficMeter struct {
 	countBytes int64
 	// wrapper for underlying http.ResponseWriter.
 	http.ResponseWriter
+}
+
+func (w *OutgoingTrafficMeter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("hijack not supported")
+	}
+	return h.Hijack()
 }
 
 // Write calls the underlying write and counts the output bytes
