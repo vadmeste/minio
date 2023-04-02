@@ -21,16 +21,21 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"runtime/pprof"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
+	"github.com/minio/console/pkg/logger"
+	"github.com/minio/minio/internal/handlers"
+	"github.com/minio/pkg/env"
 )
 
 var (
@@ -92,6 +97,15 @@ func (srv *Server) Start(ctx context.Context) (err error) {
 		return err
 	}
 
+	maxConnStr := env.Get("_MINIO_MAX_CONN_PER_HOST", "1024")
+	maxConn, err := strconv.Atoi(maxConnStr)
+	if err != nil {
+		return err
+	}
+
+	var mu sync.Mutex
+	var mapConns = make(map[string]int)
+
 	// Wrap given handler to do additional
 	// * return 503 (service unavailable) if the server in shutdown.
 	wrappedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,8 +121,28 @@ func (srv *Server) Start(ctx context.Context) (err error) {
 		atomic.AddInt32(&srv.requestCount, 1)
 		defer atomic.AddInt32(&srv.requestCount, -1)
 
+		remoteHost := handlers.GetSourceIP(r)
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		curConn, ok := mapConns[remoteHost]
+		if !ok {
+			mapConns[remoteHost] = 1
+		} else {
+			curConn++
+			mapConns[remoteHost] = curConn
+		}
+
+		if curConn > maxConn {
+			logger.LogOnceIf(ctx, fmt.Errorf("max connections higher than set maximum %d > %d: from %s, api: %s", curConn, maxConn, remoteHost, r.URL), remoteHost)
+		}
+
 		// Handle request using passed handler.
 		handler.ServeHTTP(w, r)
+
+		curConn--
+		mapConns[remoteHost] = curConn
 	})
 
 	srv.listenerMutex.Lock()

@@ -60,7 +60,9 @@ func (listener *httpListener) start() {
 			if tcpConn != nil {
 				tcpConn.SetKeepAlive(true)
 			}
-			send(acceptResult{tcpConn, err, idx})
+			if !send(acceptResult{tcpConn, err, idx}) {
+				return
+			}
 		}
 	}
 
