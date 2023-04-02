@@ -124,8 +124,6 @@ func (srv *Server) Start(ctx context.Context) (err error) {
 		remoteHost := handlers.GetSourceIP(r)
 
 		mu.Lock()
-		defer mu.Unlock()
-
 		curConn, ok := mapConns[remoteHost]
 		if !ok {
 			mapConns[remoteHost] = 1
@@ -133,6 +131,7 @@ func (srv *Server) Start(ctx context.Context) (err error) {
 			curConn++
 			mapConns[remoteHost] = curConn
 		}
+		mu.Unlock()
 
 		if curConn > maxConn {
 			logger.LogOnceIf(ctx, fmt.Errorf("max connections higher than set maximum %d > %d: from %s, api: %s", curConn, maxConn, remoteHost, r.URL), remoteHost)
@@ -142,7 +141,9 @@ func (srv *Server) Start(ctx context.Context) (err error) {
 		handler.ServeHTTP(w, r)
 
 		curConn--
+		mu.Lock()
 		mapConns[remoteHost] = curConn
+		mu.Unlock()
 	})
 
 	srv.listenerMutex.Lock()
