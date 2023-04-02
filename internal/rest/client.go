@@ -26,7 +26,9 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -315,6 +317,15 @@ func (c *Client) Close() {
 
 // NewClient - returns new REST client.
 func NewClient(url *url.URL, tr http.RoundTripper, newAuthToken func(aud string) string) *Client {
+	healthCheckInterval := 200 * time.Millisecond
+	if ri := os.Getenv("_MINIO_RECONNECT_RETRY_INTERVAL"); ri != "" {
+		v, err := strconv.Atoi(ri)
+		if err != nil {
+			panic(err)
+		}
+		healthCheckInterval = time.Duration(v) * time.Millisecond
+	}
+
 	// Transport is exactly same as Go default in https://golang.org/pkg/net/http/#RoundTripper
 	// except custom DialContext and TLSClientConfig.
 	return &Client{
@@ -324,7 +335,7 @@ func NewClient(url *url.URL, tr http.RoundTripper, newAuthToken func(aud string)
 		connected:           online,
 		lastConn:            time.Now().UnixNano(),
 		MaxErrResponseSize:  4096,
-		HealthCheckInterval: 200 * time.Millisecond,
+		HealthCheckInterval: healthCheckInterval,
 		HealthCheckTimeout:  time.Second,
 	}
 }
