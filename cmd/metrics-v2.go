@@ -77,7 +77,7 @@ func init() {
 		return allMetrics
 	}()
 
-	nodeCollector = newMinioCollectorNode([]*MetricsGroup{
+	nodeGroups := []*MetricsGroup{
 		getNodeHealthMetrics(),
 		getLocalDriveStorageMetrics(),
 		getCacheMetrics(),
@@ -86,7 +86,10 @@ func init() {
 		getMinioVersionMetrics(),
 		getS3TTFBMetric(),
 		getNotificationMetrics(),
-	})
+		getDistLockMetrics(),
+	}
+
+	nodeCollector = newMinioCollectorNode(nodeGroups)
 	clusterCollector = newMinioClusterCollector(allMetricsGroups)
 }
 
@@ -1585,6 +1588,70 @@ func getCacheMetrics() *MetricsGroup {
 			})
 		}
 		return
+	})
+	return mg
+}
+
+func getDistLockMetrics() *MetricsGroup {
+	mg := &MetricsGroup{
+		cacheInterval: 1 * time.Second,
+	}
+	mg.RegisterRead(func(ctx context.Context) []Metric {
+		if !globalIsDistErasure {
+			return []Metric{}
+		}
+
+		locks := globalLockServer.DupLockMap()
+
+		totalLocks := len(locks)
+		var (
+			readLocks  int
+			writeLocks int
+		)
+
+		for _, v := range locks {
+			for _, entry := range v {
+				if entry.Writer {
+					writeLocks++
+				} else {
+					readLocks++
+				}
+				break
+			}
+		}
+
+		var metrics []Metric
+		metrics = append(metrics, Metric{
+			Description: MetricDescription{
+				Namespace: minioNamespace,
+				Subsystem: "locks",
+				Name:      "total",
+				Help:      "Number of current locks on this peer",
+				Type:      gaugeMetric,
+			},
+			Value: float64(totalLocks),
+		})
+		metrics = append(metrics, Metric{
+			Description: MetricDescription{
+				Namespace: minioNamespace,
+				Subsystem: "locks",
+				Name:      "write_total",
+				Help:      "Number of current WRITE locks on this peer",
+				Type:      gaugeMetric,
+			},
+			Value: float64(writeLocks),
+		})
+		metrics = append(metrics, Metric{
+			Description: MetricDescription{
+				Namespace: minioNamespace,
+				Subsystem: "locks",
+				Name:      "read_total",
+				Help:      "Number of current READ locks on this peer",
+				Type:      gaugeMetric,
+			},
+			Value: float64(readLocks),
+		})
+		return metrics
 	})
 	return mg
 }
