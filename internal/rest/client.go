@@ -336,7 +336,7 @@ func NewClient(url *url.URL, tr http.RoundTripper, newAuthToken func(aud string)
 		lastConn:            time.Now().UnixNano(),
 		MaxErrResponseSize:  4096,
 		HealthCheckInterval: healthCheckInterval,
-		HealthCheckTimeout:  time.Second,
+		HealthCheckTimeout:  healthCheckInterval * 3,
 	}
 }
 
