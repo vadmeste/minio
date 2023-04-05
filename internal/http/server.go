@@ -28,13 +28,12 @@ import (
 	"os"
 	"runtime/pprof"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
-	"github.com/minio/console/pkg/logger"
-	"github.com/minio/minio/internal/handlers"
 	"github.com/minio/pkg/env"
 )
 
@@ -97,14 +96,14 @@ func (srv *Server) Start(ctx context.Context) (err error) {
 		return err
 	}
 
-	maxConnStr := env.Get("_MINIO_MAX_CONN_PER_HOST", "1024")
+	maxConnStr := env.Get("_MINIO_MAX_CONN_PER_HOST", "64")
 	maxConn, err := strconv.Atoi(maxConnStr)
 	if err != nil {
 		return err
 	}
 
 	var mu sync.Mutex
-	var mapConns = make(map[string]int)
+	mapConns := make(map[string]int)
 
 	// Wrap given handler to do additional
 	// * return 503 (service unavailable) if the server in shutdown.
@@ -121,28 +120,26 @@ func (srv *Server) Start(ctx context.Context) (err error) {
 		atomic.AddInt32(&srv.requestCount, 1)
 		defer atomic.AddInt32(&srv.requestCount, -1)
 
-		remoteHost := handlers.GetSourceIP(r)
+		// Default to remote address if headers not set.
+		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if strings.ContainsRune(remoteHost, ':') {
+			remoteHost = "[" + remoteHost + "]"
+		}
 
 		mu.Lock()
-		curConn, ok := mapConns[remoteHost]
-		if !ok {
-			mapConns[remoteHost] = 1
-		} else {
-			curConn++
-			mapConns[remoteHost] = curConn
-		}
+		mapConns[remoteHost]++
+		curConn := mapConns[remoteHost]
 		mu.Unlock()
 
 		if curConn > maxConn {
-			logger.LogOnceIf(ctx, fmt.Errorf("max connections higher than set maximum %d > %d: from %s, api: %s", curConn, maxConn, remoteHost, r.URL), remoteHost)
+			fmt.Printf("max connections higher than set maximum %d > %d: from %s, api: %s\n", curConn, maxConn, remoteHost, r.URL)
 		}
 
 		// Handle request using passed handler.
 		handler.ServeHTTP(w, r)
 
-		curConn--
 		mu.Lock()
-		mapConns[remoteHost] = curConn
+		mapConns[remoteHost]--
 		mu.Unlock()
 	})
 
