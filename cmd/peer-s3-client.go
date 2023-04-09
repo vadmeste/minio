@@ -18,7 +18,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -296,17 +298,33 @@ func (client *peerS3Client) DeleteBucket(ctx context.Context, bucket string, opt
 
 type wsDirWalker struct {
 	c           *websocket.Conn
+	id          uint64
 	initialized bool
 }
 
 func (wdw *wsDirWalker) WalkDir(ctx context.Context, opts WalkDirOptions, w io.Writer) error {
+	var idBytes [32]byte
+	binary.PutUvarint(idBytes[:], wdw.id)
+
 	for {
+		// Read disk-id
+		err := wdw.c.WriteMessage(2, idBytes[:])
+		if err != nil {
+			return err
+		}
 		_, message, err := wdw.c.ReadMessage()
 		if err != nil {
 			return err
 		}
-		if len(message) == 0 {
-			break
+		if len(message) < 32 {
+			return errors.New("short disk id")
+		}
+		if !bytes.Equal(idBytes[:], message[:32]) {
+			return errors.New("unexpected disk id")
+		}
+		_, message, err = wdw.c.ReadMessage()
+		if err != nil {
+			return err
 		}
 		n, err := w.Write(message)
 		if err != nil {
@@ -331,10 +349,6 @@ func newWSDirWalker(disk StorageAPI, opts listPathRawOptions) (*wsDirWalker, err
 
 	hdrs := make(http.Header)
 
-	p, s, d := disk.GetDiskLoc()
-	hdrs.Set(storagePeerPool, strconv.Itoa(p))
-	hdrs.Set(storagePeerSet, strconv.Itoa(s))
-	hdrs.Set(storagePeerDisk, strconv.Itoa(d))
 	hdrs.Set(storagePeerVolume, opts.bucket)
 	hdrs.Set(storagePeerDirPath, opts.path)
 	hdrs.Set(storagePeerRecursive, strconv.FormatBool(opts.recursive))
@@ -350,7 +364,14 @@ func newWSDirWalker(disk StorageAPI, opts listPathRawOptions) (*wsDirWalker, err
 	if err != nil {
 		return nil, err
 	}
-	return &wsDirWalker{c: conn, initialized: true}, nil
+
+	p, s, d := disk.GetDiskLoc()
+
+	return &wsDirWalker{
+		id:          uint64(p<<32 ^ s<<16 ^ d),
+		c:           conn,
+		initialized: true,
+	}, nil
 }
 
 type dirWalker interface {

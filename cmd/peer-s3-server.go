@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -269,24 +270,6 @@ func (s *peerS3Server) WalkDirsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 
-	pool, err := strconv.Atoi(r.Header.Get(storagePeerPool))
-	if err != nil {
-		s.writeErrorResponse(w, err)
-		return
-	}
-
-	set, err := strconv.Atoi(r.Header.Get(storagePeerSet))
-	if err != nil {
-		s.writeErrorResponse(w, err)
-		return
-	}
-
-	disk, err := strconv.Atoi(r.Header.Get(storagePeerDisk))
-	if err != nil {
-		s.writeErrorResponse(w, err)
-		return
-	}
-
 	volume := r.Header.Get(storagePeerVolume)
 	dirPath := r.Header.Get(storagePeerDirPath)
 	recursive, err := strconv.ParseBool(r.Header.Get(storagePeerRecursive))
@@ -307,42 +290,54 @@ func (s *peerS3Server) WalkDirsHandler(w http.ResponseWriter, r *http.Request) {
 	prefix := r.Header.Get(storagePeerPrefixFilter)
 	forward := r.Header.Get(storagePeerForwardFilter)
 
-	rd, wr := io.Pipe()
-	defer func() {
-		if r := recover(); r != nil {
-			debug.PrintStack()
-			wr.CloseWithError(fmt.Errorf("panic: %v", r))
-		}
-	}()
+	type diskPipes struct {
+		*io.PipeReader
+		*io.PipeWriter
+	}
 
-	go func() {
-		z, ok := newObjectLayerFn().(*erasureServerPools)
-		if !ok {
-			wr.CloseWithError(errServerNotInitialized)
-			return
-		}
+	var disksStream = make(map[uint64]diskPipes, len(globalLocalDrives))
 
-		disk := z.serverPools[pool].sets[set].getDisks()[disk]
-		if disk == nil {
-			wr.CloseWithError(errDiskNotFound)
-			return
-		}
+	for i, disk := range globalLocalDrives {
+		rd, wr := io.Pipe()
+		p, s, d := disk.GetDiskLoc()
 
-		wr.CloseWithError(disk.WalkDir(r.Context(), WalkDirOptions{
-			Bucket:         volume,
-			BaseDir:        dirPath,
-			Recursive:      recursive,
-			ReportNotFound: reportNotFound,
-			FilterPrefix:   prefix,
-			ForwardTo:      forward,
-		}, wr))
-	}()
+		disksStream[uint64(p<<32^s<<16^d)] = diskPipes{PipeReader: rd, PipeWriter: wr}
+
+		go func(i int, disk StorageAPI, wr *io.PipeWriter) {
+			defer func() {
+				if r := recover(); r != nil {
+					debug.PrintStack()
+					wr.CloseWithError(fmt.Errorf("panic: %v", r))
+				}
+			}()
+			wr.CloseWithError(disk.WalkDir(r.Context(), WalkDirOptions{
+				Bucket:         volume,
+				BaseDir:        dirPath,
+				Recursive:      recursive,
+				ReportNotFound: reportNotFound,
+				FilterPrefix:   prefix,
+				ForwardTo:      forward,
+			}, wr))
+		}(i, disk, wr)
+	}
 
 	var p [128 * 1024]byte
-	// var id = pool<<32 ^ set<<16 ^ disk
 
 	for {
+		_, reqID, err := c.ReadMessage()
+		if err != nil {
+			break
+		}
+		id, _ := binary.Uvarint(reqID)
+		rd, ok := disksStream[id]
+		if !ok {
+			continue
+		}
 		n, err := rd.Read(p[:])
+		if err != nil {
+			break
+		}
+		err = c.WriteMessage(2, reqID)
 		if err != nil {
 			break
 		}
