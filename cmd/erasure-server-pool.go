@@ -433,7 +433,7 @@ func (z *erasureServerPools) getPoolInfoExistingWithOpts(ctx context.Context, bu
 	for _, pinfo := range poolObjInfos {
 		// skip all objects from suspended pools if asked by the
 		// caller.
-		if z.IsSuspended(pinfo.Index) && opts.SkipDecommissioned {
+		if opts.SkipDecommissioned && z.IsSuspended(pinfo.Index) {
 			continue
 		}
 		// Skip object if it's from pools participating in a rebalance operation.
@@ -458,19 +458,12 @@ func (z *erasureServerPools) getPoolInfoExistingWithOpts(ctx context.Context, bu
 		if !isErrObjectNotFound(pinfo.Err) {
 			return pinfo, pinfo.Err
 		}
-		defPool = pinfo
-		if isErrObjectNotFound(pinfo.Err) {
-			// No object exists or its a delete marker,
-			// check objInfo to confirm.
-			if pinfo.ObjInfo.DeleteMarker && pinfo.ObjInfo.Name != "" {
-				return pinfo, nil
-			}
-			// objInfo is not valid, truly the object doesn't
-			// exist proceed to next pool.
-			continue
-		}
 
-		return pinfo, nil
+		// No object exists or its a delete marker,
+		// check objInfo to confirm.
+		if pinfo.ObjInfo.DeleteMarker && pinfo.ObjInfo.Name != "" {
+			return pinfo, nil
+		}
 	}
 	if opts.ReplicationRequest && opts.DeleteMarker && defPool.Index >= 0 {
 		// If the request is a delete marker replication request, return a default pool
