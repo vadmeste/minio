@@ -589,6 +589,8 @@ func TestHealingDanglingObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	setObjectLayer(objLayer)
+
 	bucket := getRandomBucketName()
 	object := getRandomObjectName()
 	data := bytes.Repeat([]byte("a"), 128*1024)
