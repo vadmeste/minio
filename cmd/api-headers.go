@@ -116,6 +116,8 @@ func setObjectHeaders(w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSp
 	lastModified := objInfo.ModTime.UTC().Format(http.TimeFormat)
 	w.Header().Set(xhttp.LastModified, lastModified)
 
+	w.Header().Set("X-Minio-Object-Parity", strconv.Itoa(objInfo.Parity))
+
 	// Set Etag if available.
 	if objInfo.ETag != "" {
 		w.Header()[xhttp.ETag] = []string{"\"" + objInfo.ETag + "\""}

@@ -118,6 +118,7 @@ func (fi FileInfo) ToObjectInfo(bucket, object string, versioned bool) ObjectInf
 		Name:             object,
 		VersionID:        versionID,
 		IsLatest:         fi.IsLatest,
+		Parity:           fi.Erasure.ParityBlocks,
 		DeleteMarker:     fi.Deleted,
 		Size:             fi.Size,
 		ModTime:          fi.ModTime,
