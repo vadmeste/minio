@@ -137,7 +137,12 @@ func AuditLog(ctx context.Context, w http.ResponseWriter, r *http.Request, reqCl
 		entry.API.OutputBytes = outputBytes
 		entry.API.HeaderBytes = headerBytes
 		entry.API.TimeToResponse = strconv.FormatInt(timeToResponse.Nanoseconds(), 10) + "ns"
-		entry.Tags = reqInfo.GetTagsMap()
+		// We hold the lock, so we cannot call reqInfo.GetTagsMap().
+		tags := make(map[string]interface{}, len(reqInfo.tags))
+		for _, t := range reqInfo.tags {
+			tags[t.Key] = t.Val
+		}
+		entry.Tags = tags
 		// ttfb will be recorded only for GET requests, Ignore such cases where ttfb will be empty.
 		if timeToFirstByte != 0 {
 			entry.API.TimeToFirstByte = strconv.FormatInt(timeToFirstByte.Nanoseconds(), 10) + "ns"
