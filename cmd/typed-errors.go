@@ -109,3 +109,6 @@ var errIAMNotInitialized = errors.New("IAM sub-system is being initialized, plea
 
 // error returned when upload id not found
 var errUploadIDNotFound = errors.New("Specified Upload ID is not found")
+
+// error returned for session policies > 2048
+var errSessionPolicyTooLarge = errors.New("Session policy should not exceed 2048 characters")
