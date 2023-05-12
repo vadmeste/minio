@@ -778,7 +778,7 @@ func (z *erasureServerPools) decommissionPool(ctx context.Context, idx int, pool
 
 				// Apply lifecycle rules on the objects that are expired.
 				if filterLifecycle(bi.Name, version.Name, version) {
-					logger.LogIf(ctx, fmt.Errorf("found %s/%s (%s) expired object based on ILM rules, skipping and scheduled for deletion", bi.Name, version.Name, version.VersionID))
+					decommissionedCount++
 					continue
 				}
 

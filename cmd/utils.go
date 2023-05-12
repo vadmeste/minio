@@ -640,6 +640,7 @@ const defaultDialTimeout = 5 * time.Second
 // NewHTTPTransportWithTimeout allows setting a timeout.
 func NewHTTPTransportWithTimeout(timeout time.Duration) *http.Transport {
 	return xhttp.ConnSettings{
+		DialContext: newCustomDialContext(),
 		DNSCache:    globalDNSCache,
 		DialTimeout: defaultDialTimeout,
 		RootCAs:     globalRootCAs,
@@ -675,6 +676,7 @@ func newCustomDialContext() dialContext {
 func NewRemoteTargetHTTPTransport() func() *http.Transport {
 	return xhttp.ConnSettings{
 		DialContext: newCustomDialContext(),
+		DNSCache:    globalDNSCache,
 		RootCAs:     globalRootCAs,
 		EnableHTTP2: false,
 	}.NewRemoteTargetHTTPTransport()

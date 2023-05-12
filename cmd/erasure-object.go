@@ -106,7 +106,7 @@ func (er erasureObjects) CopyObject(ctx context.Context, srcBucket, srcObject, d
 	}
 
 	// List all online disks.
-	onlineDisks, modTime := listOnlineDisks(storageDisks, metaArr, errs)
+	onlineDisks, modTime := listOnlineDisks(storageDisks, metaArr, errs, readQuorum)
 
 	// Pick latest valid metadata.
 	fi, err := pickValidFileInfo(ctx, metaArr, modTime, readQuorum)
@@ -542,19 +542,14 @@ func readAllXL(ctx context.Context, disks []StorageAPI, bucket, object string, r
 		errVolumeNotFound,
 		errFileVersionNotFound,
 		errDiskNotFound,
+		io.ErrUnexpectedEOF, // some times we would read without locks, ignore these errors
+		io.EOF,              // some times we would read without locks, ignore these errors
 	}
 
 	errs := g.Wait()
 	for index, err := range errs {
 		if err == nil {
 			continue
-		}
-		if bucket == minioMetaBucket {
-			// minioMetaBucket "reads" for .metacache are not written with O_SYNC
-			// so there is a potential for them to not fully committed to stable
-			// storage leading to unexpected EOFs. Allow these failures to
-			// be ignored since the caller already ignores them in streamMetadataParts()
-			ignoredErrs = append(ignoredErrs, io.ErrUnexpectedEOF, io.EOF)
 		}
 		if !IsErr(err, ignoredErrs...) {
 			logger.LogOnceIf(ctx, fmt.Errorf("Drive %s, path (%s/%s) returned an error (%w)",
@@ -650,7 +645,7 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 	}
 
 	// List all online disks.
-	onlineDisks, modTime := listOnlineDisks(disks, metaArr, errs)
+	onlineDisks, modTime := listOnlineDisks(disks, metaArr, errs, readQuorum)
 
 	// Pick latest valid metadata.
 	fi, err = pickValidFileInfo(ctx, metaArr, modTime, readQuorum)
@@ -1749,7 +1744,7 @@ func (er erasureObjects) PutObjectMetadata(ctx context.Context, bucket, object s
 	}
 
 	// List all online disks.
-	onlineDisks, modTime := listOnlineDisks(disks, metaArr, errs)
+	onlineDisks, modTime := listOnlineDisks(disks, metaArr, errs, readQuorum)
 
 	// Pick latest valid metadata.
 	fi, err := pickValidFileInfo(ctx, metaArr, modTime, readQuorum)
@@ -1822,7 +1817,7 @@ func (er erasureObjects) PutObjectTags(ctx context.Context, bucket, object strin
 	}
 
 	// List all online disks.
-	onlineDisks, modTime := listOnlineDisks(disks, metaArr, errs)
+	onlineDisks, modTime := listOnlineDisks(disks, metaArr, errs, readQuorum)
 
 	// Pick latest valid metadata.
 	fi, err := pickValidFileInfo(ctx, metaArr, modTime, readQuorum)
