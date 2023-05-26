@@ -460,7 +460,7 @@ func commonParity(parities []int, defaultParityCount int) int {
 		occMap[p]++
 	}
 
-	var maxOcc, commonParity int
+	var maxOcc, cparity int
 	for parity, occ := range occMap {
 		if parity == -1 {
 			// Ignore non defined parity
@@ -480,7 +480,7 @@ func commonParity(parities []int, defaultParityCount int) int {
 
 		if occ > maxOcc {
 			maxOcc = occ
-			commonParity = parity
+			cparity = parity
 		}
 	}
 
@@ -488,7 +488,7 @@ func commonParity(parities []int, defaultParityCount int) int {
 		// Did not found anything useful
 		return -1
 	}
-	return commonParity
+	return cparity
 }
 
 func listObjectParities(partsMetadata []FileInfo, errs []error) (parities []int) {
@@ -502,7 +502,9 @@ func listObjectParities(partsMetadata []FileInfo, errs []error) (parities []int)
 			parities[index] = -1
 			continue
 		}
-		if !metadata.Deleted {
+		if metadata.Deleted {
+			parities[index] = len(partsMetadata) / 2
+		} else {
 			parities[index] = metadata.Erasure.ParityBlocks
 		}
 	}
