@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -344,53 +343,22 @@ func (er erasureObjects) cleanupDeletedObjects(ctx context.Context) {
 
 // nsScanner will start scanning buckets and send updated totals as they are traversed.
 // Updates are sent on a regular basis and the caller *must* consume them.
-func (er erasureObjects) nsScanner(ctx context.Context, buckets []BucketInfo, wantCycle uint32, updates chan<- dataUsageCache, healScanMode madmin.HealScanMode) error {
-	if len(buckets) == 0 {
-		return nil
-	}
-
-	// Collect disks we can use.
-	disks, healing := er.getOnlineDisksWithHealing()
-	if len(disks) == 0 {
-		logger.LogIf(ctx, errors.New("data-scanner: all drives are offline or being healed, skipping scanner cycle"))
-		return nil
-	}
+func (er erasureObjects) nsScanner(ctx context.Context, disk StorageAPI, bucket string, healing bool, wantCycle uint32, updates chan<- dataUsageCache, healScanMode madmin.HealScanMode) error {
+	cacheName := pathJoin(bucket, dataUsageCacheName)
 
 	// Load bucket totals
-	oldCache := dataUsageCache{}
-	if err := oldCache.load(ctx, er, dataUsageCacheName); err != nil {
+	cache := dataUsageCache{}
+	if err := cache.load(ctx, er, cacheName); err != nil {
 		return err
 	}
 
-	// New cache..
-	cache := dataUsageCache{
-		Info: dataUsageCacheInfo{
-			Name:      dataUsageRoot,
-			NextCycle: oldCache.Info.NextCycle,
-		},
-		Cache: make(map[string]dataUsageEntry, len(oldCache.Cache)),
+	cache.Info = dataUsageCacheInfo{
+		Name:        dataUsageRoot,
+		NextCycle:   wantCycle,
+		SkipHealing: healing,
 	}
 
-	// Put all buckets into channel.
-	bucketCh := make(chan BucketInfo, len(buckets))
-	// Add new buckets first
-	for _, b := range buckets {
-		if oldCache.find(b.Name) == nil {
-			bucketCh <- b
-		}
-	}
-
-	// Add existing buckets.
-	for _, b := range buckets {
-		e := oldCache.find(b.Name)
-		if e != nil {
-			cache.replace(b.Name, dataUsageRoot, *e)
-			bucketCh <- b
-		}
-	}
-
-	close(bucketCh)
-	bucketResults := make(chan dataUsageEntryInfo, len(disks))
+	bucketResults := make(chan dataUsageEntryInfo, 1)
 
 	// Start async collector/saver.
 	// This goroutine owns the cache.
@@ -410,7 +378,7 @@ func (er erasureObjects) nsScanner(ctx context.Context, buckets []BucketInfo, wa
 				if cache.Info.LastUpdate.Equal(lastSave) {
 					continue
 				}
-				logger.LogOnceIf(ctx, cache.save(ctx, er, dataUsageCacheName), "nsscanner-cache-update")
+				logger.LogOnceIf(ctx, cache.save(ctx, er, cacheName), "nsscanner-cache-update")
 				updates <- cache.clone()
 				lastSave = cache.Info.LastUpdate
 			case v, ok := <-bucketResults:
@@ -418,7 +386,7 @@ func (er erasureObjects) nsScanner(ctx context.Context, buckets []BucketInfo, wa
 					// Save final state...
 					cache.Info.NextCycle = wantCycle
 					cache.Info.LastUpdate = time.Now()
-					logger.LogOnceIf(ctx, cache.save(ctx, er, dataUsageCacheName), "nsscanner-channel-closed")
+					logger.LogOnceIf(ctx, cache.save(ctx, er, cacheName), "nsscanner-channel-closed")
 					updates <- cache
 					return
 				}
@@ -428,107 +396,60 @@ func (er erasureObjects) nsScanner(ctx context.Context, buckets []BucketInfo, wa
 		}
 	}()
 
-	// Shuffle disks to ensure a total randomness of bucket/disk association to ensure
-	// that objects that are not present in all disks are accounted and ILM applied.
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	r.Shuffle(len(disks), func(i, j int) { disks[i], disks[j] = disks[j], disks[i] })
-
-	// Restrict parallelism for disk usage scanner
-	// upto GOMAXPROCS if GOMAXPROCS is < len(disks)
-	maxProcs := runtime.GOMAXPROCS(0)
-	if maxProcs < len(disks) {
-		disks = disks[:maxProcs]
-	}
-
-	// Start one scanner per disk
+	// Collect updates.
+	diskUpdates := make(chan dataUsageEntry, 1)
 	var wg sync.WaitGroup
-	wg.Add(len(disks))
-
-	for i := range disks {
-		go func(i int) {
-			defer wg.Done()
-			disk := disks[i]
-
-			for bucket := range bucketCh {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				// Load cache for bucket
-				cacheName := pathJoin(bucket.Name, dataUsageCacheName)
-				cache := dataUsageCache{}
-				logger.LogIf(ctx, cache.load(ctx, er, cacheName))
-				if cache.Info.Name == "" {
-					cache.Info.Name = bucket.Name
-				}
-				cache.Info.SkipHealing = healing
-				cache.Info.NextCycle = wantCycle
-				if cache.Info.Name != bucket.Name {
-					logger.LogIf(ctx, fmt.Errorf("cache name mismatch: %s != %s", cache.Info.Name, bucket.Name))
-					cache.Info = dataUsageCacheInfo{
-						Name:       bucket.Name,
-						LastUpdate: time.Time{},
-						NextCycle:  wantCycle,
-					}
-				}
-				// Collect updates.
-				updates := make(chan dataUsageEntry, 1)
-				var wg sync.WaitGroup
-				wg.Add(1)
-				go func(name string) {
-					defer wg.Done()
-					for update := range updates {
-						select {
-						case <-ctx.Done():
-						case bucketResults <- dataUsageEntryInfo{
-							Name:   name,
-							Parent: dataUsageRoot,
-							Entry:  update,
-						}:
-						}
-					}
-				}(cache.Info.Name)
-				// Calc usage
-				before := cache.Info.LastUpdate
-				var err error
-				cache, err = disk.NSScanner(ctx, cache, updates, healScanMode)
-				if err != nil {
-					if !cache.Info.LastUpdate.IsZero() && cache.Info.LastUpdate.After(before) {
-						logger.LogIf(ctx, cache.save(ctx, er, cacheName))
-					} else {
-						logger.LogIf(ctx, err)
-					}
-					// This ensures that we don't close
-					// bucketResults channel while the
-					// updates-collector goroutine still
-					// holds a reference to this.
-					wg.Wait()
-					continue
-				}
-
-				wg.Wait()
-				var root dataUsageEntry
-				if r := cache.root(); r != nil {
-					root = cache.flatten(*r)
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case bucketResults <- dataUsageEntryInfo{
-					Name:   cache.Info.Name,
-					Parent: dataUsageRoot,
-					Entry:  root,
-				}:
-				}
-
-				// Save cache
-				logger.LogIf(ctx, cache.save(ctx, er, cacheName))
+	wg.Add(1)
+	go func(name string) {
+		defer wg.Done()
+		for update := range diskUpdates {
+			select {
+			case <-ctx.Done():
+			case bucketResults <- dataUsageEntryInfo{
+				Name:   name,
+				Parent: dataUsageRoot,
+				Entry:  update,
+			}:
 			}
-		}(i)
+		}
+	}(bucket)
+
+	newCache := dataUsageCache{}
+
+	err := newCache.load(ctx, er, cacheName)
+	if err != nil {
+		return err
 	}
+
+	newCache.Info.Name = bucket
+	newCache.Info.SkipHealing = healing
+	newCache.Info.NextCycle = wantCycle
+
+	newCache, err = disk.NSScanner(ctx, newCache, diskUpdates, healScanMode)
+	// This ensures that we don't close
+	// bucketResults channel while the
+	// updates-collector goroutine still
+	// holds a reference to this.
 	wg.Wait()
+	if err != nil {
+		logger.LogIf(ctx, err)
+		return err
+	}
+
+	var root dataUsageEntry
+	if r := newCache.root(); r != nil {
+		root = newCache.flatten(*r)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case bucketResults <- dataUsageEntryInfo{
+		Name:   bucket,
+		Parent: dataUsageRoot,
+		Entry:  root,
+	}:
+	}
+
 	close(bucketResults)
 	saverWg.Wait()
 

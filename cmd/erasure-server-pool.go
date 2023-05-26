@@ -23,8 +23,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +61,9 @@ type erasureServerPools struct {
 	decommissionCancelers []context.CancelFunc
 
 	s3Peer *S3PeerSys
+
+	bucketsScanMgr     *bucketsScanMgr
+	dataUsagePerBucket map[string]map[string]dataUsageCache
 }
 
 func (z *erasureServerPools) SinglePool() bool {
@@ -141,6 +146,9 @@ func newErasureServerPools(ctx context.Context, endpointServerPools EndpointServ
 	}
 
 	z.decommissionCancelers = make([]context.CancelFunc, len(z.serverPools))
+	z.dataUsagePerBucket = make(map[string]map[string]dataUsageCache)
+	z.bucketsScanMgr = newBucketsScanMgr(z)
+	z.bucketsScanMgr.start()
 
 	// initialize the object layer.
 	setObjectLayer(z)
@@ -608,6 +616,91 @@ func (z *erasureServerPools) StorageInfo(ctx context.Context) StorageInfo {
 	return globalNotificationSys.StorageInfo(z)
 }
 
+type bucketsScanMgr struct {
+	ctx           context.Context
+	bucketsLister func(context.Context, BucketOptions) ([]BucketInfo, error)
+
+	mu       sync.Mutex
+	internal map[int]map[string]uint64
+}
+
+func newBucketsScanMgr(z *erasureServerPools) *bucketsScanMgr {
+
+	mgr := &bucketsScanMgr{
+		ctx:           GlobalContext,
+		bucketsLister: z.ListBuckets,
+		internal:      make(map[int]map[string]uint64),
+	}
+
+	// Collect for each set in serverPools.
+	for p, z := range z.serverPools {
+		for s, _ := range z.sets {
+			mgr.internal[p<<16|s] = make(map[string]uint64)
+		}
+	}
+
+	return mgr
+
+}
+
+func (mgr *bucketsScanMgr) start() {
+	go func() {
+		tick := 10 * time.Second
+
+		t := time.NewTimer(tick)
+		defer t.Stop()
+
+		for {
+			select {
+			case <-t.C:
+				allBuckets, err := mgr.bucketsLister(mgr.ctx, BucketOptions{})
+				if err == nil {
+					mgr.mu.Lock()
+					for _, bucket := range allBuckets {
+						for _, set := range mgr.internal {
+							set[bucket.Name] += 0
+						}
+					}
+					mgr.mu.Unlock()
+				}
+				t.Reset(tick)
+			case <-mgr.ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (mgr *bucketsScanMgr) getNextBucket(pool, set int) string {
+	var (
+		id          = pool<<16 | set
+		leastCount  = uint64(math.MaxUint64)
+		leastBucket = ""
+	)
+
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+
+	for bucket, count := range mgr.internal[id] {
+		if count == 0 {
+			return bucket
+		}
+		if count < leastCount {
+			leastCount = count
+			leastBucket = bucket
+		}
+	}
+	return leastBucket
+}
+
+func (mgr *bucketsScanMgr) markScannedBucket(bucket string, pool, set int) {
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+
+	mgr.internal[pool<<16|set][bucket]++
+	return
+}
+
 func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataUsageInfo, wantCycle uint32, healScanMode madmin.HealScanMode) error {
 	// Updates must be closed before we return.
 	defer close(updates)
@@ -617,86 +710,158 @@ func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataU
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var results []dataUsageCache
 	var firstErr error
+	var results = make(chan dataUsageCache)
+
+	var setsCount int
+
+	allMerged := dataUsageCache{}
+	allMerged.Info.Name = dataUsageRoot
 
 	allBuckets, err := z.ListBuckets(ctx, BucketOptions{})
-	if err != nil {
-		return err
-	}
-
-	if len(allBuckets) == 0 {
-		updates <- DataUsageInfo{} // no buckets found update data usage to reflect latest state
+	if err != nil || len(allBuckets) == 0 {
 		return nil
 	}
 
-	// Scanner latest allBuckets first.
-	sort.Slice(allBuckets, func(i, j int) bool {
-		return allBuckets[i].Created.After(allBuckets[j].Created)
-	})
-
 	// Collect for each set in serverPools.
-	for _, z := range z.serverPools {
-		for _, erObj := range z.sets {
-			wg.Add(1)
-			results = append(results, dataUsageCache{})
-			go func(i int, erObj *erasureObjects) {
-				updates := make(chan dataUsageCache, 1)
-				defer close(updates)
-				// Start update collector.
-				go func() {
-					defer wg.Done()
-					for info := range updates {
-						mu.Lock()
-						results[i] = info
-						mu.Unlock()
-					}
-				}()
-				// Start scanner. Blocks until done.
-				err := erObj.nsScanner(ctx, allBuckets, wantCycle, updates, healScanMode)
-				if err != nil {
-					logger.LogIf(ctx, err)
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-					}
-					// Cancel remaining...
-					cancel()
-					mu.Unlock()
-					return
+	for _, pool := range z.serverPools {
+		for _, erObj := range pool.sets {
+			setsCount++
+			for _, bucket := range allBuckets {
+				cache := dataUsageCache{}
+				if err := cache.load(ctx, erObj, pathJoin(bucket.Name, dataUsageCacheName)); err != nil {
+					continue
 				}
-			}(len(results)-1, erObj)
+				allMerged.merge(cache)
+			}
 		}
 	}
-	updateCloser := make(chan chan struct{})
-	go func() {
-		updateTicker := time.NewTicker(30 * time.Second)
-		defer updateTicker.Stop()
-		var lastUpdate time.Time
 
-		// We need to merge since we will get the same buckets from each pool.
-		// Therefore to get the exact bucket sizes we must merge before we can convert.
-		var allMerged dataUsageCache
+	// Collect for each set in serverPools.
+	for p, pool := range z.serverPools {
+		for s, erObj := range pool.sets {
+			wg.Add(1)
+			go func(p, s int, erObj *erasureObjects) {
+				defer wg.Done()
 
-		update := func() {
-			mu.Lock()
-			defer mu.Unlock()
-
-			allMerged = dataUsageCache{Info: dataUsageCacheInfo{Name: dataUsageRoot}}
-			for _, info := range results {
-				if info.Info.LastUpdate.IsZero() {
-					// Not filled yet.
+				// Collect disks we can use.
+				disks, healing := erObj.getOnlineDisksWithHealing()
+				if len(disks) == 0 {
+					logger.LogIf(ctx, errors.New("data-scanner: all drives are offline or being healed, skipping scanner cycle"))
 					return
 				}
-				allMerged.merge(info)
+
+				// Shuffle disks to ensure a total randomness of bucket/disk association to ensure
+				// that objects that are not present in all disks are accounted and ILM applied.
+				r := rand.New(rand.NewSource(time.Now().UnixNano()))
+				r.Shuffle(len(disks), func(i, j int) { disks[i], disks[j] = disks[j], disks[i] })
+
+				// Restrict parallelism for disk usage scanner
+				// upto GOMAXPROCS if GOMAXPROCS is < len(disks)
+				maxProcs := runtime.GOMAXPROCS(0)
+				if maxProcs < len(disks) {
+					disks = disks[:maxProcs]
+				}
+
+				// Start one scanner per disk
+				var scanWg sync.WaitGroup
+				scanWg.Add(len(disks))
+
+				for i := range disks {
+					go func(i int) {
+						defer scanWg.Done()
+						disk := disks[i]
+
+						updates := make(chan dataUsageCache)
+						defer close(updates)
+
+						scanWg.Add(1)
+						go func() {
+							defer scanWg.Done()
+							for u := range updates {
+								u.Info.pool, u.Info.set = p, s
+								results <- u
+							}
+						}()
+
+						bucket := z.bucketsScanMgr.getNextBucket(p, s)
+						if bucket == "" {
+							return
+						}
+
+						// Start scanner. Blocks until done.
+						err := erObj.nsScanner(ctx, disk, bucket, healing, wantCycle, updates, healScanMode)
+						if err != nil {
+							logger.LogIf(ctx, err)
+							mu.Lock()
+							if firstErr == nil {
+								firstErr = err
+							}
+							// Cancel remaining...
+							cancel()
+							mu.Unlock()
+							return
+						}
+
+						z.bucketsScanMgr.markScannedBucket(bucket, p, s)
+					}(i)
+				}
+				scanWg.Wait()
+			}(p, s, erObj)
+		}
+	}
+
+	updateCloser := make(chan chan struct{})
+	go func() {
+		updateTicker := time.NewTicker(10 * time.Second)
+		defer updateTicker.Stop()
+
+		var lastUpdate time.Time
+
+		update := func() {
+
+			allBuckets, err := z.ListBuckets(ctx, BucketOptions{})
+			if err != nil || len(allBuckets) == 0 {
+				return
 			}
+
+			mu.Lock()
+			for bucket, stats := range z.dataUsagePerBucket {
+				if len(stats) < setsCount {
+					continue
+				}
+				bucketCache := dataUsageCache{}
+				bucketCache.Info.Name = dataUsageRoot
+				for _, v := range stats {
+					if v.Info.LastUpdate.IsZero() {
+						continue
+					}
+					bucketCache.merge(v)
+				}
+				if r := bucketCache.root(); r != nil {
+					allMerged.replace(bucket, dataUsageRoot, *r)
+				}
+			}
+			mu.Unlock()
+
 			if allMerged.root() != nil && allMerged.Info.LastUpdate.After(lastUpdate) {
+				fmt.Printf("%+v\n", allMerged)
 				updates <- allMerged.dui(allMerged.Info.Name, allBuckets)
 				lastUpdate = allMerged.Info.LastUpdate
 			}
 		}
+
 		for {
 			select {
+			case result := <-results:
+				mu.Lock()
+				usage, ok := z.dataUsagePerBucket[result.Info.Name]
+				if !ok {
+					usage = make(map[string]dataUsageCache)
+				}
+				usage[fmt.Sprintf("%d-%d", result.Info.pool, result.Info.set)] = result
+				z.dataUsagePerBucket[result.Info.Name] = usage
+				mu.Unlock()
 			case <-ctx.Done():
 				return
 			case v := <-updateCloser:
@@ -710,6 +875,7 @@ func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataU
 	}()
 
 	wg.Wait()
+	close(results)
 	ch := make(chan struct{})
 	select {
 	case updateCloser <- ch:

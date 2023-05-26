@@ -308,7 +308,8 @@ type dataUsageEntryInfo struct {
 
 type dataUsageCacheInfo struct {
 	// Name of the bucket. Also root element.
-	Name       string
+	Name string
+
 	NextCycle  uint32
 	LastUpdate time.Time
 	// indicates if the disk is being healed and scanner
@@ -323,6 +324,8 @@ type dataUsageCacheInfo struct {
 	// Will not be closed when returned.
 	updates     chan<- dataUsageEntry `msg:"-"`
 	replication replicationConfig     `msg:"-"`
+
+	pool, set int `msg:"-"`
 }
 
 func (e *dataUsageEntry) addSizes(summary sizeSummary) {
@@ -525,17 +528,33 @@ func (d *dataUsageCache) deleteRecursive(h dataUsageHash) {
 // As a side effect d will be flattened, use a clone if this is not ok.
 func (d *dataUsageCache) dui(path string, buckets []BucketInfo) DataUsageInfo {
 	e := d.find(path)
-	if e == nil {
+	if e == nil || e.Children == nil {
 		// No entry found, return empty.
 		return DataUsageInfo{}
 	}
-	flat := d.flatten(*e)
+
+	var (
+		objectsTotalCount, versionsTotalCount, bucketsCount uint64
+		objectsTotalSize                                    int64
+	)
+
+	for id := range e.Children {
+		e := d.Cache[id]
+		if len(e.Children) > 0 {
+			flat := d.flatten(e)
+			objectsTotalSize += flat.Size
+			versionsTotalCount += flat.Versions
+			objectsTotalCount += flat.Objects
+			bucketsCount += 1
+		}
+	}
+
 	dui := DataUsageInfo{
 		LastUpdate:         d.Info.LastUpdate,
-		ObjectsTotalCount:  flat.Objects,
-		VersionsTotalCount: flat.Versions,
-		ObjectsTotalSize:   uint64(flat.Size),
-		BucketsCount:       uint64(len(e.Children)),
+		ObjectsTotalCount:  objectsTotalCount,
+		VersionsTotalCount: versionsTotalCount,
+		ObjectsTotalSize:   uint64(objectsTotalSize),
+		BucketsCount:       bucketsCount,
 		BucketsUsage:       d.bucketsUsageInfo(buckets),
 		TierStats:          d.tiersUsageInfo(buckets),
 	}

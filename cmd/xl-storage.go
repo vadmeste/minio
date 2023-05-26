@@ -485,6 +485,13 @@ func (s *xlStorage) NSScanner(ctx context.Context, cache dataUsageCache, updates
 		return cache, errServerNotInitialized
 	}
 
+	fakeSleep := 0 * time.Millisecond
+	if fsr := os.Getenv("FAKE_SLEEP"); fsr != "" {
+		if fsi, e := strconv.Atoi(fsr); e != nil {
+			fakeSleep = time.Duration(fsi) * time.Millisecond
+		}
+	}
+
 	cache.Info.updates = updates
 
 	poolIdx, setIdx, _ := s.GetDiskLoc()
@@ -504,6 +511,7 @@ func (s *xlStorage) NSScanner(ctx context.Context, cache dataUsageCache, updates
 
 		doneSz := globalScannerMetrics.timeSize(scannerMetricReadMetadata)
 		buf, err := s.readMetadata(ctx, item.Path)
+		time.Sleep(fakeSleep)
 		doneSz(len(buf))
 		res["metasize"] = strconv.Itoa(len(buf))
 		if err != nil {
