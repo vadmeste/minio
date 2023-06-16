@@ -1019,9 +1019,11 @@ func (z *erasureServerPools) Decommission(ctx context.Context, indices ...int) e
 		return err
 	}
 
-	for _, idx := range indices {
-		go z.doDecommissionInRoutine(ctx, idx)
-	}
+	go func() {
+		for _, idx := range indices {
+			z.doDecommissionInRoutine(ctx, idx)
+		}
+	}()
 
 	// Successfully started decommissioning.
 	return nil
