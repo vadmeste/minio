@@ -20,10 +20,13 @@ package main
 import (
 	"context"
 	"crypto/md5"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -39,7 +42,7 @@ var (
 	endpoint, accessKey, secretKey string
 	minModTimeStr                  string
 	bucket, prefix                 string
-	debug                          bool
+	onlyErrs, debug                bool
 	versions                       bool
 	insecure                       bool
 )
@@ -51,12 +54,49 @@ func getMD5Sum(data []byte) []byte {
 	return hash.Sum(nil)
 }
 
+// DefaultTransport - this default transport is similar to
+// http.DefaultTransport but with additional param  DisableCompression
+// is set to true to avoid decompressing content with 'gzip' encoding.
+var defaultTransport = func(secure bool) (*http.Transport, error) {
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   16,
+		ResponseHeaderTimeout: 30 * time.Minute,
+		IdleConnTimeout:       time.Minute,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 10 * time.Second,
+		// Set this value so that the underlying transport round-tripper
+		// doesn't try to auto decode the body of objects with
+		// content-encoding set to `gzip`.
+		//
+		// Refer:
+		//    https://golang.org/src/net/http/transport.go?h=roundTrip#L1843
+		DisableCompression: true,
+	}
+
+	if secure {
+		tr.TLSClientConfig = &tls.Config{
+			// Can't use SSLv3 because of POODLE and BEAST
+			// Can't use TLSv1.0 because of POODLE and BEAST using CBC cipher
+			// Can't use TLSv1.1 because of RC4 cipher usage
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+	return tr, nil
+}
+
 func main() {
 	flag.StringVar(&endpoint, "endpoint", "https://play.min.io", "S3 endpoint URL")
 	flag.StringVar(&accessKey, "access-key", "Q3AM3UQ867SPQQA43P2F", "S3 Access Key")
 	flag.StringVar(&secretKey, "secret-key", "zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG", "S3 Secret Key")
 	flag.StringVar(&bucket, "bucket", "", "Select a specific bucket")
 	flag.StringVar(&prefix, "prefix", "", "Select a prefix")
+	flag.BoolVar(&onlyErrs, "only-errors", false, "Print only errors")
 	flag.BoolVar(&debug, "debug", false, "Prints HTTP network calls to S3 endpoint")
 	flag.BoolVar(&versions, "versions", false, "Verify all versions")
 	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
@@ -94,7 +134,7 @@ func main() {
 	}
 
 	secure := strings.EqualFold(u.Scheme, "https")
-	transport, err := minio.DefaultTransport(secure)
+	transport, err := defaultTransport(secure)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -232,7 +272,9 @@ func main() {
 			if corrupted {
 				log.Println("CORRUPTED object:", objFullPath(object))
 			} else {
-				log.Println("INTACT object:", objFullPath(object))
+				if !onlyErrs {
+					log.Println("INTACT object:", objFullPath(object))
+				}
 			}
 		}
 	}
