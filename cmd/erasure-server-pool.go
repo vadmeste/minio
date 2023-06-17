@@ -410,7 +410,9 @@ func (z *erasureServerPools) getPoolInfoExistingWithOpts(ctx context.Context, bu
 			}
 			// do not remove this check as it can lead to inconsistencies
 			// for all callers of bucket replication.
-			opts.VersionID = ""
+			if !opts.MetadataChg {
+				opts.VersionID = ""
+			}
 			pinfo.ObjInfo, pinfo.Err = pool.GetObjectInfo(ctx, bucket, object, opts)
 			poolObjInfos[i] = pinfo
 		}(i, pool, poolOpts[i])
@@ -437,8 +439,22 @@ func (z *erasureServerPools) getPoolInfoExistingWithOpts(ctx context.Context, bu
 		if opts.SkipRebalancing && z.IsPoolRebalancing(pinfo.Index) {
 			continue
 		}
-
-		if pinfo.Err != nil && !isErrObjectNotFound(pinfo.Err) {
+		if pinfo.Err == nil {
+			// found a pool
+			return pinfo, nil
+		}
+		if isErrReadQuorum(pinfo.Err) && !opts.MetadataChg {
+			// read quorum is returned when the object is visibly
+			// present but its unreadable, we simply ask the writes to
+			// schedule to this pool instead. If there is no quorum
+			// it will fail anyways, however if there is quorum available
+			// with enough disks online but sufficiently inconsistent to
+			// break parity threshold, allow them to be overwritten
+			// or allow new versions to be added.
+			return pinfo, nil
+		}
+		defPool = pinfo
+		if !isErrObjectNotFound(pinfo.Err) {
 			return pinfo, pinfo.Err
 		}
 
@@ -2263,6 +2279,7 @@ func (z *erasureServerPools) PutObjectMetadata(ctx context.Context, bucket, obje
 		return z.serverPools[0].PutObjectMetadata(ctx, bucket, object, opts)
 	}
 
+	opts.MetadataChg = true
 	// We don't know the size here set 1GiB atleast.
 	idx, err := z.getPoolIdxExistingWithOpts(ctx, bucket, object, opts)
 	if err != nil {
@@ -2279,6 +2296,8 @@ func (z *erasureServerPools) PutObjectTags(ctx context.Context, bucket, object s
 		return z.serverPools[0].PutObjectTags(ctx, bucket, object, tags, opts)
 	}
 
+	opts.MetadataChg = true
+
 	// We don't know the size here set 1GiB atleast.
 	idx, err := z.getPoolIdxExistingWithOpts(ctx, bucket, object, opts)
 	if err != nil {
@@ -2294,6 +2313,8 @@ func (z *erasureServerPools) DeleteObjectTags(ctx context.Context, bucket, objec
 	if z.SinglePool() {
 		return z.serverPools[0].DeleteObjectTags(ctx, bucket, object, opts)
 	}
+
+	opts.MetadataChg = true
 
 	idx, err := z.getPoolIdxExistingWithOpts(ctx, bucket, object, opts)
 	if err != nil {
