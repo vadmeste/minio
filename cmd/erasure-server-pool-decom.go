@@ -719,7 +719,7 @@ func (z *erasureServerPools) decommissionPool(ctx context.Context, idx int, pool
 			// to create the appropriate stack.
 			versionsSorter(fivs.Versions).reverse()
 
-			var decommissionedCount int
+			var decommissioned, expired int
 			for _, version := range fivs.Versions {
 				// TODO: Skip transitioned objects for now.
 				if version.IsRemote() {
@@ -729,16 +729,17 @@ func (z *erasureServerPools) decommissionPool(ctx context.Context, idx int, pool
 
 				// Apply lifecycle rules on the objects that are expired.
 				if filterLifecycle(bi.Name, version.Name, version) {
-					decommissionedCount++
+					expired++
+					decommissioned++
 					continue
 				}
 
 				// any object with only single DEL marker we don't need
 				// to decommission, just skip it, this also includes
 				// any other versions that have already expired.
-				remainingVersions := len(fivs.Versions) - decommissionedCount
+				remainingVersions := len(fivs.Versions) - expired
 				if version.Deleted && remainingVersions == 1 {
-					decommissionedCount++
+					decommissioned++
 					continue
 				}
 
@@ -759,11 +760,7 @@ func (z *erasureServerPools) decommissionPool(ctx context.Context, idx int, pool
 						continue
 					}
 					var failure bool
-					if err != nil {
-						if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
-							// object deleted by the application, nothing to do here we move on.
-							continue
-						}
+					if err != nil && !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
 						logger.LogIf(ctx, err)
 						failure = true
 					}
@@ -772,7 +769,7 @@ func (z *erasureServerPools) decommissionPool(ctx context.Context, idx int, pool
 					z.poolMetaMutex.Unlock()
 					if !failure {
 						// Success keep a count.
-						decommissionedCount++
+						decommissioned++
 					}
 					continue
 				}
@@ -820,11 +817,11 @@ func (z *erasureServerPools) decommissionPool(ctx context.Context, idx int, pool
 				if failure {
 					break // break out on first error
 				}
-				decommissionedCount++
+				decommissioned++
 			}
 
 			// if all versions were decommissioned, then we can delete the object versions.
-			if decommissionedCount == len(fivs.Versions) {
+			if decommissioned == len(fivs.Versions) {
 				stopFn := globalDecommissionMetrics.log(decomMetricDecommissionRemoveObject, idx, bi.Name, entry.name)
 				_, err := set.DeleteObject(ctx,
 					bi.Name,

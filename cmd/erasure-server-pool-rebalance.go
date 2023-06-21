@@ -501,7 +501,7 @@ func (z *erasureServerPools) rebalanceBucket(ctx context.Context, bucket string,
 			// to create the appropriate stack.
 			versionsSorter(fivs.Versions).reverse()
 
-			var rebalanced int
+			var rebalanced, expired int
 			for _, version := range fivs.Versions {
 				// Skip transitioned objects for now. TBD
 				if version.IsRemote() {
@@ -510,15 +510,17 @@ func (z *erasureServerPools) rebalanceBucket(ctx context.Context, bucket string,
 
 				// Apply lifecycle rules on the objects that are expired.
 				if filterLifecycle(bucket, version.Name, version) {
-					logger.LogIf(ctx, fmt.Errorf("found %s/%s (%s) expired object based on ILM rules, skipping and scheduled for deletion", bucket, version.Name, version.VersionID))
+					rebalanced++
+					expired++
 					continue
 				}
 
-				// We will skip rebalancing delete markers
-				// with single version, its as good as there
-				// is no data associated with the object.
-				if version.Deleted && len(fivs.Versions) == 1 {
-					logger.LogIf(ctx, fmt.Errorf("found %s/%s delete marked object with no other versions, skipping since there is no data to be rebalanced", bucket, version.Name))
+				// any object with only single DEL marker we don't need
+				// to rebalance, just skip it, this also includes
+				// any other versions that have already expired.
+				remainingVersions := len(fivs.Versions) - expired
+				if version.Deleted && remainingVersions == 1 {
+					rebalanced++
 					continue
 				}
 
@@ -547,9 +549,10 @@ func (z *erasureServerPools) rebalanceBucket(ctx context.Context, bucket string,
 					continue
 				}
 
-				var failure bool
+				var failure, ignore bool
 				for try := 0; try < 3; try++ {
 					// GetObjectReader.Close is called by rebalanceObject
+					stopFn := globalRebalanceMetrics.log(rebalanceMetricRebalanceObject, poolIdx, bucket, version.Name, version.VersionID)
 					gr, err := set.GetObjectNInfo(ctx,
 						bucket,
 						encodeDirObject(version.Name),
@@ -562,19 +565,21 @@ func (z *erasureServerPools) rebalanceBucket(ctx context.Context, bucket string,
 						})
 					if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
 						// object deleted by the application, nothing to do here we move on.
-						return
+						ignore = true
+						stopFn(nil)
+						break
 					}
 					if err != nil {
 						failure = true
 						logger.LogIf(ctx, err)
+						stopFn(err)
 						continue
 					}
 
-					stopFn := globalRebalanceMetrics.log(rebalanceMetricRebalanceObject, poolIdx, bucket, version.Name)
 					if err = z.rebalanceObject(ctx, bucket, gr); err != nil {
-						stopFn(err)
 						failure = true
 						logger.LogIf(ctx, err)
+						stopFn(err)
 						continue
 					}
 
@@ -582,7 +587,9 @@ func (z *erasureServerPools) rebalanceBucket(ctx context.Context, bucket string,
 					failure = false
 					break
 				}
-
+				if ignore {
+					continue
+				}
 				if failure {
 					break // break out on first error
 				}
