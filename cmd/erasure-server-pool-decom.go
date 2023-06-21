@@ -419,7 +419,9 @@ func (p poolMeta) save(ctx context.Context, pools []*erasureSets) error {
 	// Saves on all pools to make sure decommissioning of first pool is allowed.
 	for i, eset := range pools {
 		if err = saveConfig(ctx, eset, poolMetaName, buf); err != nil {
-			logger.LogIf(ctx, fmt.Errorf("saving pool.bin for pool index %d failed with: %v", i, err))
+			if !errors.Is(err, context.Canceled) {
+				logger.LogIf(ctx, fmt.Errorf("saving pool.bin for pool index %d failed with: %v", i, err))
+			}
 			return err
 		}
 	}
@@ -731,11 +733,12 @@ func (z *erasureServerPools) decommissionPool(ctx context.Context, idx int, pool
 					continue
 				}
 
-				// We will skip decommissioning delete markers
-				// with single version, its as good as there
-				// is no data associated with the object.
-				if version.Deleted && len(fivs.Versions) == 1 {
-					logger.LogIf(ctx, fmt.Errorf("found %s/%s delete marked object with no other versions, skipping since there is no content left", bi.Name, version.Name))
+				// any object with only single DEL marker we don't need
+				// to decommission, just skip it, this also includes
+				// any other versions that have already expired.
+				remainingVersions := len(fivs.Versions) - decommissionedCount
+				if version.Deleted && remainingVersions == 1 {
+					decommissionedCount++
 					continue
 				}
 
