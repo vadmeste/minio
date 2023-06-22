@@ -74,7 +74,7 @@ func (api objectAPIHandlers) PutBucketVersioningHandler(w http.ResponseWriter, r
 		return
 	}
 
-	if rcfg, _ := globalBucketObjectLockSys.Get(bucket); rcfg.LockEnabled && (v.Suspended() || v.PrefixesExcluded()) {
+	if rcfg, _ := globalBucketObjectLockSys.Get(bucket); rcfg.LockEnabled && v.Suspended() {
 		writeErrorResponse(ctx, w, APIError{
 			Code:           "InvalidBucketState",
 			Description:    "An Object Lock configuration is present on this bucket, versioning cannot be suspended.",
