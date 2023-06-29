@@ -466,11 +466,11 @@ func (z *erasureServerPools) rebalanceBucket(ctx context.Context, bucket string,
 			event := evalActionFromLifecycle(ctx, *lc, lr, objInfo)
 			switch action := event.Action; action {
 			case lifecycle.DeleteVersionAction, lifecycle.DeleteAction:
-				globalExpiryState.enqueueByDays(objInfo, false, action == lifecycle.DeleteVersionAction)
+				globalExpiryState.enqueueByDays(objInfo, false, action)
 				// Skip this entry.
 				return true
 			case lifecycle.DeleteRestoredAction, lifecycle.DeleteRestoredVersionAction:
-				globalExpiryState.enqueueByDays(objInfo, true, action == lifecycle.DeleteRestoredVersionAction)
+				globalExpiryState.enqueueByDays(objInfo, true, action)
 				// Skip this entry.
 				return true
 			}

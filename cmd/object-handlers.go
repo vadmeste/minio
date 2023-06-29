@@ -479,11 +479,11 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 			var success bool
 			switch evt.Action {
 			case lifecycle.DeleteVersionAction, lifecycle.DeleteAction:
-				success = applyExpiryRule(objInfo, false, evt.Action == lifecycle.DeleteVersionAction)
+				success = applyExpiryRule(objInfo, false, evt.Action)
 			case lifecycle.DeleteRestoredAction, lifecycle.DeleteRestoredVersionAction:
 				// Restored object delete would be still allowed to proceed as success
 				// since transition behavior is slightly different.
-				applyExpiryRule(objInfo, true, evt.Action == lifecycle.DeleteRestoredVersionAction)
+				applyExpiryRule(objInfo, true, evt.Action)
 			}
 			if success {
 				writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrNoSuchKey))
@@ -736,11 +736,11 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 			var success bool
 			switch evt.Action {
 			case lifecycle.DeleteVersionAction, lifecycle.DeleteAction:
-				success = applyExpiryRule(objInfo, false, evt.Action == lifecycle.DeleteVersionAction)
+				success = applyExpiryRule(objInfo, false, evt.Action)
 			case lifecycle.DeleteRestoredAction, lifecycle.DeleteRestoredVersionAction:
 				// Restored object delete would be still allowed to proceed as success
 				// since transition behavior is slightly different.
-				applyExpiryRule(objInfo, true, evt.Action == lifecycle.DeleteRestoredVersionAction)
+				applyExpiryRule(objInfo, true, evt.Action)
 			}
 			if success {
 				writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrNoSuchKey))

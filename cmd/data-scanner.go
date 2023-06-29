@@ -1167,17 +1167,20 @@ func applyExpiryOnTransitionedObject(ctx context.Context, objLayer ObjectLayer, 
 	return true
 }
 
-func applyExpiryOnNonTransitionedObjects(ctx context.Context, objLayer ObjectLayer, obj ObjectInfo, applyOnVersion bool) bool {
+func applyExpiryOnNonTransitionedObjects(ctx context.Context, objLayer ObjectLayer, obj ObjectInfo, action lifecycle.Action) bool {
 	opts := ObjectOptions{
 		Expiration: ExpirationOptions{Expire: true},
 	}
 
-	if applyOnVersion {
+	if action == lifecycle.DeleteVersionAction || action == lifecycle.DeleteRestoredVersionAction {
 		opts.VersionID = obj.VersionID
 	}
 	if opts.VersionID == "" {
 		opts.Versioned = globalBucketVersioningSys.PrefixEnabled(obj.Bucket, obj.Name)
 		opts.VersionSuspended = globalBucketVersioningSys.PrefixSuspended(obj.Bucket, obj.Name)
+	}
+	if action == lifecycle.DeleteAllVersionsAction {
+		opts.DeletePrefix = true
 	}
 
 	obj, err := objLayer.DeleteObject(ctx, obj.Bucket, obj.Name, opts)
@@ -1210,8 +1213,8 @@ func applyExpiryOnNonTransitionedObjects(ctx context.Context, objLayer ObjectLay
 }
 
 // Apply object, object version, restored object or restored object version action on the given object
-func applyExpiryRule(obj ObjectInfo, restoredObject, applyOnVersion bool) bool {
-	globalExpiryState.enqueueByDays(obj, restoredObject, applyOnVersion)
+func applyExpiryRule(obj ObjectInfo, restoredObject bool, action lifecycle.Action) bool {
+	globalExpiryState.enqueueByDays(obj, restoredObject, action)
 	return true
 }
 
@@ -1219,9 +1222,9 @@ func applyExpiryRule(obj ObjectInfo, restoredObject, applyOnVersion bool) bool {
 func applyLifecycleAction(action lifecycle.Action, obj ObjectInfo, storageClass string) (success bool) {
 	switch action {
 	case lifecycle.DeleteVersionAction, lifecycle.DeleteAction:
-		success = applyExpiryRule(obj, false, action == lifecycle.DeleteVersionAction)
+		success = applyExpiryRule(obj, false, action)
 	case lifecycle.DeleteRestoredAction, lifecycle.DeleteRestoredVersionAction:
-		success = applyExpiryRule(obj, true, action == lifecycle.DeleteRestoredVersionAction)
+		success = applyExpiryRule(obj, true, action)
 	case lifecycle.TransitionAction, lifecycle.TransitionVersionAction:
 		success = applyTransitionRule(obj, storageClass)
 	}

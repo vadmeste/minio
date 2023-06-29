@@ -362,11 +362,11 @@ func applyBucketActions(ctx context.Context, o listPathOptions, in <-chan metaCa
 			evt := evalActionFromLifecycle(ctx, *o.Lifecycle, o.Retention, objInfo)
 			switch evt.Action {
 			case lifecycle.DeleteVersionAction, lifecycle.DeleteAction:
-				globalExpiryState.enqueueByDays(objInfo, false, evt.Action == lifecycle.DeleteVersionAction)
+				globalExpiryState.enqueueByDays(objInfo, false, evt.Action)
 				// Skip this entry.
 				continue
 			case lifecycle.DeleteRestoredAction, lifecycle.DeleteRestoredVersionAction:
-				globalExpiryState.enqueueByDays(objInfo, true, evt.Action == lifecycle.DeleteRestoredVersionAction)
+				globalExpiryState.enqueueByDays(objInfo, true, evt.Action)
 				// Skip this entry.
 				continue
 			}

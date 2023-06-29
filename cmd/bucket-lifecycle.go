@@ -68,7 +68,7 @@ func NewLifecycleSys() *LifecycleSys {
 
 type expiryTask struct {
 	objInfo        ObjectInfo
-	versionExpiry  bool
+	action lifecycle.Action
 	restoredObject bool
 }
 
@@ -92,11 +92,11 @@ func (es *expiryState) close() {
 }
 
 // enqueueByDays enqueues object versions expired by days for expiry.
-func (es *expiryState) enqueueByDays(oi ObjectInfo, restoredObject bool, rmVersion bool) {
+func (es *expiryState) enqueueByDays(oi ObjectInfo, restoredObject bool, action lifecycle.Action) {
 	select {
 	case <-GlobalContext.Done():
 		es.close()
-	case es.byDaysCh <- expiryTask{objInfo: oi, versionExpiry: rmVersion, restoredObject: restoredObject}:
+	case es.byDaysCh <- expiryTask{objInfo: oi, action: action, restoredObject: restoredObject}:
 	default:
 	}
 }
@@ -128,7 +128,7 @@ func initBackgroundExpiry(ctx context.Context, objectAPI ObjectLayer) {
 			if t.objInfo.TransitionedObject.Status != "" {
 				applyExpiryOnTransitionedObject(ctx, objectAPI, t.objInfo, t.restoredObject)
 			} else {
-				applyExpiryOnNonTransitionedObjects(ctx, objectAPI, t.objInfo, t.versionExpiry)
+				applyExpiryOnNonTransitionedObjects(ctx, objectAPI, t.objInfo, t.action)
 			}
 		}
 	}()
