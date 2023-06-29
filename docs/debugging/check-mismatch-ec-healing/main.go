@@ -46,13 +46,15 @@ var (
 	re              = regexp.MustCompile(`\d->(\d*)`)
 )
 
-type event struct {
+type scanResult struct {
 	path       string
 	etag       string
 	mtime      int64
 	size       int64
 	zeroParity bool
 	mismatchEC bool
+	ecM        int
+	ecN        int
 }
 
 type writtenBytes struct {
@@ -67,12 +69,12 @@ func (wb *writtenBytes) Write(p []byte) (int, error) {
 }
 
 type logger struct {
-	events chan event
-	wg     sync.WaitGroup
+	results chan scanResult
+	wg      sync.WaitGroup
 }
 
 func (l *logger) start() {
-	l.events = make(chan event)
+	l.results = make(chan scanResult)
 	l.wg.Add(1)
 	go func() {
 		l.work()
@@ -81,14 +83,14 @@ func (l *logger) start() {
 }
 
 func (l *logger) stop() {
-	close(l.events)
+	close(l.results)
 	l.wg.Wait()
 }
 
 func (l logger) work() {
 	var (
 		totalScanned    uint64
-		corruptedFound  uint64
+		mismatchEC      uint64
 		zeroParityFound uint64
 		rotation        int
 		step            = uint64(1)
@@ -103,9 +105,9 @@ rotateArchive:
 	wb := &writtenBytes{w: f}
 	zw := gzip.NewWriter(wb)
 
-	for e := range l.events {
+	for e := range l.results {
 		if totalScanned%step == 0 {
-			fmt.Printf("scanned=%d, corrupted-found=%d, zero-parity=%d\n", totalScanned, corruptedFound, zeroParityFound)
+			fmt.Printf("scanned=%d, mismatch-ec=%d, zero-parity=%d\n", totalScanned, mismatchEC, zeroParityFound)
 			if step < 100000 {
 				step *= 10
 				if step > 100000 {
@@ -118,20 +120,22 @@ rotateArchive:
 			zeroParityFound++
 		}
 		if e.mismatchEC {
-			corruptedFound++
+			mismatchEC++
 		}
 
 		if !e.zeroParity && !e.mismatchEC {
 			continue
 		}
 
-		_, err = zw.Write([]byte(fmt.Sprintf("%s etag=%s mtime=%s size=%d zeroParity=%t mismatchEC=%t\n",
+		_, err = zw.Write([]byte(fmt.Sprintf("%s etag=%s mtime=%s size=%d zeroParity=%t mismatchEC=%t, ecM=%d, ecN=%d\n",
 			e.path,
 			e.etag,
 			time.Unix(0, e.mtime).Format(time.RFC3339),
 			e.size,
 			e.zeroParity,
 			e.mismatchEC,
+			e.ecM,
+			e.ecN,
 		)))
 		if err != nil {
 			log.Println("ERR:", err)
@@ -147,25 +151,25 @@ rotateArchive:
 	zw.Close()
 	f.Close()
 
-	fmt.Printf("scanned=%d, corrupted-found=%d, zero-parity=%d\n", totalScanned, corruptedFound, zeroParityFound)
+	fmt.Printf("scanned=%d, mismatch-ec=%d, zero-parity=%d\n", totalScanned, mismatchEC, zeroParityFound)
 }
 
-func checkErasureUpgradeParityMismatch(r io.Reader) (string, int64, int64, bool, bool, error) {
+func checkErasureUpgradeParityMismatch(r io.Reader) (scanResult, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return "", 0, 0, false, false, err
+		return scanResult{}, err
 	}
 	b, _, minor, err := checkXL2V1(b)
 	if err != nil {
-		return "", 0, 0, false, false, err
+		return scanResult{}, err
 	}
 
 	if minor != 3 {
-		return "", 0, 0, false, false, fmt.Errorf("ignoring metadata version %d", minor)
+		return scanResult{}, err
 	}
 	v, b, err := msgp.ReadBytesZC(b)
 	if err != nil {
-		return "", 0, 0, false, false, err
+		return scanResult{}, err
 	}
 	if _, nbuf, err := msgp.ReadUint32Bytes(b); err == nil {
 		// Read metadata CRC (added in v2, ignore if not found)
@@ -174,14 +178,10 @@ func checkErasureUpgradeParityMismatch(r io.Reader) (string, int64, int64, bool,
 
 	_, v, err = decodeXLHeaders(v)
 	if err != nil {
-		return "", 0, 0, false, false, err
+		return scanResult{}, err
 	}
 
-	var (
-		mismatchEC, zeroParity bool
-		size, mtime            int64
-		etag                   string
-	)
+	var result scanResult
 
 	err = decodeVersions(v, 1, func(idx int, hdr, meta []byte) error {
 		// var header xlMetaV2VersionHeaderV2
@@ -207,13 +207,15 @@ func checkErasureUpgradeParityMismatch(r io.Reader) (string, int64, int64, bool,
 		}
 		var ei erasureInfo
 		if err := json.Unmarshal(buf.Bytes(), &ei); err == nil && ei.V2Obj != nil {
-			size = ei.V2Obj.Size
-			mtime = ei.V2Obj.MTime
+			result.ecM = ei.V2Obj.EcM
+			result.ecN = ei.V2Obj.EcN
+			result.size = ei.V2Obj.Size
+			result.mtime = ei.V2Obj.MTime
 			if ei.V2Obj.EcN == 0 {
-				zeroParity = true
+				result.zeroParity = true
 			}
 			if ei.V2Obj.MetaUsr != nil {
-				etag = ei.V2Obj.MetaUsr["etag"]
+				result.etag = ei.V2Obj.MetaUsr["etag"]
 			}
 			if ei.V2Obj.MetaSys != nil {
 				if upgrade := ei.V2Obj.MetaSys["x-minio-internal-erasure-upgraded"]; upgrade != "" {
@@ -225,7 +227,7 @@ func checkErasureUpgradeParityMismatch(r io.Reader) (string, int64, int64, bool,
 					if len(matches) > 0 && len(matches[0]) > 1 && len(matches[0][1]) > 0 {
 						if foundEC, err := strconv.Atoi(string(matches[0][1])); err == nil {
 							if ei.V2Obj.EcN != foundEC {
-								mismatchEC = true
+								result.mismatchEC = true
 							}
 						}
 					}
@@ -235,7 +237,7 @@ func checkErasureUpgradeParityMismatch(r io.Reader) (string, int64, int64, bool,
 		return nil
 	})
 
-	return etag, size, mtime, mismatchEC, zeroParity, err
+	return result, err
 }
 
 func mainAction(c *cli.Context) error {
@@ -276,18 +278,15 @@ func mainAction(c *cli.Context) error {
 				if e != nil {
 					return nil
 				}
-				etag, size, mtime, mismatch, zeroParity, e := checkErasureUpgradeParityMismatch(f)
+				result, e := checkErasureUpgradeParityMismatch(f)
 				f.Close()
 				if e != nil {
 					return nil
 				}
 				end := time.Now()
 
-				logger.events <- event{
-					path: path, etag: etag, mtime: mtime, size: size,
-					zeroParity: zeroParity, mismatchEC: mismatch,
-				}
-
+				result.path = path
+				logger.results <- result
 				if waitFactor > 0 {
 					// Slow down
 					time.Sleep(time.Duration(waitFactor) * end.Sub(start))
