@@ -23,9 +23,11 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -42,6 +44,8 @@ import (
 var (
 	nodeName        string
 	waitFactor      int
+	maxWait         time.Duration
+	set             int
 	rotateGZIPAfter int
 	re              = regexp.MustCompile(`\d->(\d*)`)
 )
@@ -51,7 +55,6 @@ type scanResult struct {
 	etag       string
 	mtime      int64
 	size       int64
-	zeroParity bool
 	mismatchEC bool
 	ecM        int
 	ecN        int
@@ -116,23 +119,22 @@ rotateArchive:
 			}
 		}
 		totalScanned++
-		if e.zeroParity {
+		if e.ecN == 0 {
 			zeroParityFound++
 		}
 		if e.mismatchEC {
 			mismatchEC++
 		}
 
-		if !e.zeroParity && !e.mismatchEC {
+		if e.ecN != 0 && !e.mismatchEC {
 			continue
 		}
 
-		_, err = zw.Write([]byte(fmt.Sprintf("%s etag=%s mtime=%s size=%d zeroParity=%t mismatchEC=%t, ecM=%d, ecN=%d\n",
+		_, err = zw.Write([]byte(fmt.Sprintf("%s etag=%s mtime=%s size=%d mismatchEC=%t, ecM=%d, ecN=%d\n",
 			e.path,
 			e.etag,
 			time.Unix(0, e.mtime).Format(time.RFC3339),
 			e.size,
-			e.zeroParity,
 			e.mismatchEC,
 			e.ecM,
 			e.ecN,
@@ -211,9 +213,6 @@ func checkErasureUpgradeParityMismatch(r io.Reader) (scanResult, error) {
 			result.ecN = ei.V2Obj.EcN
 			result.size = ei.V2Obj.Size
 			result.mtime = ei.V2Obj.MTime
-			if ei.V2Obj.EcN == 0 {
-				result.zeroParity = true
-			}
 			if ei.V2Obj.MetaUsr != nil {
 				result.etag = ei.V2Obj.MetaUsr["etag"]
 			}
@@ -240,9 +239,42 @@ func checkErasureUpgradeParityMismatch(r io.Reader) (scanResult, error) {
 	return result, err
 }
 
+type xl struct {
+	This string     `json:"this"`
+	Sets [][]string `json:"sets"`
+}
+
+type format struct {
+	XL xl `json:"xl"`
+}
+
+func getSetIndex(path string) (int, error) {
+	data, err := ioutil.ReadFile(filepath.Join(path, ".minio.sys/format.json"))
+	if err != nil {
+		return -1, err
+	}
+
+	var f format
+	if err := json.Unmarshal(data, &f); err != nil {
+		return -1, err
+	}
+
+	for idx, drives := range f.XL.Sets {
+		for _, drive := range drives {
+			if f.XL.This == drive {
+				return idx, nil
+			}
+		}
+	}
+
+	return -1, errors.New("set not found")
+}
+
 func mainAction(c *cli.Context) error {
 
 	waitFactor = c.Int("wait-factor")
+	maxWait = c.Duration("max-wait")
+	set = c.Int("set")
 	nodeName = c.String("node-name")
 	rotateGZIPAfter = c.Int("rotate-gzip-after")
 
@@ -258,6 +290,15 @@ func mainAction(c *cli.Context) error {
 		wg.Add(1)
 		go func(arg string) {
 			defer wg.Done()
+			if set >= 0 {
+				s, err := getSetIndex(arg)
+				if err != nil {
+					log.Fatalln(err)
+				}
+				if s != set {
+					return
+				}
+			}
 
 			err := filepath.Walk(arg, func(path string, info fs.FileInfo, err error) error {
 				if err != nil {
@@ -288,8 +329,12 @@ func mainAction(c *cli.Context) error {
 				result.path = path
 				logger.results <- result
 				if waitFactor > 0 {
+					wait := time.Duration(waitFactor) * end.Sub(start)
+					if wait > maxWait {
+						wait = maxWait
+					}
 					// Slow down
-					time.Sleep(time.Duration(waitFactor) * end.Sub(start))
+					time.Sleep(wait)
 				}
 				return nil
 			})
@@ -325,6 +370,16 @@ FLAGS:
 		cli.IntFlag{
 			Usage: "A wait factor between xl.meta scans",
 			Name:  "wait-factor",
+		},
+		cli.DurationFlag{
+			Usage: "Maximum wait between xl.meta scans",
+			Name:  "max-wait",
+			Value: time.Second,
+		},
+		cli.IntFlag{
+			Usage: "scan only the specified set index",
+			Name:  "set",
+			Value: -1,
 		},
 		cli.IntFlag{
 			Usage: "rotate gzip archive after accumulating the specified size",
