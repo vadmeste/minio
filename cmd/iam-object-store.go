@@ -363,7 +363,7 @@ func (iamOS *IAMObjectStore) loadAllFromObjStore(ctx context.Context, cache *iam
 	for _, item := range policiesList {
 		policyName := path.Dir(item)
 		if err := iamOS.loadPolicyDoc(ctx, policyName, cache.iamPolicyDocsMap); err != nil && !errors.Is(err, errNoSuchPolicy) {
-			return err
+			return fmt.Errorf("unable to load the policy doc `%s`: %w", policyName, err)
 		}
 	}
 	setDefaultCannedPolicies(cache.iamPolicyDocsMap)
@@ -374,7 +374,7 @@ func (iamOS *IAMObjectStore) loadAllFromObjStore(ctx context.Context, cache *iam
 		for _, item := range regUsersList {
 			userName := path.Dir(item)
 			if err := iamOS.loadUser(ctx, userName, regUser, cache.iamUsersMap); err != nil && err != errNoSuchUser {
-				return err
+				return fmt.Errorf("unable to load the user `%s`: %w", userName, err)
 			}
 		}
 
@@ -383,7 +383,7 @@ func (iamOS *IAMObjectStore) loadAllFromObjStore(ctx context.Context, cache *iam
 		for _, item := range groupsList {
 			group := path.Dir(item)
 			if err := iamOS.loadGroup(ctx, group, cache.iamGroupsMap); err != nil && err != errNoSuchGroup {
-				return err
+				return fmt.Errorf("unable to load the group `%s`: %w", group, err)
 			}
 		}
 	}
@@ -393,7 +393,7 @@ func (iamOS *IAMObjectStore) loadAllFromObjStore(ctx context.Context, cache *iam
 	for _, item := range userPolicyMappingsList {
 		userName := strings.TrimSuffix(item, ".json")
 		if err := iamOS.loadMappedPolicy(ctx, userName, regUser, false, cache.iamUserPolicyMap); err != nil && !errors.Is(err, errNoSuchPolicy) {
-			return err
+			return fmt.Errorf("unable to load the user policy mapping `%s`: %w", userName, err)
 		}
 	}
 
@@ -402,7 +402,7 @@ func (iamOS *IAMObjectStore) loadAllFromObjStore(ctx context.Context, cache *iam
 	for _, item := range groupPolicyMappingsList {
 		groupName := strings.TrimSuffix(item, ".json")
 		if err := iamOS.loadMappedPolicy(ctx, groupName, regUser, true, cache.iamGroupPolicyMap); err != nil && !errors.Is(err, errNoSuchPolicy) {
-			return err
+			return fmt.Errorf("unable to load the group mapping policy `%s`: %w", groupName, err)
 		}
 	}
 
@@ -411,7 +411,7 @@ func (iamOS *IAMObjectStore) loadAllFromObjStore(ctx context.Context, cache *iam
 	for _, item := range svcAccList {
 		userName := path.Dir(item)
 		if err := iamOS.loadUser(ctx, userName, svcUser, cache.iamUsersMap); err != nil && err != errNoSuchUser {
-			return err
+			return fmt.Errorf("unable to load the service account `%s`: %w", userName, err)
 		}
 	}
 
@@ -420,7 +420,7 @@ func (iamOS *IAMObjectStore) loadAllFromObjStore(ctx context.Context, cache *iam
 	for _, item := range stsUsersList {
 		userName := path.Dir(item)
 		if err := iamOS.loadUser(ctx, userName, stsUser, cache.iamUsersMap); err != nil && err != errNoSuchUser {
-			return err
+			return fmt.Errorf("unable to load the STS user `%s`: %w", userName, err)
 		}
 	}
 
@@ -429,7 +429,7 @@ func (iamOS *IAMObjectStore) loadAllFromObjStore(ctx context.Context, cache *iam
 	for _, item := range stsPolicyMappingsList {
 		stsName := strings.TrimSuffix(item, ".json")
 		if err := iamOS.loadMappedPolicy(ctx, stsName, stsUser, false, cache.iamUserPolicyMap); err != nil && !errors.Is(err, errNoSuchPolicy) {
-			return err
+			return fmt.Errorf("unable to load the STS policy mapping `%s`: %w", stsName, err)
 		}
 	}
 
