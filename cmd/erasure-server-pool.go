@@ -623,7 +623,7 @@ func (z *erasureServerPools) StorageInfo(ctx context.Context) StorageInfo {
 	return globalNotificationSys.StorageInfo(z)
 }
 
-func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataUsageInfo, wantCycle uint32, healScanMode madmin.HealScanMode) error {
+func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataUsageInfo) error {
 	// Updates must be closed before we return.
 	defer close(updates)
 
@@ -635,15 +635,8 @@ func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataU
 	var results []dataUsageCache
 	var firstErr error
 
-	allBuckets, err := z.ListBuckets(ctx, BucketOptions{})
-	if err != nil {
-		return err
-	}
-
-	if len(allBuckets) == 0 {
-		updates <- DataUsageInfo{} // no buckets found update data usage to reflect latest state
-		return nil
-	}
+	scanMgr := newBucketsScanMgr(z)
+	scanMgr.start()
 
 	// Collect for each set in serverPools.
 	for _, z := range z.serverPools {
@@ -663,7 +656,7 @@ func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataU
 					}
 				}()
 				// Start scanner. Blocks until done.
-				err := erObj.nsScanner(ctx, allBuckets, wantCycle, updates, healScanMode)
+				err := erObj.nsScanner(ctx, scanMgr, updates)
 				if err != nil {
 					logger.LogIf(ctx, err)
 					mu.Lock()
@@ -678,6 +671,7 @@ func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataU
 			}(len(results)-1, erObj)
 		}
 	}
+
 	updateCloser := make(chan chan struct{})
 	go func() {
 		updateTicker := time.NewTicker(30 * time.Second)
@@ -689,6 +683,8 @@ func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataU
 		var allMerged dataUsageCache
 
 		update := func() {
+			knownBuckets := scanMgr.getKnownBuckets()
+
 			mu.Lock()
 			defer mu.Unlock()
 
@@ -701,7 +697,7 @@ func (z *erasureServerPools) NSScanner(ctx context.Context, updates chan<- DataU
 				allMerged.merge(info)
 			}
 			if allMerged.root() != nil && allMerged.Info.LastUpdate.After(lastUpdate) {
-				updates <- allMerged.dui(allMerged.Info.Name, allBuckets)
+				updates <- allMerged.dui(allMerged.Info.Name, knownBuckets)
 				lastUpdate = allMerged.Info.LastUpdate
 			}
 		}

@@ -484,10 +484,6 @@ github.com/minio/highwayhash v1.0.2 h1:Aak5U0nElisjDCfPSG79Tgzkn2gl66NxOMspRrKnA
 github.com/minio/highwayhash v1.0.2/go.mod h1:BQskDq+xkJ12lmlUUi7U0M5Swg3EWR+dLTk+kldvVxY=
 github.com/minio/kes-go v0.2.0 h1:HA33arq9s3MErbsj3PAXFVfFo4U4yw7lTKQ5kWFrpCA=
 github.com/minio/kes-go v0.2.0/go.mod h1:VorHLaIYis9/MxAHAtXN4d8PUMNKhIxTIlvFt0hBOEo=
-github.com/minio/madmin-go/v3 v3.0.32 h1:2O0Up8V/R3eLRQl7wNj+fwoUCRiagYmsGVNUm5V72UA=
-github.com/minio/madmin-go/v3 v3.0.32/go.mod h1:4QN2NftLSV7MdlT50dkrenOMmNVHluxTvlqJou3hte8=
-github.com/minio/mc v0.0.0-20231030184332-9f2fb2b6a9f8 h1:3WUMQABG8FytpYHRtLHjrnztcUB09hlIrh7rQI9H+tY=
-github.com/minio/mc v0.0.0-20231030184332-9f2fb2b6a9f8/go.mod h1:SoPU55ntH5d6IEq6jRBn6e/7SpwI/eSNdBDWmH7nwHk=
 github.com/minio/md5-simd v1.1.2 h1:Gdi1DZK69+ZVMoNHRXJyNcxrMA4dSxoYHZSQbirFg34=
 github.com/minio/md5-simd v1.1.2/go.mod h1:MzdKDxYpY2BT9XQFocsiZf/NKVtR7nkE4RoEpN+20RM=
 github.com/minio/minio-go/v6 v6.0.46/go.mod h1:qD0lajrGW49lKZLtXKtCB4X/qkMf0a5tBvN2PaZg7Gg=
@@ -711,6 +707,10 @@ github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqri
 github.com/ugorji/go/codec v0.0.0-20181204163529-d75b2dcb6bc8/go.mod h1:VFNgLljTbGfSG7qAOspJ7OScBnGdDN/yBr0sguwnwf0=
 github.com/unrolled/secure v1.13.0 h1:sdr3Phw2+f8Px8HE5sd1EHdj1aV3yUwed/uZXChLFsk=
 github.com/unrolled/secure v1.13.0/go.mod h1:BmF5hyM6tXczk3MpQkFf1hpKSRqCyhqcbiQtiAF7+40=
+github.com/vadmeste/madmin-go/v3 v3.0.0-20231122005635-46c647720db9 h1:sEHaLZkUX6KpmkYWc7/XkPxMF+z74um50vu82AU6GfY=
+github.com/vadmeste/madmin-go/v3 v3.0.0-20231122005635-46c647720db9/go.mod h1:4QN2NftLSV7MdlT50dkrenOMmNVHluxTvlqJou3hte8=
+github.com/vadmeste/mc v0.0.0-20231122022355-4fd4d566334e h1:Fjr3yMZJKz6ZMnNR8PMMf6p6/CDhjKqxfhVirHXMAqQ=
+github.com/vadmeste/mc v0.0.0-20231122022355-4fd4d566334e/go.mod h1:E9ket1Ri7G4YkA+9+VnBHuD8PYfmMWz0rL7JipLwwR4=
 github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6KllzawFIhcdPw=
 github.com/valyala/bytebufferpool v1.0.0/go.mod h1:6bBcMArwyJ5K/AmCkWv1jt77kVWyCJ6HpOuEn7z0Csc=
 github.com/vbauerster/mpb/v8 v8.6.2 h1:9EhnJGQRtvgDVCychJgR96EDCOqgg2NsMuk5JUcX4DA=

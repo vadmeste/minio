@@ -46,10 +46,10 @@ type scannerMetrics struct {
 	currentPaths sync.Map
 
 	cycleInfoMu sync.Mutex
-	cycleInfo   *currentScannerCycle
+	cycleInfo   map[string]currentScannerCycle
 }
 
-var globalScannerMetrics scannerMetrics
+var globalScannerMetrics = scannerMetrics{cycleInfo: make(map[string]currentScannerCycle)}
 
 const (
 	// START Realtime metrics, that only to records
@@ -249,37 +249,69 @@ func (p *scannerMetrics) lastMinuteActions(a lifecycle.Action) AccElem {
 	return val
 }
 
-// setCycle updates the current cycle metrics.
-func (p *scannerMetrics) setCycle(c *currentScannerCycle) {
-	if c != nil {
-		c2 := c.clone()
-		c = &c2
-	}
+// addCycleEvent updates the current cycle metrics.
+func (p *scannerMetrics) bucketScanStarted(bucket string, cycle uint32) {
 	p.cycleInfoMu.Lock()
-	p.cycleInfo = c
-	p.cycleInfoMu.Unlock()
+	defer p.cycleInfoMu.Unlock()
+
+	info := p.cycleInfo[bucket]
+	info.current = uint64(cycle)
+	info.started = time.Now()
+	info.ongoing = true
+
+	p.cycleInfo[bucket] = info
+}
+
+func (p *scannerMetrics) bucketScanFinished(bucket string) {
+	p.cycleInfoMu.Lock()
+	defer p.cycleInfoMu.Unlock()
+
+	info := p.cycleInfo[bucket]
+	info.ongoing = false
+	info.cycleCompleted = append(info.cycleCompleted, time.Now())
+	if len(info.cycleCompleted) > 10 {
+		info.cycleCompleted = info.cycleCompleted[len(info.cycleCompleted)-10:]
+	}
+	p.cycleInfo[bucket] = info
+}
+
+type currentScannerCycle struct {
+	current        uint64
+	ongoing        bool
+	started        time.Time
+	cycleCompleted []time.Time
+}
+
+// clone returns a clone.
+func (z currentScannerCycle) clone() currentScannerCycle {
+	z.cycleCompleted = append(make([]time.Time, 0, len(z.cycleCompleted)), z.cycleCompleted...)
+	return z
 }
 
 // getCycle returns the current cycle metrics.
 // If not nil, the returned value can safely be modified.
-func (p *scannerMetrics) getCycle() *currentScannerCycle {
+func (p *scannerMetrics) getCycles() map[string]currentScannerCycle {
 	p.cycleInfoMu.Lock()
 	defer p.cycleInfoMu.Unlock()
 	if p.cycleInfo == nil {
 		return nil
 	}
-	c := p.cycleInfo.clone()
-	return &c
+	ret := make(map[string]currentScannerCycle, len(p.cycleInfo))
+	for bucket := range p.cycleInfo {
+		ret[bucket] = p.cycleInfo[bucket].clone()
+	}
+	return ret
 }
 
 func (p *scannerMetrics) report() madmin.ScannerMetrics {
 	var m madmin.ScannerMetrics
-	cycle := p.getCycle()
-	if cycle != nil {
-		m.CurrentCycle = cycle.current
-		m.CyclesCompletedAt = cycle.cycleCompleted
-		m.CurrentStarted = cycle.started
+
+	for _, cycle := range p.getCycles() {
+		if cycle.ongoing {
+			m.BucketsScanInfo.OngoingBuckets++
+		}
 	}
+
 	m.CollectedAt = time.Now()
 	m.ActivePaths = p.getCurrentPaths()
 	m.LifeTimeOps = make(map[string]uint64, scannerMetricLast)
