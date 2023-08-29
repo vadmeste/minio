@@ -20,6 +20,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sort"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/v2/console"
 	"github.com/minio/pkg/v2/wildcard"
+	"github.com/minio/pkg/v2/workers"
 )
 
 const (
@@ -155,7 +157,6 @@ func mustGetHealSequence(ctx context.Context) *healSequence {
 
 // healErasureSet lists and heals all objects in a specific erasure set
 func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, tracker *healingTracker) error {
-	bgSeq := mustGetHealSequence(ctx)
 	scanMode := madmin.HealNormalScan
 
 	// Make sure to copy since `buckets slice`
@@ -172,6 +173,28 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 			logger.LogIf(ctx, err)
 		}
 	}
+
+	info, err := tracker.disk.DiskInfo(ctx, false)
+	if err != nil {
+		return fmt.Errorf("unable to get disk information before healing it: %w", err)
+	}
+
+	numHealers := uint64(4)
+	numCores := uint64(runtime.GOMAXPROCS(0))
+	if info.NRRequests > numCores {
+		numHealers = numCores / 4
+	} else {
+		numHealers = info.NRRequests / 4
+	}
+	if numHealers == 0 || numHealers == 1 {
+		numHealers = 4
+	}
+	// allow overriding this value as well..
+	if v := globalHealConfig.GetWorkers(); v > 0 {
+		numHealers = uint64(v)
+	}
+
+	jt, _ := workers.New(int(numHealers))
 
 	var retErr error
 	// Heal all buckets with all objects
@@ -267,6 +290,8 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 
 		// Note: updates from healEntry to tracker must be sent on results channel.
 		healEntry := func(bucket string, entry metaCacheEntry) {
+			defer jt.Give()
+
 			if entry.name == "" && len(entry.metadata) == 0 {
 				// ignore entries that don't have metadata.
 				return
@@ -291,14 +316,17 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 				}
 			}
 
+			// erasureObjects layer needs object names to be encoded
+			encodedEntryName := encodeDirObject(entry.name)
+
 			var result healEntryResult
 			fivs, err := entry.fileInfoVersions(bucket)
 			if err != nil {
-				err := bgSeq.queueHealTask(healSource{
-					bucket:    bucket,
-					object:    entry.name,
-					versionID: "",
-				}, madmin.HealItemObject)
+				_, err := er.HealObject(ctx, bucket, encodedEntryName, "",
+					madmin.HealOpts{
+						ScanMode: scanMode,
+						Remove:   healDeleteDangling,
+					})
 				if err != nil {
 					if isErrObjectNotFound(err) {
 						// queueing happens across namespace, ignore
@@ -321,11 +349,11 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 				if version.ModTime.After(tracker.Started) {
 					continue
 				}
-				if err := bgSeq.queueHealTask(healSource{
-					bucket:    bucket,
-					object:    version.Name,
-					versionID: version.VersionID,
-				}, madmin.HealItemObject); err != nil {
+				if _, err := er.HealObject(ctx, bucket, encodedEntryName,
+					version.VersionID, madmin.HealOpts{
+						ScanMode: scanMode,
+						Remove:   healDeleteDangling,
+					}); err != nil {
 					if isErrObjectNotFound(err) {
 						// queueing happens across namespace, ignore
 						// objects that are not found.
@@ -344,7 +372,6 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 				} else {
 					result = healEntrySuccess(uint64(version.Size))
 				}
-				bgSeq.logHeal(madmin.HealItemObject)
 
 				if !send(result) {
 					return
@@ -382,7 +409,8 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 			minDisks:       1,
 			reportNotFound: false,
 			agreed: func(entry metaCacheEntry) {
-				healEntry(actualBucket, entry)
+				jt.Take()
+				go healEntry(actualBucket, entry)
 			},
 			partial: func(entries metaCacheEntries, _ []error) {
 				entry, ok := entries.resolve(&resolver)
@@ -391,10 +419,12 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 					// proceed to heal nonetheless.
 					entry, _ = entries.firstFound()
 				}
-				healEntry(actualBucket, *entry)
+				jt.Take()
+				go healEntry(actualBucket, *entry)
 			},
 			finished: nil,
 		})
+		jt.Wait() // synchronize all the concurrent heal jobs
 		close(results)
 		if err != nil {
 			// Set this such that when we return this function
