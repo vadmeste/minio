@@ -45,8 +45,7 @@ import (
 	sreplication "github.com/minio/minio/internal/bucket/replication"
 	xhttp "github.com/minio/minio/internal/http"
 	"github.com/minio/minio/internal/logger"
-	bktpolicy "github.com/minio/pkg/bucket/policy"
-	iampolicy "github.com/minio/pkg/iam/policy"
+	"github.com/minio/pkg/v2/policy"
 )
 
 const (
@@ -1196,7 +1195,7 @@ func (c *SiteReplicationSys) IAMChangeHook(ctx context.Context, item madmin.SRIA
 
 // PeerAddPolicyHandler - copies IAM policy to local. A nil policy argument,
 // causes the named policy to be deleted.
-func (c *SiteReplicationSys) PeerAddPolicyHandler(ctx context.Context, policyName string, p *iampolicy.Policy, updatedAt time.Time) error {
+func (c *SiteReplicationSys) PeerAddPolicyHandler(ctx context.Context, policyName string, p *policy.Policy, updatedAt time.Time) error {
 	var err error
 	// skip overwrite of local update if peer sent stale info
 	if !updatedAt.IsZero() {
@@ -1289,10 +1288,10 @@ func (c *SiteReplicationSys) PeerSvcAccChangeHandler(ctx context.Context, change
 	}
 	switch {
 	case change.Create != nil:
-		var sp *iampolicy.Policy
+		var sp *policy.Policy
 		var err error
 		if len(change.Create.SessionPolicy) > 0 {
-			sp, err = iampolicy.ParseConfig(bytes.NewReader(change.Create.SessionPolicy))
+			sp, err = policy.ParseConfig(bytes.NewReader(change.Create.SessionPolicy))
 			if err != nil {
 				return wrapSRErr(err)
 			}
@@ -1318,10 +1317,10 @@ func (c *SiteReplicationSys) PeerSvcAccChangeHandler(ctx context.Context, change
 		}
 
 	case change.Update != nil:
-		var sp *iampolicy.Policy
+		var sp *policy.Policy
 		var err error
 		if len(change.Update.SessionPolicy) > 0 {
-			sp, err = iampolicy.ParseConfig(bytes.NewReader(change.Update.SessionPolicy))
+			sp, err = policy.ParseConfig(bytes.NewReader(change.Update.SessionPolicy))
 			if err != nil {
 				return wrapSRErr(err)
 			}
@@ -1486,7 +1485,7 @@ func (c *SiteReplicationSys) PeerBucketVersioningHandler(ctx context.Context, bu
 }
 
 // PeerBucketPolicyHandler - copies/deletes policy to local cluster.
-func (c *SiteReplicationSys) PeerBucketPolicyHandler(ctx context.Context, bucket string, policy *bktpolicy.Policy, updatedAt time.Time) error {
+func (c *SiteReplicationSys) PeerBucketPolicyHandler(ctx context.Context, bucket string, policy *policy.BucketPolicy, updatedAt time.Time) error {
 	// skip overwrite if local update is newer than peer update.
 	if !updatedAt.IsZero() {
 		if _, updateTm, err := globalBucketMetadataSys.GetPolicyConfig(bucket); err == nil && updateTm.After(updatedAt) {
@@ -2839,10 +2838,10 @@ func (c *SiteReplicationSys) siteReplicationStatus(ctx context.Context, objAPI O
 	if opts.Policies || opts.Entity == madmin.SRPolicyEntity {
 		// collect IAM policy replication status across sites
 		for p, pslc := range policyStats {
-			var policies []*iampolicy.Policy
+			var policies []*policy.Policy
 			uPolicyCount := 0
 			for _, ps := range pslc {
-				plcy, err := iampolicy.ParseConfig(bytes.NewReader([]byte(ps.SRIAMPolicy.Policy)))
+				plcy, err := policy.ParseConfig(bytes.NewReader([]byte(ps.SRIAMPolicy.Policy)))
 				if err != nil {
 					continue
 				}
@@ -2883,7 +2882,7 @@ func (c *SiteReplicationSys) siteReplicationStatus(ctx context.Context, objAPI O
 		for b, slc := range bucketStats {
 			tagSet := set.NewStringSet()
 			olockConfigSet := set.NewStringSet()
-			policies := make([]*bktpolicy.Policy, numSites)
+			policies := make([]*policy.BucketPolicy, numSites)
 			replCfgs := make([]*sreplication.Config, numSites)
 			quotaCfgs := make([]*madmin.BucketQuota, numSites)
 			sseCfgSet := set.NewStringSet()
@@ -2933,7 +2932,7 @@ func (c *SiteReplicationSys) siteReplicationStatus(ctx context.Context, objAPI O
 					}
 				}
 				if len(s.Policy) > 0 {
-					plcy, err := bktpolicy.ParseConfig(bytes.NewReader(s.Policy), b)
+					plcy, err := policy.ParseBucketPolicyConfig(bytes.NewReader(s.Policy), b)
 					if err != nil {
 						continue
 					}
@@ -3076,12 +3075,12 @@ func isReplicated(cntReplicated, total int, valSet set.StringSet) bool {
 
 // isIAMPolicyReplicated returns true if count of replicated IAM policies matches total
 // number of sites and IAM policies are identical.
-func isIAMPolicyReplicated(cntReplicated, total int, policies []*iampolicy.Policy) bool {
+func isIAMPolicyReplicated(cntReplicated, total int, policies []*policy.Policy) bool {
 	if cntReplicated > 0 && cntReplicated != total {
 		return false
 	}
 	// check if policies match between sites
-	var prev *iampolicy.Policy
+	var prev *policy.Policy
 	for i, p := range policies {
 		if i == 0 {
 			prev = p
@@ -3184,7 +3183,7 @@ func isBktQuotaCfgReplicated(total int, quotaCfgs []*madmin.BucketQuota) bool {
 
 // isBktPolicyReplicated returns true if count of replicated bucket policies matches total
 // number of sites and bucket policies are identical.
-func isBktPolicyReplicated(total int, policies []*bktpolicy.Policy) bool {
+func isBktPolicyReplicated(total int, policies []*policy.BucketPolicy) bool {
 	numPolicies := 0
 	for _, p := range policies {
 		if p == nil {
@@ -3196,7 +3195,7 @@ func isBktPolicyReplicated(total int, policies []*bktpolicy.Policy) bool {
 		return false
 	}
 	// check if policies match between sites
-	var prev *bktpolicy.Policy
+	var prev *policy.BucketPolicy
 	for i, p := range policies {
 		if p == nil {
 			continue
