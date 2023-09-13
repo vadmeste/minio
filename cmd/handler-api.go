@@ -302,7 +302,7 @@ func maxClients(f http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		globalHTTPStats.addRequestsInQueue(1)
+		globalHTTPStats.addS3RequestsInQueue(1)
 
 		if tc, ok := r.Context().Value(mcontext.ContextTraceKey).(*mcontext.TraceCtxt); ok {
 			tc.FuncName = "s3.MaxClients"
@@ -314,21 +314,23 @@ func maxClients(f http.HandlerFunc) http.HandlerFunc {
 		select {
 		case pool <- struct{}{}:
 			defer func() { <-pool }()
-			globalHTTPStats.addRequestsInQueue(-1)
+			globalHTTPStats.addS3RequestsInQueue(-1)
+			globalHTTPStats.addS3RequestsCurrent(1)
 			f.ServeHTTP(w, r)
+			globalHTTPStats.addS3RequestsCurrent(-1)
 		case <-deadlineTimer.C:
 			// Send a http timeout message
 			writeErrorResponse(r.Context(), w,
 				errorCodes.ToAPIErr(ErrTooManyRequests),
 				r.URL)
-			globalHTTPStats.addRequestsInQueue(-1)
+			globalHTTPStats.addS3RequestsInQueue(-1)
 			return
 		case <-r.Context().Done():
 			// When the client disconnects before getting the S3 handler
 			// status code response, set the status code to 499 so this request
 			// will be properly audited and traced.
 			w.WriteHeader(499)
-			globalHTTPStats.addRequestsInQueue(-1)
+			globalHTTPStats.addS3RequestsInQueue(-1)
 			return
 		}
 	}

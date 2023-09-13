@@ -501,7 +501,7 @@ func (sys *BucketMetadataSys) concurrentLoad(ctx context.Context, buckets []Buck
 func (sys *BucketMetadataSys) refreshBucketsMetadataLoop(ctx context.Context) {
 	const bucketMetadataRefresh = 15 * time.Minute
 
-	sleeper := newDynamicSleeper(2, 150*time.Millisecond, false)
+	sleeper := newDynamicSleeper(2, 150*time.Millisecond, nil, false)
 
 	t := time.NewTimer(bucketMetadataRefresh)
 	defer t.Stop()

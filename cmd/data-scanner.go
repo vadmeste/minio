@@ -64,14 +64,19 @@ const (
 
 var (
 	globalHealConfig heal.Config
-
-	// Sleeper values are updated when config is loaded.
-	scannerSleeper = newDynamicSleeper(10, 10*time.Second, true)
-	scannerCycle   = uatomic.NewDuration(dataScannerStartDelay)
+	scannerSleeper   *dynamicSleeper
+	scannerCycle     *uatomic.Duration
 )
 
 // initDataScanner will start the scanner in the background.
 func initDataScanner(ctx context.Context, objAPI ObjectLayer) {
+	// Condition to sleep for the scanner
+	scannerSleepCond := func() bool {
+		return globalHTTPStats.loadS3RequestsCurrent() > 0
+	}
+	scannerSleeper = newDynamicSleeper(10, 10*time.Second, scannerSleepCond, true)
+	scannerCycle = uatomic.NewDuration(dataScannerStartDelay)
+
 	go func() {
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
 		// Run the data scanner in a loop
@@ -1315,14 +1320,18 @@ type dynamicSleeper struct {
 	// cycle will be closed
 	cycle chan struct{}
 
+	// if set, only sleep if the condition returns true
+	condition func() bool
+
 	// isScanner should be set when this is used by the scanner
 	// to record metrics.
 	isScanner bool
 }
 
 // newDynamicSleeper
-func newDynamicSleeper(factor float64, maxWait time.Duration, isScanner bool) *dynamicSleeper {
+func newDynamicSleeper(factor float64, maxWait time.Duration, condition func() bool, isScanner bool) *dynamicSleeper {
 	return &dynamicSleeper{
+		condition: condition,
 		factor:    factor,
 		cycle:     make(chan struct{}),
 		maxSleep:  maxWait,
@@ -1336,6 +1345,9 @@ func newDynamicSleeper(factor float64, maxWait time.Duration, isScanner bool) *d
 func (d *dynamicSleeper) Timer(ctx context.Context) func() {
 	t := time.Now()
 	return func() {
+		if d.condition != nil && !d.condition() {
+			return
+		}
 		doneAt := time.Now()
 		for {
 			// Grab current values

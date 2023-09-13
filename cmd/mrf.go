@@ -77,7 +77,7 @@ func (m *mrfState) addPartialOp(op partialOperation) {
 	}
 }
 
-var healSleeper = newDynamicSleeper(5, time.Second, false)
+var healSleeper = newDynamicSleeper(5, time.Second, nil, false)
 
 // healRoutine listens to new disks reconnection events and
 // issues healing requests for queued objects belonging to the

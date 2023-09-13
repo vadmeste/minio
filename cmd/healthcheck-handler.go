@@ -108,7 +108,7 @@ func LivenessCheckHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if int(globalHTTPStats.loadRequestsInQueue()) > globalAPIConfig.getRequestsPoolCapacity() {
+	if int(globalHTTPStats.loadS3RequestsInQueue()) > globalAPIConfig.getRequestsPoolCapacity() {
 		apiErr := getAPIError(ErrBusy)
 		switch r.Method {
 		case http.MethodHead:

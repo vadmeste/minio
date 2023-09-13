@@ -344,8 +344,9 @@ func (stats *HTTPAPIStats) Load() map[string]int {
 // HTTPStats holds statistics information about
 // HTTP requests made by all clients
 type HTTPStats struct {
-	s3RequestsInQueue       int32 // ref: https://golang.org/pkg/sync/atomic/#pkg-note-BUG
-	_                       int32 // For 64 bits alignment
+	s3RequestsInQueue int32 // ref: https://golang.org/pkg/sync/atomic/#pkg-note-BUG
+	s3RequestsCurrent int32
+
 	s3RequestsIncoming      uint64
 	rejectedRequestsAuth    uint64
 	rejectedRequestsTime    uint64
@@ -359,12 +360,20 @@ type HTTPStats struct {
 	totalS3Canceled         HTTPAPIStats
 }
 
-func (st *HTTPStats) loadRequestsInQueue() int32 {
+func (st *HTTPStats) loadS3RequestsInQueue() int32 {
 	return atomic.LoadInt32(&st.s3RequestsInQueue)
 }
 
-func (st *HTTPStats) addRequestsInQueue(i int32) {
+func (st *HTTPStats) addS3RequestsInQueue(i int32) {
 	atomic.AddInt32(&st.s3RequestsInQueue, i)
+}
+
+func (st *HTTPStats) loadS3RequestsCurrent() int32 {
+	return atomic.LoadInt32(&st.s3RequestsCurrent)
+}
+
+func (st *HTTPStats) addS3RequestsCurrent(i int32) {
+	atomic.AddInt32(&st.s3RequestsCurrent, i)
 }
 
 func (st *HTTPStats) incS3RequestsIncoming() {

@@ -388,7 +388,7 @@ var (
 	globalConnWriteDeadline time.Duration
 
 	// Controller for deleted file sweeper.
-	deletedCleanupSleeper = newDynamicSleeper(5, 25*time.Millisecond, false)
+	deletedCleanupSleeper = newDynamicSleeper(5, 25*time.Millisecond, nil, false)
 
 	// Is _MINIO_DISABLE_API_FREEZE_ON_BOOT set?
 	globalDisableFreezeOnBoot bool
