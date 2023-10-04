@@ -836,7 +836,7 @@ func TestHealCorrectQuorum(t *testing.T) {
 		er := set.sets[0]
 		erasureDisks := er.getDisks()
 
-		fileInfos, errs := readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+		fileInfos, errs := readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 		nfi, err := getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 		if errors.Is(err, errFileNotFound) {
 			continue
@@ -858,12 +858,12 @@ func TestHealCorrectQuorum(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		fileInfos, errs = readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+		fileInfos, errs = readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 		if countErrs(errs, nil) != len(fileInfos) {
 			t.Fatal("Expected all xl.meta healed, but partial heal detected")
 		}
 
-		fileInfos, errs = readAllFileInfo(ctx, erasureDisks, minioMetaBucket, cfgFile, "", false)
+		fileInfos, errs = readAllFileInfo(ctx, erasureDisks, nil, minioMetaBucket, cfgFile, "", false)
 		nfi, err = getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 		if errors.Is(err, errFileNotFound) {
 			continue
@@ -885,7 +885,7 @@ func TestHealCorrectQuorum(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		fileInfos, errs = readAllFileInfo(ctx, erasureDisks, minioMetaBucket, cfgFile, "", false)
+		fileInfos, errs = readAllFileInfo(ctx, erasureDisks, nil, minioMetaBucket, cfgFile, "", false)
 		if countErrs(errs, nil) != len(fileInfos) {
 			t.Fatal("Expected all xl.meta healed, but partial heal detected")
 		}
@@ -970,7 +970,7 @@ func TestHealObjectCorruptedPools(t *testing.T) {
 		t.Fatalf("Failed to heal object - %v", err)
 	}
 
-	fileInfos, errs := readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+	fileInfos, errs := readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 	fi, err := getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 	if err != nil {
 		t.Fatalf("Failed to getLatestFileInfo - %v", err)
@@ -998,7 +998,7 @@ func TestHealObjectCorruptedPools(t *testing.T) {
 		t.Errorf("Expected nil but received %v", err)
 	}
 
-	fileInfos, errs = readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+	fileInfos, errs = readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 	nfi, err := getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 	if err != nil {
 		t.Fatalf("Failed to getLatestFileInfo - %v", err)
@@ -1029,7 +1029,7 @@ func TestHealObjectCorruptedPools(t *testing.T) {
 		t.Errorf("Expected nil but received %v", err)
 	}
 
-	fileInfos, errs = readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+	fileInfos, errs = readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 	nfi, err = getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 	if err != nil {
 		t.Fatalf("Failed to getLatestFileInfo - %v", err)
@@ -1133,7 +1133,7 @@ func TestHealObjectCorruptedXLMeta(t *testing.T) {
 	firstDisk := erasureDisks[0]
 
 	// Test 1: Remove the object backend files from the first disk.
-	fileInfos, errs := readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+	fileInfos, errs := readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 	fi, err := getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 	if err != nil {
 		t.Fatalf("Failed to getLatestFileInfo - %v", err)
@@ -1156,7 +1156,7 @@ func TestHealObjectCorruptedXLMeta(t *testing.T) {
 		t.Errorf("Expected xl.meta file to be present but stat failed - %v", err)
 	}
 
-	fileInfos, errs = readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+	fileInfos, errs = readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 	nfi1, err := getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 	if err != nil {
 		t.Fatalf("Failed to getLatestFileInfo - %v", err)
@@ -1179,7 +1179,7 @@ func TestHealObjectCorruptedXLMeta(t *testing.T) {
 		t.Errorf("Expected nil but received %v", err)
 	}
 
-	fileInfos, errs = readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+	fileInfos, errs = readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 	nfi2, err := getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 	if err != nil {
 		t.Fatalf("Failed to getLatestFileInfo - %v", err)
@@ -1277,7 +1277,7 @@ func TestHealObjectCorruptedParts(t *testing.T) {
 	firstDisk := erasureDisks[0]
 	secondDisk := erasureDisks[1]
 
-	fileInfos, errs := readAllFileInfo(ctx, erasureDisks, bucket, object, "", false)
+	fileInfos, errs := readAllFileInfo(ctx, erasureDisks, nil, bucket, object, "", false)
 	fi, err := getLatestFileInfo(ctx, fileInfos, er.defaultParityCount, errs)
 	if err != nil {
 		t.Fatalf("Failed to getLatestFileInfo - %v", err)
