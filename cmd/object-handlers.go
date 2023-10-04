@@ -399,6 +399,8 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		return checkPreconditions(ctx, w, r, oi, opts)
 	}
 
+	opts.FastGetObjInfo = true
+
 	var proxy proxyResult
 	gr, err := getObjectNInfo(ctx, bucket, object, rs, r.Header, opts)
 	if err != nil {

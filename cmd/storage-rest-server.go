@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/user"
 	"path"
 	"runtime/debug"
@@ -1358,8 +1359,20 @@ func registerStorageRESTHandlers(router *mux.Router, endpointServerPools Endpoin
 	}
 	wg.Wait()
 
+	fakeDelay := func(f http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if globalMinioPort == "9004" {
+				if _, serr := os.Stat("/tmp/sleep"); serr == nil {
+					// time.Sleep(time.Duration(rand.Float64() * float64(time.Second)))
+					time.Sleep(time.Second * 3)
+				}
+			}
+			f.ServeHTTP(w, r)
+		}
+	}
+
 	h := func(f http.HandlerFunc) http.HandlerFunc {
-		return collectInternodeStats(httpTraceHdrs(f))
+		return fakeDelay(collectInternodeStats(httpTraceHdrs(f)))
 	}
 
 	for _, setDisks := range storageDisks {
