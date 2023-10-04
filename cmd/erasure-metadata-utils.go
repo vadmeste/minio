@@ -152,12 +152,20 @@ func hashOrder(key string, cardinality int) []int {
 // Returns error slice indicating the failed metadata reads.
 func readAllFileInfo(ctx context.Context, disks []StorageAPI, bucket, object, versionID string, readData bool) ([]FileInfo, []error) {
 	metadataArray := make([]FileInfo, len(disks))
+	return readMissingFileInfo(ctx, disks, metadataArray, bucket, object, versionID, readData)
+}
 
+// Reads missing `xl.meta` metadata in metadataArray.
+// Returns error slice indicating the failed metadata reads.
+func readMissingFileInfo(ctx context.Context, disks []StorageAPI, metadataArray []FileInfo, bucket, object, versionID string, readData bool) ([]FileInfo, []error) {
 	g := errgroup.WithNErrs(len(disks))
 	// Read `xl.meta` in parallel across disks.
 	for index := range disks {
 		index := index
 		g.Go(func() (err error) {
+			if metadataArray[index].IsValid() {
+				return nil
+			}
 			if disks[index] == nil {
 				return errDiskNotFound
 			}
