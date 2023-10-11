@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"os"
+	"path"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -50,6 +51,7 @@ const (
 	osMetricFdatasync
 	osMetricSync
 	osMetricRename2 // Linux specific
+	osMetricLink
 	// .... add more
 
 	osMetricLast
@@ -115,6 +117,16 @@ func updateOSMetrics(s osMetric, paths ...string) func(err error) {
 		globalOSMetrics.incTime(s, duration)
 		globalTrace.Publish(osTrace(s, startTime, duration, strings.Join(paths, " -> "), err))
 	}
+}
+
+// LinkAll captures the time taken to the call with underlying os.MkdirAll + os.Link
+func LinkAll(source, dest, baseDir string) (err error) {
+	if err = reliableMkdirAll(path.Dir(dest), 0o777, baseDir); err != nil {
+		return err
+	}
+
+	defer updateOSMetrics(osMetricLink, source, dest)(err)
+	return os.Link(source, dest)
 }
 
 // RemoveAll captures time taken to call the underlying os.RemoveAll

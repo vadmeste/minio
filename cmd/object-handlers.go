@@ -46,6 +46,7 @@ import (
 	"github.com/minio/minio/internal/bucket/lifecycle"
 	objectlock "github.com/minio/minio/internal/bucket/object/lock"
 	"github.com/minio/minio/internal/bucket/replication"
+	"github.com/minio/minio/internal/config/cache"
 	"github.com/minio/minio/internal/config/dns"
 	"github.com/minio/minio/internal/config/storageclass"
 	"github.com/minio/minio/internal/crypto"
@@ -377,11 +378,54 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		}
 	}
 
+	var update bool
+	if globalCacheConfig.EnabledRemote() {
+		rc := &cache.CondCheck{}
+		rc.Init(bucket, object, opts.VersionID, r.Header)
+
+		ci, err := globalCacheConfig.Get(rc)
+		if ci != nil {
+			// set common headers
+			setCommonHeaders(w)
+
+			w.Header().Set(xhttp.LastModified, ci.ModTime.UTC().Format(http.TimeFormat))
+			if ci.ETag != "" {
+				w.Header()[xhttp.ETag] = []string{"\"" + ci.ETag + "\""}
+			}
+
+			if ci.VID != "" {
+				w.Header()[xhttp.AmzVersionID] = []string{ci.VID}
+			}
+
+			if ci.StatusCode == http.StatusPreconditionFailed {
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
+				return
+			}
+
+			w.WriteHeader(ci.StatusCode)
+			return
+		}
+
+		if errors.Is(err, cache.ErrKeyMissing) {
+			update = true
+		}
+	}
+
 	// Validate pre-conditions if any.
 	opts.CheckPrecondFn = func(oi ObjectInfo) bool {
 		if _, err := DecryptObjectInfo(&oi, r); err != nil {
 			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 			return true
+		}
+
+		if update {
+			go globalCacheConfig.Set(&cache.ObjectInfo{
+				Key:     oi.Name,
+				Bucket:  oi.Bucket,
+				ETag:    oi.ETag,
+				ModTime: oi.ModTime,
+				VID:     oi.VersionID,
+			})
 		}
 
 		return checkPreconditions(ctx, w, r, oi, opts)
@@ -485,7 +529,6 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 	objInfo.UserDefined = objectlock.FilterObjectLockMetadata(objInfo.UserDefined, getRetPerms != ErrNone, legalHoldPerms != ErrNone)
 
 	// Set encryption response headers
-
 	if kind, isEncrypted := crypto.IsEncrypted(objInfo.UserDefined); isEncrypted {
 		switch kind {
 		case crypto.S3:
@@ -639,6 +682,39 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 		return
 	}
 
+	var update bool
+	if globalCacheConfig.EnabledRemote() {
+		rc := &cache.CondCheck{}
+		rc.Init(bucket, object, opts.VersionID, r.Header)
+
+		ci, err := globalCacheConfig.Get(rc)
+		if ci != nil {
+			// set common headers
+			setCommonHeaders(w)
+
+			w.Header().Set(xhttp.LastModified, ci.ModTime.UTC().Format(http.TimeFormat))
+			if ci.ETag != "" {
+				w.Header()[xhttp.ETag] = []string{"\"" + ci.ETag + "\""}
+			}
+
+			if ci.VID != "" {
+				w.Header()[xhttp.AmzVersionID] = []string{ci.VID}
+			}
+
+			if ci.StatusCode == http.StatusPreconditionFailed {
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
+				return
+			}
+
+			w.WriteHeader(ci.StatusCode)
+			return
+		}
+
+		if errors.Is(err, cache.ErrKeyMissing) {
+			update = true
+		}
+	}
+
 	// Get request range.
 	var rs *HTTPRangeSpec
 	rangeHeader := r.Header.Get(xhttp.Range)
@@ -733,6 +809,16 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 	if _, err = DecryptObjectInfo(&objInfo, r); err != nil {
 		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
 		return
+	}
+
+	if update {
+		go globalCacheConfig.Set(&cache.ObjectInfo{
+			Key:     objInfo.Name,
+			Bucket:  objInfo.Bucket,
+			ETag:    objInfo.ETag,
+			ModTime: objInfo.ModTime,
+			VID:     objInfo.VersionID,
+		})
 	}
 
 	// Validate pre-conditions if any.
@@ -1529,6 +1615,14 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		Host:         handlers.GetSourceIP(r),
 	})
 
+	go globalCacheConfig.Set(&cache.ObjectInfo{
+		Key:     objInfo.Name,
+		Bucket:  objInfo.Bucket,
+		ETag:    objInfo.ETag,
+		ModTime: objInfo.ModTime,
+		VID:     objInfo.VersionID,
+	})
+
 	if !remoteCallRequired && !globalTierConfigMgr.Empty() {
 		// Schedule object for immediate transition if eligible.
 		objInfo.ETag = origETag
@@ -1902,6 +1996,14 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	setPutObjHeaders(w, objInfo, false)
 
+	go globalCacheConfig.Set(&cache.ObjectInfo{
+		Key:     objInfo.Name,
+		Bucket:  objInfo.Bucket,
+		ETag:    objInfo.ETag,
+		ModTime: objInfo.ModTime,
+		VID:     objInfo.VersionID,
+	})
+
 	// Notify object created event.
 	evt := eventArgs{
 		EventName:    event.ObjectCreatedPut,
@@ -2203,9 +2305,19 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 			return err
 		}
 
+		objInfo.ETag = getDecryptedETag(r.Header, objInfo, false)
+
 		if dsc := mustReplicate(ctx, bucket, object, getMustReplicateOptions(metadata, "", "", replication.ObjectReplicationType, opts)); dsc.ReplicateAny() {
 			scheduleReplication(ctx, objInfo, objectAPI, dsc, replication.ObjectReplicationType)
 		}
+
+		go globalCacheConfig.Set(&cache.ObjectInfo{
+			Key:     objInfo.Name,
+			Bucket:  objInfo.Bucket,
+			ETag:    objInfo.ETag,
+			ModTime: objInfo.ModTime,
+			VID:     objInfo.VersionID,
+		})
 
 		// Notify object created event.
 		evt := eventArgs{
@@ -2375,6 +2487,10 @@ func (api objectAPIHandlers) DeleteObjectHandler(w http.ResponseWriter, r *http.
 		}
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
+	}
+
+	if !objInfo.DeleteMarker {
+		go globalCacheConfig.Delete(bucket, object, opts.VersionID)
 	}
 
 	if objInfo.Name == "" {

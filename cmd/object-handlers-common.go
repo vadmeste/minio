@@ -232,6 +232,10 @@ func checkPreconditions(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		if objInfo.ETag != "" {
 			w.Header()[xhttp.ETag] = []string{"\"" + objInfo.ETag + "\""}
 		}
+
+		if objInfo.VersionID != "" {
+			w.Header()[xhttp.AmzVersionID] = []string{objInfo.VersionID}
+		}
 	}
 
 	// Check if the part number is correct.

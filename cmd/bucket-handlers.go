@@ -51,6 +51,7 @@ import (
 	sse "github.com/minio/minio/internal/bucket/encryption"
 	objectlock "github.com/minio/minio/internal/bucket/object/lock"
 	"github.com/minio/minio/internal/bucket/replication"
+	"github.com/minio/minio/internal/config/cache"
 	"github.com/minio/minio/internal/config/dns"
 	"github.com/minio/minio/internal/crypto"
 	"github.com/minio/minio/internal/event"
@@ -666,6 +667,10 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 	for _, dobj := range deletedObjects {
 		if dobj.ObjectName == "" {
 			continue
+		}
+
+		if !dobj.DeleteMarker {
+			go globalCacheConfig.Delete(bucket, dobj.ObjectName, dobj.VersionID)
 		}
 
 		if replicateDeletes && (dobj.DeleteMarkerReplicationStatus() == replication.Pending || dobj.VersionPurgeStatus() == Pending) {
@@ -1343,6 +1348,14 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 					continue
 				}
 
+				go globalCacheConfig.Set(&cache.ObjectInfo{
+					Key:     objInfo.Name,
+					Bucket:  objInfo.Bucket,
+					ETag:    getDecryptedETag(formValues, objInfo, false),
+					ModTime: objInfo.ModTime,
+					VID:     objInfo.VersionID,
+				})
+
 				fanOutResp = append(fanOutResp, minio.PutObjectFanOutResponse{
 					Key:          objInfo.Name,
 					ETag:         getDecryptedETag(formValues, objInfo, false),
@@ -1399,10 +1412,12 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		return
 	}
 
+	etag := getDecryptedETag(formValues, objInfo, false)
+
 	// We must not use the http.Header().Set method here because some (broken)
 	// clients expect the ETag header key to be literally "ETag" - not "Etag" (case-sensitive).
 	// Therefore, we have to set the ETag directly as map entry.
-	w.Header()[xhttp.ETag] = []string{`"` + objInfo.ETag + `"`}
+	w.Header()[xhttp.ETag] = []string{`"` + etag + `"`}
 
 	// Set the relevant version ID as part of the response header.
 	if objInfo.VersionID != "" && objInfo.VersionID != nullVersionID {
@@ -1412,6 +1427,14 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	if obj := getObjectLocation(r, globalDomainNames, bucket, object); obj != "" {
 		w.Header().Set(xhttp.Location, obj)
 	}
+
+	go globalCacheConfig.Set(&cache.ObjectInfo{
+		Key:     objInfo.Name,
+		Bucket:  objInfo.Bucket,
+		ETag:    etag,
+		ModTime: objInfo.ModTime,
+		VID:     objInfo.VersionID,
+	})
 
 	// Notify object created event.
 	defer sendEvent(eventArgs{
