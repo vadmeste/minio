@@ -64,6 +64,9 @@ const (
 	minioMetaTmpBucket = minioMetaBucket + "/tmp"
 	// MinIO tmp meta prefix for deleted objects.
 	minioMetaTmpDeletedBucket = minioMetaTmpBucket + "/.trash"
+	// MinIO xl.meta prefix hardlink cache.
+	prefixCachePrefix = ".pcache"
+
 	// DNS separator (period), used for bucket name validation.
 	dnsDelimiter = "."
 	// On compressed files bigger than this;

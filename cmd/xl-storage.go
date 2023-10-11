@@ -992,7 +992,24 @@ func (s *xlStorage) deleteVersions(ctx context.Context, volume, path string, fis
 	}
 
 	var legacyJSON bool
-	buf, _, err := s.readAllData(ctx, volume, volumeDir, pathJoin(volumeDir, path, xlStorageFormatFile), false)
+	var linkHash string
+	ohashUint := xxh3.HashString128(path)
+	bhash := strconv.FormatUint(xxh3.HashString(volume), 16)
+	ohash := pathutil.Join(strconv.FormatUint(ohashUint.Hi, 16), strconv.FormatUint(ohashUint.Lo, 16)) + ".meta"
+	if globalCacheConfig.MatchesDepth(path) {
+		linkHash = pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix, bhash, ohash)
+	}
+
+	var buf []byte
+	if linkHash != "" {
+		buf, _, err = s.readAllData(ctx, volume, volumeDir, linkHash, false)
+		if err != nil {
+			buf, _, err = s.readAllData(ctx, volume, volumeDir, pathJoin(volumeDir, path, xlStorageFormatFile), false)
+		}
+	} else {
+		buf, _, err = s.readAllData(ctx, volume, volumeDir, pathJoin(volumeDir, path, xlStorageFormatFile), false)
+	}
+
 	if err != nil {
 		if !errors.Is(err, errFileNotFound) {
 			return err
@@ -1072,6 +1089,10 @@ func (s *xlStorage) deleteVersions(ctx context.Context, volume, path string, fis
 		return s.WriteAll(ctx, volume, pathJoin(path, xlStorageFormatFile), buf)
 	}
 
+	if linkHash != "" {
+		s.deleteFile(pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix, bhash), linkHash, true, false)
+	}
+
 	return s.deleteFile(volumeDir, pathJoin(volumeDir, path), true, false)
 }
 
@@ -1100,7 +1121,7 @@ func (s *xlStorage) moveToTrash(filePath string, recursive, force bool) error {
 	targetPath := pathutil.Join(s.drivePath, minioMetaTmpDeletedBucket, pathUUID)
 
 	if recursive {
-		if err := renameAll(filePath, targetPath, s.drivePath); err != nil {
+		if err := renameAll(filePath, targetPath, pathutil.Join(s.drivePath, minioMetaTmpDeletedBucket)); err != nil {
 			return err
 		}
 	} else {
@@ -1127,8 +1148,36 @@ func (s *xlStorage) DeleteVersion(ctx context.Context, volume, path string, fi F
 		})
 	}
 
+	volumeDir, err := s.getVolDir(volume)
+	if err != nil {
+		return err
+	}
+
+	// Validate file path length, before reading.
+	filePath := pathJoin(volumeDir, path)
+	if err = checkPathLength(filePath); err != nil {
+		return err
+	}
+
+	ohashUint := xxh3.HashString128(path)
+	bhash := strconv.FormatUint(xxh3.HashString(volume), 16)
+	ohash := pathutil.Join(strconv.FormatUint(ohashUint.Hi, 16), strconv.FormatUint(ohashUint.Lo, 16)) + ".meta"
+
+	var linkHash string
+	if globalCacheConfig.MatchesDepth(path) {
+		linkHash = pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix, bhash, ohash)
+	}
+
 	var legacyJSON bool
-	buf, err := s.ReadAll(ctx, volume, pathJoin(path, xlStorageFormatFile))
+	var buf []byte
+	if linkHash != "" {
+		buf, _, err = s.readAllData(ctx, volume, volumeDir, linkHash, true)
+		if err != nil {
+			buf, _, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFile), true)
+		}
+	} else {
+		buf, _, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFile), true)
+	}
 	if err != nil {
 		if !errors.Is(err, errFileNotFound) {
 			return err
@@ -1159,11 +1208,6 @@ func (s *xlStorage) DeleteVersion(ctx context.Context, volume, path string, fi F
 			return errFileVersionNotFound
 		}
 		return errFileNotFound
-	}
-
-	volumeDir, err := s.getVolDir(volume)
-	if err != nil {
-		return err
 	}
 
 	if legacyJSON {
@@ -1217,10 +1261,8 @@ func (s *xlStorage) DeleteVersion(ctx context.Context, volume, path string, fi F
 		return s.WriteAll(ctx, volume, pathJoin(path, xlStorageFormatFile), buf)
 	}
 
-	// No more versions, this is the last version purge everything.
-	filePath := pathJoin(volumeDir, path)
-	if err = checkPathLength(filePath); err != nil {
-		return err
+	if linkHash != "" {
+		s.deleteFile(pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix, bhash), linkHash, true, false)
 	}
 
 	return s.deleteFile(volumeDir, filePath, true, false)
@@ -1376,10 +1418,18 @@ func (s *xlStorage) renameLegacyMetadata(volumeDir, path string) (err error) {
 }
 
 func (s *xlStorage) readRaw(ctx context.Context, volume, volumeDir, filePath string, readData bool) (buf []byte, dmTime time.Time, err error) {
+	if filePath == "" {
+		return nil, dmTime, errFileNotFound
+	}
+
+	xlPath := pathJoin(filePath, xlStorageFormatFile)
+	if strings.HasPrefix(filePath, pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix)) {
+		xlPath = filePath
+	}
 	if readData {
-		buf, dmTime, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFile), true)
+		buf, dmTime, err = s.readAllData(ctx, volume, volumeDir, xlPath, true)
 	} else {
-		buf, dmTime, err = s.readMetadataWithDMTime(ctx, pathJoin(filePath, xlStorageFormatFile))
+		buf, dmTime, err = s.readMetadataWithDMTime(ctx, xlPath)
 		if err != nil {
 			if osIsNotExist(err) {
 				if !skipAccessChecks(volume) {
@@ -1393,7 +1443,7 @@ func (s *xlStorage) readRaw(ctx context.Context, volume, volumeDir, filePath str
 	}
 
 	if err != nil {
-		if err == errFileNotFound {
+		if errors.Is(err, errFileNotFound) {
 			buf, dmTime, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFileV1), true)
 			if err != nil {
 				return nil, time.Time{}, err
@@ -1418,13 +1468,35 @@ func (s *xlStorage) ReadXL(ctx context.Context, volume, path string, readData bo
 		return RawFileInfo{}, err
 	}
 
+	var linkHash string
+	{
+		ohashUint := xxh3.HashString128(path)
+		bhash := strconv.FormatUint(xxh3.HashString(volume), 16)
+		ohash := pathutil.Join(strconv.FormatUint(ohashUint.Hi, 16), strconv.FormatUint(ohashUint.Lo, 16)) + ".meta"
+		if globalCacheConfig.MatchesDepth(path) {
+			linkHash = pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix, bhash, ohash)
+		}
+	}
+
 	// Validate file path length, before reading.
 	filePath := pathJoin(volumeDir, path)
 	if err = checkPathLength(filePath); err != nil {
 		return RawFileInfo{}, err
 	}
 
-	buf, dmTime, err := s.readRaw(ctx, volume, volumeDir, filePath, readData)
+	var buf []byte
+	var dmTime time.Time
+	if linkHash != "" {
+		buf, dmTime, err = s.readRaw(ctx, volume, volumeDir, linkHash, readData)
+		if err == nil {
+			return RawFileInfo{
+				Buf:       buf,
+				DiskMTime: dmTime,
+			}, nil
+		}
+	}
+
+	buf, dmTime, err = s.readRaw(ctx, volume, volumeDir, filePath, readData)
 	return RawFileInfo{
 		Buf:       buf,
 		DiskMTime: dmTime,
@@ -1439,13 +1511,33 @@ func (s *xlStorage) ReadVersion(ctx context.Context, volume, path, versionID str
 	if err != nil {
 		return fi, err
 	}
+
+	var linkHash string
+	{
+		ohashUint := xxh3.HashString128(path)
+		bhash := strconv.FormatUint(xxh3.HashString(volume), 16)
+		ohash := pathutil.Join(strconv.FormatUint(ohashUint.Hi, 16), strconv.FormatUint(ohashUint.Lo, 16)) + ".meta"
+		if globalCacheConfig.MatchesDepth(path) {
+			linkHash = pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix, bhash, ohash)
+		}
+	}
+
 	// Validate file path length, before reading.
 	filePath := pathJoin(volumeDir, path)
 	if err = checkPathLength(filePath); err != nil {
 		return fi, err
 	}
 
-	buf, dmTime, err := s.readRaw(ctx, volume, volumeDir, filePath, readData)
+	var buf []byte
+	var dmTime time.Time
+	if linkHash != "" {
+		buf, dmTime, err = s.readRaw(ctx, volume, volumeDir, linkHash, readData)
+		if err != nil {
+			buf, dmTime, err = s.readRaw(ctx, volume, volumeDir, filePath, readData)
+		}
+	} else {
+		buf, dmTime, err = s.readRaw(ctx, volume, volumeDir, filePath, readData)
+	}
 	if err != nil {
 		if err == errFileNotFound {
 			if versionID != "" {
@@ -1513,6 +1605,10 @@ func (s *xlStorage) ReadVersion(ctx context.Context, volume, path, versionID str
 }
 
 func (s *xlStorage) readAllData(ctx context.Context, volume, volumeDir string, filePath string, sync bool) (buf []byte, dmTime time.Time, err error) {
+	if filePath == "" {
+		return nil, dmTime, errFileNotFound
+	}
+
 	if contextCanceled(ctx) {
 		return nil, time.Time{}, ctx.Err()
 	}
@@ -2206,10 +2302,10 @@ func (s *xlStorage) Delete(ctx context.Context, volume string, path string, dele
 
 func skipAccessChecks(volume string) (ok bool) {
 	for _, prefix := range []string{
-		minioMetaBucket,
-		minioMetaMultipartBucket,
 		minioMetaTmpDeletedBucket,
 		minioMetaTmpBucket,
+		minioMetaMultipartBucket,
+		minioMetaBucket,
 	} {
 		if strings.HasPrefix(volume, prefix) {
 			return true
@@ -2277,6 +2373,22 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 
 	srcFilePath := pathutil.Join(srcVolumeDir, pathJoin(srcPath, xlStorageFormatFile))
 	dstFilePath := pathutil.Join(dstVolumeDir, pathJoin(dstPath, xlStorageFormatFile))
+
+	var linkHash string
+	{
+		ohashUint := xxh3.HashString128(dstPath)
+		bhash := strconv.FormatUint(xxh3.HashString(dstVolume), 16)
+		ohash := pathutil.Join(strconv.FormatUint(ohashUint.Hi, 16), strconv.FormatUint(ohashUint.Lo, 16)) + ".meta"
+		if globalCacheConfig.MatchesDepth(dstPath) {
+			linkHash = pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix, bhash, ohash)
+		}
+	}
+
+	defer func() {
+		if !skipAccessChecks(dstVolume) && linkHash != "" {
+			LinkAll(dstFilePath, linkHash, pathJoin(s.drivePath, minioMetaBucket))
+		}
+	}()
 
 	var srcDataPath string
 	var dstDataPath string
@@ -2389,7 +2501,7 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 		}
 
 		// legacy data dir means its old content, honor system umask.
-		if err = mkdirAll(legacyDataPath, 0o777, s.drivePath); err != nil {
+		if err = mkdirAll(legacyDataPath, 0o777, dstVolumeDir); err != nil {
 			// any failed mkdir-calls delete them.
 			s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
 			return 0, osErrToFileErr(err)
@@ -2507,7 +2619,7 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 				// on a versioned bucket.
 				s.moveToTrash(legacyDataPath, true, false)
 			}
-			if err = renameAll(srcDataPath, dstDataPath, s.drivePath); err != nil {
+			if err = renameAll(srcDataPath, dstDataPath, dstVolumeDir); err != nil {
 				if legacyPreserved {
 					// Any failed rename calls un-roll previous transaction.
 					s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
@@ -2518,7 +2630,7 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 		}
 
 		// Commit meta-file
-		if err = renameAll(srcFilePath, dstFilePath, s.drivePath); err != nil {
+		if err = renameAll(srcFilePath, dstFilePath, dstVolumeDir); err != nil {
 			if legacyPreserved {
 				// Any failed rename calls un-roll previous transaction.
 				s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
@@ -2628,7 +2740,7 @@ func (s *xlStorage) RenameFile(ctx context.Context, srcVolume, srcPath, dstVolum
 		}
 	}
 
-	if err = renameAll(srcFilePath, dstFilePath, s.drivePath); err != nil {
+	if err = renameAll(srcFilePath, dstFilePath, dstVolumeDir); err != nil {
 		if isSysErrNotEmpty(err) || isSysErrNotDir(err) {
 			return errFileAccessDenied
 		}

@@ -42,6 +42,7 @@ import (
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/v2/sync/errgroup"
 	"github.com/minio/pkg/v2/wildcard"
+	"github.com/zeebo/xxh3"
 )
 
 type erasureServerPools struct {
@@ -1804,6 +1805,8 @@ func (z *erasureServerPools) DeleteBucket(ctx context.Context, bucket string, op
 	if err == nil {
 		// Purge the entire bucket metadata entirely.
 		z.deleteAll(context.Background(), minioMetaBucket, pathJoin(bucketMetaPrefix, bucket))
+		bhash := strconv.FormatUint(xxh3.HashString(bucket), 16)
+		z.deleteAll(context.Background(), minioMetaBucket, pathJoin(prefixCachePrefix, bhash))
 	}
 
 	return toObjectErr(err, bucket)

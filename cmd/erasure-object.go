@@ -1637,6 +1637,9 @@ func (er erasureObjects) DeleteObject(ctx context.Context, bucket, object string
 	auditObjectErasureSet(ctx, object, &er)
 
 	if opts.DeletePrefix {
+		if globalCacheConfig.Enabled() {
+			return ObjectInfo{}, toObjectErr(errMethodNotAllowed, bucket, object)
+		}
 		return ObjectInfo{}, toObjectErr(er.deletePrefix(ctx, bucket, object), bucket, object)
 	}
 
