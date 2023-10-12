@@ -822,9 +822,10 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 		if err != nil {
 			continue
 		}
-		if fi.InlineData() {
-			break
-		}
+		// if fi.InlineData() {
+		//	break
+		// }
+		break
 	}
 
 	if err != nil {
