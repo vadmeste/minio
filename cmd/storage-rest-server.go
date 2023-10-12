@@ -1360,10 +1360,11 @@ func registerStorageRESTHandlers(router *mux.Router, endpointServerPools Endpoin
 	wg.Wait()
 
 	fakeDelay := func(f http.HandlerFunc) http.HandlerFunc {
+		p, _ := strconv.Atoi(globalMinioPort)
+		p -= 9001
 		return func(w http.ResponseWriter, r *http.Request) {
-			if globalMinioPort == "9004" {
+			if time.Now().Unix()%4 == int64(p) {
 				if _, serr := os.Stat("/tmp/sleep"); serr == nil {
-					// time.Sleep(time.Duration(rand.Float64() * float64(time.Second)))
 					time.Sleep(time.Second * 3)
 				}
 			}
