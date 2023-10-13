@@ -241,6 +241,15 @@ type FileInfo struct {
 	Versioned bool `msg:"vs"`
 }
 
+// Light copy - do not copy all fields
+func (fi FileInfo) ShallowCopy() (n FileInfo) {
+	n.Volume = fi.Volume
+	n.Name = fi.Name
+	n.VersionID = fi.VersionID
+	n.Deleted = fi.Deleted
+	return
+}
+
 // WriteQuorum returns expected write quorum for this FileInfo
 func (fi FileInfo) WriteQuorum(dquorum int) int {
 	if fi.Deleted {

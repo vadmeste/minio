@@ -733,6 +733,9 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 	done := make(chan bool, er.setDriveCount)
 	disks := er.getDisks()
 
+	mrfCheck := make(chan FileInfo)
+	defer close(mrfCheck)
+
 	// Ask for all disks first;
 	go func() {
 
@@ -774,6 +777,45 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 		}
 		wg.Wait()
 		close(done)
+
+		fi, ok := <-mrfCheck
+		if !ok {
+			return
+		}
+
+		if fi.Deleted {
+			return
+		}
+
+		// if one of the disk is offline, return right here no need
+		// to attempt a heal on the object.
+		if countErrs(errs, errDiskNotFound) > 0 {
+			return
+		}
+
+		var missingBlocks int
+		for i := range errs {
+			if errors.Is(errs[i], errFileNotFound) {
+				missingBlocks++
+			}
+		}
+
+		// if missing metadata can be reconstructed, attempt to reconstruct.
+		// additionally do not heal delete markers inline, let them be
+		// healed upon regular heal process.
+		if missingBlocks > 0 && missingBlocks < fi.Erasure.DataBlocks {
+			globalMRFState.addPartialOp(partialOperation{
+				bucket:    fi.Volume,
+				object:    fi.Name,
+				versionID: fi.VersionID,
+				queued:    time.Now(),
+				setIndex:  er.setIndex,
+				poolIndex: er.poolIndex,
+			})
+		}
+
+		return
+
 	}()
 
 	validResp := 0
@@ -822,9 +864,8 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 		if err != nil {
 			continue
 		}
-		// if fi.InlineData() {
-		//	break
-		// }
+
+		// We got a valid FileInfo with the object quorum
 		break
 	}
 
@@ -853,13 +894,7 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 		return fi, metaArr, onlineDisks, nil
 	}
 
-	var missingBlocks int
-	for i, err := range errs {
-		if err != nil && errors.Is(err, errFileNotFound) {
-			missingBlocks++
-			continue
-		}
-
+	for i := range metaArr {
 		// verify metadata is valid, it has similar erasure info
 		// as well as common modtime, if modtime is not possible
 		// verify if it has common "etag" atleast.
@@ -875,22 +910,9 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 
 		metaArr[i] = FileInfo{}
 		onlineDisks[i] = nil
-		missingBlocks++
 	}
 
-	// if missing metadata can be reconstructed, attempt to reconstruct.
-	// additionally do not heal delete markers inline, let them be
-	// healed upon regular heal process.
-	if !fi.Deleted && missingBlocks > 0 && missingBlocks < readQuorum {
-		globalMRFState.addPartialOp(partialOperation{
-			bucket:    bucket,
-			object:    object,
-			versionID: fi.VersionID,
-			queued:    time.Now(),
-			setIndex:  er.setIndex,
-			poolIndex: er.poolIndex,
-		})
-	}
+	mrfCheck <- fi.ShallowCopy()
 
 	return fi, metaArr, onlineDisks, nil
 }
