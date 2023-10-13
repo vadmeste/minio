@@ -33,6 +33,7 @@ type parallelReader struct {
 	readers       []io.ReaderAt
 	orgReaders    []io.ReaderAt
 	dataBlocks    int
+	parityBlocks  int
 	offset        int64
 	shardSize     int64
 	shardFileSize int64
@@ -50,6 +51,7 @@ func newParallelReader(readers []io.ReaderAt, e Erasure, offset, totalLength int
 		readers:       readers,
 		orgReaders:    readers,
 		dataBlocks:    e.dataBlocks,
+		parityBlocks:  e.parityBlocks,
 		offset:        (offset / e.blockSize) * e.ShardSize(),
 		shardSize:     e.ShardSize(),
 		shardFileSize: e.ShardFileSize(totalLength),
@@ -120,8 +122,8 @@ func (p *parallelReader) Read(dst [][]byte) ([][]byte, error) {
 	readTriggerCh := make(chan bool, len(p.readers))
 	defer close(readTriggerCh) // close the channel upon return
 
-	for i := 0; i < p.dataBlocks; i++ {
-		// Setup read triggers for p.dataBlocks number of reads so that it reads in parallel.
+	for i := 0; i < p.dataBlocks+p.parityBlocks; i++ {
+		// Setup read triggers to all disks
 		readTriggerCh <- true
 	}
 
@@ -130,10 +132,7 @@ func (p *parallelReader) Read(dst [][]byte) ([][]byte, error) {
 	missingPartsHeal := int32(0) // Atomic bool flag.
 	readerIndex := 0
 	var wg sync.WaitGroup
-	// if readTrigger is true, it implies next disk.ReadAt() should be tried
-	// if readTrigger is false, it implies previous disk.ReadAt() was successful and there is no need
-	// to try reading the next disk.
-	for readTrigger := range readTriggerCh {
+	for range readTriggerCh {
 		newBufLK.RLock()
 		canDecode := p.canDecode(newBuf)
 		newBufLK.RUnlock()
@@ -143,16 +142,11 @@ func (p *parallelReader) Read(dst [][]byte) ([][]byte, error) {
 		if readerIndex == len(p.readers) {
 			break
 		}
-		if !readTrigger {
-			continue
-		}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			rr := p.readers[i]
 			if rr == nil {
-				// Since reader is nil, trigger another read.
-				readTriggerCh <- true
 				return
 			}
 			bufIdx := p.readerToBuf[i]
