@@ -1,6 +1,6 @@
 module min.io/populate-hardlinks
 
-go 1.21.1
+go 1.19
 
 require (
 	github.com/dchest/siphash v1.2.3

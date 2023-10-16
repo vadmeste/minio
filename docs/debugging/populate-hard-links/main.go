@@ -1,3 +1,20 @@
+// Copyright (c) 2015-2023 MinIO, Inc.
+//
+// This file is part of MinIO Object Storage stack
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 package main
 
 import (
@@ -7,7 +24,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"hash/crc32"
 	"io/fs"
 	"log"
 	"os"
@@ -35,27 +51,6 @@ func sipHashMod(key string, cardinality int, id [16]byte) int {
 	k0, k1 := binary.LittleEndian.Uint64(id[0:8]), binary.LittleEndian.Uint64(id[8:16])
 	sum64 := siphash.Hash(k0, k1, []byte(key))
 	return int(sum64 % uint64(cardinality))
-}
-
-// hashOrder - hashes input key to return consistent
-// hashed integer slice. Returned integer order is salted
-// with an input key. This results in consistent order.
-// NOTE: collisions are fine, we are not looking for uniqueness
-// in the slices returned.
-func hashOrder(key string, cardinality int) []int {
-	if cardinality <= 0 {
-		// Returns an empty int slice for cardinality < 0.
-		return nil
-	}
-
-	nums := make([]int, cardinality)
-	keyCrc := crc32.Checksum([]byte(key), crc32.IEEETable)
-
-	start := int(keyCrc % uint32(cardinality))
-	for i := 1; i <= cardinality; i++ {
-		nums[i-1] = 1 + ((start + i) % cardinality)
-	}
-	return nums
 }
 
 const (
