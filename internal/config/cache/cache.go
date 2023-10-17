@@ -159,7 +159,7 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+"/cache/check", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+"/_mcache/v1/check", bytes.NewReader(buf))
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func (c Config) Set(ci *ObjectInfo) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.Endpoint+"/cache/update", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.Endpoint+"/_mcache/v1/update", bytes.NewReader(buf))
 	if err != nil {
 		return
 	}
@@ -231,7 +231,7 @@ func (c Config) Delete(bucket, key, vid string) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, c.Endpoint+"/cache/delete", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, c.Endpoint+"/_mcache/v1/delete", bytes.NewReader(buf))
 	if err != nil {
 		return
 	}
