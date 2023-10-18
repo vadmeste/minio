@@ -419,7 +419,7 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		}
 
 		if update {
-			go globalCacheConfig.Set(&cache.ObjectInfo{
+			defer globalCacheConfig.Set(&cache.ObjectInfo{
 				Key:     oi.Name,
 				Bucket:  oi.Bucket,
 				ETag:    oi.ETag,
@@ -812,7 +812,7 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 	}
 
 	if update {
-		go globalCacheConfig.Set(&cache.ObjectInfo{
+		defer globalCacheConfig.Set(&cache.ObjectInfo{
 			Key:     objInfo.Name,
 			Bucket:  objInfo.Bucket,
 			ETag:    objInfo.ETag,
@@ -1615,7 +1615,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		Host:         handlers.GetSourceIP(r),
 	})
 
-	go globalCacheConfig.Set(&cache.ObjectInfo{
+	defer globalCacheConfig.Set(&cache.ObjectInfo{
 		Key:     objInfo.Name,
 		Bucket:  objInfo.Bucket,
 		ETag:    objInfo.ETag,
@@ -1996,7 +1996,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	setPutObjHeaders(w, objInfo, false)
 
-	go globalCacheConfig.Set(&cache.ObjectInfo{
+	defer globalCacheConfig.Set(&cache.ObjectInfo{
 		Key:     objInfo.Name,
 		Bucket:  objInfo.Bucket,
 		ETag:    objInfo.ETag,
@@ -2311,7 +2311,7 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 			scheduleReplication(ctx, objInfo, objectAPI, dsc, replication.ObjectReplicationType)
 		}
 
-		go globalCacheConfig.Set(&cache.ObjectInfo{
+		defer globalCacheConfig.Set(&cache.ObjectInfo{
 			Key:     objInfo.Name,
 			Bucket:  objInfo.Bucket,
 			ETag:    objInfo.ETag,
