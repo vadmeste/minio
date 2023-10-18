@@ -1348,7 +1348,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 					continue
 				}
 
-				go globalCacheConfig.Set(&cache.ObjectInfo{
+				globalCacheConfig.Set(&cache.ObjectInfo{
 					Key:     objInfo.Name,
 					Bucket:  objInfo.Bucket,
 					ETag:    getDecryptedETag(formValues, objInfo, false),
@@ -1428,7 +1428,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		w.Header().Set(xhttp.Location, obj)
 	}
 
-	go globalCacheConfig.Set(&cache.ObjectInfo{
+	defer globalCacheConfig.Set(&cache.ObjectInfo{
 		Key:     objInfo.Name,
 		Bucket:  objInfo.Bucket,
 		ETag:    etag,
