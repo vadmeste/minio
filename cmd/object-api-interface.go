@@ -21,6 +21,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/minio/madmin-go/v3"
@@ -34,6 +35,9 @@ import (
 
 // CheckPreconditionFn returns true if precondition check failed.
 type CheckPreconditionFn func(o ObjectInfo) bool
+
+// CheckPreconditionDisk
+type CheckPreconditionDisk func(opts url.Values)
 
 // EvalMetadataFn validates input objInfo and GetObjectInfo error and returns an updated metadata and replication decision if any
 type EvalMetadataFn func(o *ObjectInfo, gerr error) (ReplicateDecision, error)
@@ -60,8 +64,9 @@ type ObjectOptions struct {
 	UserDefined         map[string]string   // only set in case of POST/PUT operations
 	PartNumber          int                 // only useful in case of GetObject/HeadObject
 	CheckPrecondFn      CheckPreconditionFn // only set during GetObject/HeadObject/CopyObjectPart preconditional valuation
-	EvalMetadataFn      EvalMetadataFn      // only set for retention settings, meant to be used only when updating metadata in-place.
-	DeleteReplication   ReplicationState    // Represents internal replication state needed for Delete replication
+	PrecondHeaders      url.Values
+	EvalMetadataFn      EvalMetadataFn   // only set for retention settings, meant to be used only when updating metadata in-place.
+	DeleteReplication   ReplicationState // Represents internal replication state needed for Delete replication
 	Transition          TransitionOptions
 	Expiration          ExpirationOptions
 	LifecycleAuditEvent lcAuditEvent

@@ -974,6 +974,10 @@ func (s *xlStorage) ListDir(ctx context.Context, volume, dirPath string, count i
 	return entries, nil
 }
 
+func xlMetaV2ObjectToFileAttrs(obj xlMetaV2Object) FileAttrs {
+	return FileAttrs{}
+}
+
 func (s *xlStorage) deleteVersions(ctx context.Context, volume, path string, fis ...FileInfo) error {
 	volumeDir, err := s.getVolDir(volume)
 	if err != nil {
@@ -1031,6 +1035,11 @@ func (s *xlStorage) deleteVersions(ctx context.Context, volume, path string, fis
 		return err
 	}
 
+	var topModTime int64
+	if len(xlMeta.versions) > 0 {
+		topModTime = xlMeta.versions[0].header.ModTime
+	}
+
 	for _, fi := range fis {
 		dataDir, err := xlMeta.DeleteVersion(fi)
 		if err != nil {
@@ -1073,6 +1082,16 @@ func (s *xlStorage) deleteVersions(ctx context.Context, volume, path string, fis
 		defer metaDataPoolPut(buf)
 		if err != nil {
 			return err
+		}
+
+		if linkHash != "" && xlMeta.versions[0].header.ModTime != topModTime {
+			// Update xattr of the pcache entry
+			ver, _ := xlMeta.getIdx(0)
+			if ver != nil && ver.ObjectV2 != nil {
+				setXAttrs(linkHash, xlMetaV2ObjectToFileAttrs(*ver.ObjectV2))
+			} else {
+				delXAttrs(linkHash)
+			}
 		}
 
 		return s.WriteAll(ctx, volume, pathJoin(path, xlStorageFormatFile), buf)
@@ -1245,6 +1264,15 @@ func (s *xlStorage) DeleteVersion(ctx context.Context, volume, path string, fi F
 		defer metaDataPoolPut(buf)
 		if err != nil {
 			return err
+		}
+
+		if linkHash != "" && xlMeta.versions[0].header.ModTime != fi.ModTime.UnixNano() {
+			ver, _ := xlMeta.getIdx(0)
+			if ver != nil && ver.ObjectV2 != nil {
+				setXAttrs(linkHash, xlMetaV2ObjectToFileAttrs(*ver.ObjectV2))
+			} else {
+				delXAttrs(linkHash)
+			}
 		}
 
 		return s.WriteAll(ctx, volume, pathJoin(path, xlStorageFormatFile), buf)
@@ -1451,7 +1479,7 @@ func (s *xlStorage) readRaw(ctx context.Context, volume, volumeDir, filePath str
 
 // ReadXL reads from path/xl.meta, does not interpret the data it read. This
 // is a raw call equivalent of ReadVersion().
-func (s *xlStorage) ReadXL(ctx context.Context, volume, path string, readData bool) (RawFileInfo, error) {
+func (s *xlStorage) ReadXL(ctx context.Context, volume, path string, readData bool, conds url.Values) (RawFileInfo, error) {
 	volumeDir, err := s.getVolDir(volume)
 	if err != nil {
 		return RawFileInfo{}, err
@@ -1471,6 +1499,21 @@ func (s *xlStorage) ReadXL(ctx context.Context, volume, path string, readData bo
 	filePath := pathJoin(volumeDir, path)
 	if err = checkPathLength(filePath); err != nil {
 		return RawFileInfo{}, err
+	}
+
+	if linkHash != "" {
+		attrs, err := getXAttrs(linkHash)
+		if err == nil {
+			objInfo := ObjectInfo{}
+			objInfo.Bucket = volume
+			objInfo.Name = path
+			objInfo.ETag = attrs.ETag
+			objInfo.ModTime = attrs.ModTime
+			err := checkPreconditions(objInfo, attrs.Parts, conds)
+			if err != nil {
+				return RawFileInfo{}, err
+			}
+		}
 	}
 
 	var buf []byte
@@ -2402,9 +2445,15 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 		}
 	}
 
+	var xattrModTime time.Time
+	var xattrETag string
+
 	defer func() {
 		if !skipAccessChecks(dstVolume) && linkHash != "" {
 			LinkAll(dstFilePath, linkHash, pathJoin(s.drivePath, minioMetaBucket))
+			if !xattrModTime.IsZero() {
+				setXAttrs(linkHash, FileAttrs{ETag: xattrETag, ModTime: xattrModTime})
+			}
 		}
 	}()
 
@@ -2593,6 +2642,11 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 			s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
 		}
 		return 0, err
+	}
+
+	if xlMeta.versions[0].header.ModTime == fi.ModTime.UnixNano() {
+		xattrModTime = fi.ModTime
+		xattrETag = fi.Metadata["etag"]
 	}
 
 	var sbuf bytes.Buffer

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
@@ -606,7 +607,7 @@ func (p *xlStorageDiskIDCheck) ReadAll(ctx context.Context, volume string, path 
 	return buf, err
 }
 
-func (p *xlStorageDiskIDCheck) ReadXL(ctx context.Context, volume string, path string, readData bool) (rf RawFileInfo, err error) {
+func (p *xlStorageDiskIDCheck) ReadXL(ctx context.Context, volume string, path string, readData bool, opts url.Values) (rf RawFileInfo, err error) {
 	ctx, done, err := p.TrackDiskHealth(ctx, storageMetricReadXL, volume, path)
 	if err != nil {
 		return RawFileInfo{}, err
@@ -615,7 +616,7 @@ func (p *xlStorageDiskIDCheck) ReadXL(ctx context.Context, volume string, path s
 
 	w := xioutil.NewDeadlineWorker(diskMaxTimeout)
 	rerr := w.Run(func() error {
-		rf, err = p.storage.ReadXL(ctx, volume, path, readData)
+		rf, err = p.storage.ReadXL(ctx, volume, path, readData, opts)
 		return err
 	})
 	if rerr != nil {

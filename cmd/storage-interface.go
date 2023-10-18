@@ -20,6 +20,7 @@ package cmd
 import (
 	"context"
 	"io"
+	"net/url"
 	"time"
 
 	"github.com/minio/madmin-go/v3"
@@ -84,7 +85,7 @@ type StorageAPI interface {
 	WriteMetadata(ctx context.Context, volume, path string, fi FileInfo) error
 	UpdateMetadata(ctx context.Context, volume, path string, fi FileInfo, opts UpdateMetadataOpts) error
 	ReadVersion(ctx context.Context, volume, path, versionID string, readData bool) (FileInfo, error)
-	ReadXL(ctx context.Context, volume, path string, readData bool) (RawFileInfo, error)
+	ReadXL(ctx context.Context, volume, path string, readData bool, opts url.Values) (RawFileInfo, error)
 	RenameData(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string) (uint64, error)
 
 	// File operations.
@@ -264,7 +265,7 @@ func (p *unrecognizedDisk) ReadVersion(ctx context.Context, volume, path, versio
 	return fi, errDiskNotFound
 }
 
-func (p *unrecognizedDisk) ReadXL(ctx context.Context, volume, path string, readData bool) (rf RawFileInfo, err error) {
+func (p *unrecognizedDisk) ReadXL(ctx context.Context, volume, path string, readData bool, opts url.Values) (rf RawFileInfo, err error) {
 	return rf, errDiskNotFound
 }
 

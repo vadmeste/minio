@@ -131,7 +131,7 @@ func (api objectAPIHandlers) getObjectInArchiveFileHandler(ctx context.Context, 
 			return true
 		}
 
-		return checkPreconditions(ctx, w, r, oi, opts)
+		return checkPreconditionsHandler(ctx, w, r, oi, opts)
 	}
 
 	zipObjInfo, err := getObjectInfo(ctx, bucket, zipPath, opts)
@@ -415,7 +415,7 @@ func (api objectAPIHandlers) headObjectInArchiveFileHandler(ctx context.Context,
 
 	// Validate pre-conditions if any.
 	opts.CheckPrecondFn = func(oi ObjectInfo) bool {
-		return checkPreconditions(ctx, w, r, oi, opts)
+		return checkPreconditionsHandler(ctx, w, r, oi, opts)
 	}
 
 	// We do not allow offsetting into extracted files.

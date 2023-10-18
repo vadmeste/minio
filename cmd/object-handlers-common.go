@@ -19,8 +19,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"time"
@@ -202,6 +204,82 @@ func checkPreconditionsPUT(ctx context.Context, w http.ResponseWriter, r *http.R
 	return false
 }
 
+var (
+	errPrecondInvalidObj        = errors.New("invalid object info")
+	errPrecondInvalidPartNumber = errors.New("invalid part number")
+	errPrecondNotModified       = errors.New("object not modified")
+	errPrecondFailed            = errors.New("precondition failed")
+)
+
+// Check if this is a precondition error coming from the XL storage layer
+func isXLPrecondErr(err error) bool {
+	err = unwrapAll(err)
+	switch err {
+	case errPrecondInvalidObj, errPrecondInvalidPartNumber, errPrecondNotModified, errPrecondFailed:
+		return true
+	}
+	return false
+}
+
+func checkPreconditions(objInfo ObjectInfo, partNumber int, conds url.Values) error {
+	// If the object doesn't have a modtime (IsZero), or the modtime
+	// is obviously garbage (Unix time == 0), then ignore modtimes
+	// and don't process the If-Modified-Since header.
+	if objInfo.ModTime.IsZero() || objInfo.ModTime.Equal(time.Unix(0, 0)) || objInfo.ETag == "" {
+		return errPrecondInvalidObj
+	}
+
+	// Check if the part number is correct.
+	if partNumber > 1 && partNumber > len(objInfo.Parts) {
+		return errPrecondInvalidPartNumber
+	}
+
+	// If-Modified-Since : Return the object only if it has been modified since the specified time,
+	// otherwise return a 304 (not modified).
+	ifModifiedSinceHeader := conds.Get(xhttp.IfModifiedSince)
+	if ifModifiedSinceHeader != "" {
+		if givenTime, err := amztime.ParseHeader(ifModifiedSinceHeader); err == nil {
+			if !ifModifiedSince(objInfo.ModTime, givenTime) {
+				return errPrecondNotModified
+			}
+		}
+	}
+
+	// If-Unmodified-Since : Return the object only if it has not been modified since the specified
+	// time, otherwise return a 412 (precondition failed).
+	ifUnmodifiedSinceHeader := conds.Get(xhttp.IfUnmodifiedSince)
+	if ifUnmodifiedSinceHeader != "" {
+		if givenTime, err := amztime.ParseHeader(ifUnmodifiedSinceHeader); err == nil {
+			if ifModifiedSince(objInfo.ModTime, givenTime) {
+				// If the object is modified since the specified time.
+				return errPrecondFailed
+			}
+		}
+	}
+
+	// If-Match : Return the object only if its entity tag (ETag) is the same as the one specified;
+	// otherwise return a 412 (precondition failed).
+	ifMatchETagHeader := conds.Get(xhttp.IfMatch)
+	if ifMatchETagHeader != "" {
+		if !isETagEqual(objInfo.ETag, ifMatchETagHeader) {
+			// If the object ETag does not match with the specified ETag.
+			return errPrecondFailed
+		}
+	}
+
+	// If-None-Match : Return the object only if its entity tag (ETag) is different from the
+	// one specified otherwise, return a 304 (not modified).
+	ifNoneMatchETagHeader := conds.Get(xhttp.IfNoneMatch)
+	if ifNoneMatchETagHeader != "" {
+		if isETagEqual(objInfo.ETag, ifNoneMatchETagHeader) {
+			// If the object ETag matches with the specified ETag.
+			return errPrecondNotModified
+		}
+	}
+	// Object content should be written to http.ResponseWriter
+	return nil
+}
+
 // Validates the preconditions. Returns true if GET/HEAD operation should not proceed.
 // Preconditions supported are:
 //
@@ -209,15 +287,9 @@ func checkPreconditionsPUT(ctx context.Context, w http.ResponseWriter, r *http.R
 //	If-Unmodified-Since
 //	If-Match
 //	If-None-Match
-func checkPreconditions(ctx context.Context, w http.ResponseWriter, r *http.Request, objInfo ObjectInfo, opts ObjectOptions) bool {
+func checkPreconditionsHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, objInfo ObjectInfo, opts ObjectOptions) bool {
 	// Return false for methods other than GET and HEAD.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	// If the object doesn't have a modtime (IsZero), or the modtime
-	// is obviously garbage (Unix time == 0), then ignore modtimes
-	// and don't process the If-Modified-Since header.
-	if objInfo.ModTime.IsZero() || objInfo.ModTime.Equal(time.Unix(0, 0)) {
 		return false
 	}
 
@@ -232,72 +304,37 @@ func checkPreconditions(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		if objInfo.ETag != "" {
 			w.Header()[xhttp.ETag] = []string{"\"" + objInfo.ETag + "\""}
 		}
-
-		if objInfo.VersionID != "" {
-			w.Header()[xhttp.AmzVersionID] = []string{objInfo.VersionID}
-		}
 	}
 
-	// Check if the part number is correct.
-	if opts.PartNumber > 1 && opts.PartNumber > len(objInfo.Parts) {
+	err := checkPreconditions(objInfo, opts.PartNumber, url.Values(r.Header))
+	switch err {
+	case nil, errPrecondInvalidObj:
+		return false
+	case errPrecondInvalidPartNumber:
 		// According to S3 we don't need to set any object information here.
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidPartNumber), r.URL)
-		return true
+	case errPrecondNotModified:
+		// If the object is not modified since the specified time.
+		writeHeaders()
+		w.WriteHeader(http.StatusNotModified)
+	case errPrecondFailed:
+		// If the object is modified since the specified time.
+		writeHeaders()
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
 	}
+	return true
+}
 
-	// If-Modified-Since : Return the object only if it has been modified since the specified time,
-	// otherwise return a 304 (not modified).
-	ifModifiedSinceHeader := r.Header.Get(xhttp.IfModifiedSince)
-	if ifModifiedSinceHeader != "" {
-		if givenTime, err := amztime.ParseHeader(ifModifiedSinceHeader); err == nil {
-			if !ifModifiedSince(objInfo.ModTime, givenTime) {
-				// If the object is not modified since the specified time.
-				writeHeaders()
-				w.WriteHeader(http.StatusNotModified)
-				return true
-			}
-		}
+func writePrecondError(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
+	setCommonHeaders(w)
+	switch err {
+	case errPrecondInvalidPartNumber:
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidPartNumber), r.URL)
+	case errPrecondNotModified:
+		w.WriteHeader(http.StatusNotModified)
+	case errPrecondFailed:
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
 	}
-
-	// If-Unmodified-Since : Return the object only if it has not been modified since the specified
-	// time, otherwise return a 412 (precondition failed).
-	ifUnmodifiedSinceHeader := r.Header.Get(xhttp.IfUnmodifiedSince)
-	if ifUnmodifiedSinceHeader != "" {
-		if givenTime, err := amztime.ParseHeader(ifUnmodifiedSinceHeader); err == nil {
-			if ifModifiedSince(objInfo.ModTime, givenTime) {
-				// If the object is modified since the specified time.
-				writeHeaders()
-				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
-				return true
-			}
-		}
-	}
-
-	// If-Match : Return the object only if its entity tag (ETag) is the same as the one specified;
-	// otherwise return a 412 (precondition failed).
-	ifMatchETagHeader := r.Header.Get(xhttp.IfMatch)
-	if ifMatchETagHeader != "" {
-		if !isETagEqual(objInfo.ETag, ifMatchETagHeader) {
-			// If the object ETag does not match with the specified ETag.
-			writeHeaders()
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
-			return true
-		}
-	}
-
-	// If-None-Match : Return the object only if its entity tag (ETag) is different from the
-	// one specified otherwise, return a 304 (not modified).
-	ifNoneMatchETagHeader := r.Header.Get(xhttp.IfNoneMatch)
-	if ifNoneMatchETagHeader != "" {
-		if isETagEqual(objInfo.ETag, ifNoneMatchETagHeader) {
-			// If the object ETag matches with the specified ETag.
-			writeHeaders()
-			w.WriteHeader(http.StatusNotModified)
-			return true
-		}
-	}
-	// Object content should be written to http.ResponseWriter
-	return false
 }
 
 // returns true if object was modified after givenTime.

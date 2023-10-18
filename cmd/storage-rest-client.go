@@ -129,6 +129,12 @@ func toStorageErr(err error) error {
 		return errDiskNotFound
 	case errDiskNotFound.Error():
 		return errDiskNotFound
+	case errPrecondFailed.Error():
+		return errPrecondFailed
+	case errPrecondNotModified.Error():
+		return errPrecondNotModified
+	case errPrecondInvalidPartNumber.Error():
+		return errPrecondInvalidPartNumber
 	}
 	return err
 }
@@ -550,11 +556,15 @@ func (client *storageRESTClient) ReadVersion(ctx context.Context, volume, path, 
 }
 
 // ReadXL - reads all contents of xl.meta of a file.
-func (client *storageRESTClient) ReadXL(ctx context.Context, volume string, path string, readData bool) (rf RawFileInfo, err error) {
+func (client *storageRESTClient) ReadXL(ctx context.Context, volume string, path string, readData bool, hdrs url.Values) (rf RawFileInfo, err error) {
 	values := make(url.Values)
 	values.Set(storageRESTVolume, volume)
 	values.Set(storageRESTFilePath, path)
 	values.Set(storageRESTReadData, strconv.FormatBool(readData))
+	for k, v := range hdrs {
+		values.Set(k, v[0])
+	}
+
 	respBody, err := client.call(ctx, storageRESTMethodReadXL, values, nil, -1)
 	if err != nil {
 		return rf, err

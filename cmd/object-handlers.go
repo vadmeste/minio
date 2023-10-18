@@ -411,6 +411,9 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		}
 	}
 
+	// Copy the headers to be evalued by xl-storage later
+	opts.PrecondHeaders = url.Values(r.Header)
+
 	// Validate pre-conditions if any.
 	opts.CheckPrecondFn = func(oi ObjectInfo) bool {
 		if _, err := DecryptObjectInfo(&oi, r); err != nil {
@@ -428,12 +431,17 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 			})
 		}
 
-		return checkPreconditions(ctx, w, r, oi, opts)
+		return checkPreconditionsHandler(ctx, w, r, oi, opts)
 	}
 
 	var proxy proxyResult
 	gr, err := getObjectNInfo(ctx, bucket, object, rs, r.Header, opts)
 	if err != nil {
+		if isXLPrecondErr(err) {
+			writePrecondError(ctx, w, r, err)
+			return
+		}
+
 		var (
 			reader *GetObjectReader
 			perr   error
@@ -822,7 +830,7 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 	}
 
 	// Validate pre-conditions if any.
-	if checkPreconditions(ctx, w, r, objInfo, opts) {
+	if checkPreconditionsHandler(ctx, w, r, objInfo, opts) {
 		return
 	}
 

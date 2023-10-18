@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/user"
 	"path"
 	"runtime/debug"
@@ -541,7 +542,14 @@ func (s *storageRESTServer) ReadXLHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rf, err := s.storage.ReadXL(r.Context(), volume, filePath, readData)
+	opts := url.Values{
+		xhttp.IfModifiedSince:   []string{r.Header.Get(xhttp.IfModifiedSince)},
+		xhttp.IfUnmodifiedSince: []string{r.Header.Get(xhttp.IfUnmodifiedSince)},
+		xhttp.IfMatch:           []string{r.Header.Get(xhttp.IfMatch)},
+		xhttp.IfNoneMatch:       []string{r.Header.Get(xhttp.IfNoneMatch)},
+	}
+
+	rf, err := s.storage.ReadXL(r.Context(), volume, filePath, readData, opts)
 	if err != nil {
 		s.writeErrorResponse(w, err)
 		return

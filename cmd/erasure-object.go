@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"runtime"
 	"strconv"
@@ -93,7 +94,7 @@ func (er erasureObjects) CopyObject(ctx context.Context, srcBucket, srcObject, d
 	if srcOpts.VersionID != "" {
 		metaArr, errs = readAllFileInfo(ctx, storageDisks, srcBucket, srcObject, srcOpts.VersionID, true)
 	} else {
-		metaArr, errs = readAllXL(ctx, storageDisks, srcBucket, srcObject, true, false, true)
+		metaArr, errs = readAllXL(ctx, storageDisks, srcBucket, srcObject, true, false, true, nil)
 	}
 
 	readQuorum, writeQuorum, err := objectQuorumFromMeta(ctx, metaArr, errs, er.defaultParityCount)
@@ -558,7 +559,7 @@ func (er erasureObjects) deleteIfDangling(ctx context.Context, bucket, object st
 	return m, err
 }
 
-func readAllXL(ctx context.Context, disks []StorageAPI, bucket, object string, readData, inclFreeVers, allParts bool) ([]FileInfo, []error) {
+func readAllXL(ctx context.Context, disks []StorageAPI, bucket, object string, readData, inclFreeVers, allParts bool, precond url.Values) ([]FileInfo, []error) {
 	metadataArray := make([]*xlMetaV2, len(disks))
 	metaFileInfos := make([]FileInfo, len(metadataArray))
 	metadataShallowVersions := make([][]xlMetaV2ShallowVersion, len(disks))
@@ -575,7 +576,7 @@ func readAllXL(ctx context.Context, disks []StorageAPI, bucket, object string, r
 			if disks[index] == nil {
 				return errDiskNotFound
 			}
-			rf, err := disks[index].ReadXL(ctx, bucket, object, readData)
+			rf, err := disks[index].ReadXL(ctx, bucket, object, readData, precond)
 			if err != nil {
 				return err
 			}
@@ -610,6 +611,7 @@ func readAllXL(ctx context.Context, disks []StorageAPI, bucket, object string, r
 	ignoredErrs = append(ignoredErrs, objectOpIgnoredErrs...)
 
 	errs := g.Wait()
+
 	for index, err := range errs {
 		if err == nil {
 			continue
@@ -688,7 +690,7 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 	if opts.VersionID != "" {
 		metaArr, errs = readAllFileInfo(ctx, disks, bucket, object, opts.VersionID, readData)
 	} else {
-		metaArr, errs = readAllXL(ctx, disks, bucket, object, readData, opts.InclFreeVersions, true)
+		metaArr, errs = readAllXL(ctx, disks, bucket, object, readData, opts.InclFreeVersions, true, opts.PrecondHeaders)
 	}
 
 	readQuorum, _, err := objectQuorumFromMeta(ctx, metaArr, errs, er.defaultParityCount)
@@ -1851,7 +1853,7 @@ func (er erasureObjects) PutObjectMetadata(ctx context.Context, bucket, object s
 	if opts.VersionID != "" {
 		metaArr, errs = readAllFileInfo(ctx, disks, bucket, object, opts.VersionID, false)
 	} else {
-		metaArr, errs = readAllXL(ctx, disks, bucket, object, false, false, true)
+		metaArr, errs = readAllXL(ctx, disks, bucket, object, false, false, true, nil)
 	}
 
 	readQuorum, _, err := objectQuorumFromMeta(ctx, metaArr, errs, er.defaultParityCount)
@@ -1924,7 +1926,7 @@ func (er erasureObjects) PutObjectTags(ctx context.Context, bucket, object strin
 	if opts.VersionID != "" {
 		metaArr, errs = readAllFileInfo(ctx, disks, bucket, object, opts.VersionID, false)
 	} else {
-		metaArr, errs = readAllXL(ctx, disks, bucket, object, false, false, true)
+		metaArr, errs = readAllXL(ctx, disks, bucket, object, false, false, true, nil)
 	}
 
 	readQuorum, _, err := objectQuorumFromMeta(ctx, metaArr, errs, er.defaultParityCount)
