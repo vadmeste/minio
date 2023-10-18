@@ -1423,7 +1423,8 @@ func (s *xlStorage) readRaw(ctx context.Context, volume, volumeDir, filePath str
 	}
 
 	xlPath := pathJoin(filePath, xlStorageFormatFile)
-	if strings.HasPrefix(filePath, pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix)) {
+	link := strings.HasPrefix(filePath, pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix))
+	if link {
 		xlPath = filePath
 	}
 	if readData {
@@ -1443,7 +1444,7 @@ func (s *xlStorage) readRaw(ctx context.Context, volume, volumeDir, filePath str
 	}
 
 	if err != nil {
-		if errors.Is(err, errFileNotFound) {
+		if errors.Is(err, errFileNotFound) && !link {
 			buf, dmTime, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFileV1), true)
 			if err != nil {
 				return nil, time.Time{}, err
