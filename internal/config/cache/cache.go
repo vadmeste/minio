@@ -168,7 +168,7 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer xhttp.DrainBody(resp.Body)
+	xhttp.DrainBody(resp.Body)
 
 	switch resp.StatusCode {
 	case http.StatusNotFound:
@@ -194,6 +194,18 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 
 // Set sets the cache object info
 func (c Config) Set(ci *ObjectInfo) {
+	configLock.RLock()
+	defer configLock.RUnlock()
+
+	if !c.Enable {
+		return
+	}
+
+	if c.Endpoint == "" {
+		// Endpoint not set, make this a no-op
+		return
+	}
+
 	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	buf, err := json.Marshal(ci)
 	if err != nil {
@@ -208,13 +220,21 @@ func (c Config) Set(ci *ObjectInfo) {
 		return
 	}
 
-	c.clnt.Do(req) // do not care about the return
+	resp, err := c.clnt.Do(req)
+	if err != nil {
+		return
+	}
+	defer xhttp.DrainBody(resp.Body)
 }
 
 // Delete deletes remote cached content for object and its version.
 func (c Config) Delete(bucket, key, vid string) {
 	configLock.RLock()
 	defer configLock.RUnlock()
+
+	if !c.Enable {
+		return
+	}
 
 	if c.Endpoint == "" {
 		return

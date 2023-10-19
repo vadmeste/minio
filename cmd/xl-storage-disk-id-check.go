@@ -200,8 +200,8 @@ func newXLStorageDiskIDCheck(storage *xlStorage, healthCheck bool) *xlStorageDis
 		diskMaxConcurrent = 512
 		if storage.rotational {
 			diskMaxConcurrent = int(storage.nrRequests) / 2
-			if diskMaxConcurrent == 0 {
-				diskMaxConcurrent = 32
+			if diskMaxConcurrent < 32 {
+				diskMaxConcurrent = 16 // Fair value for constrainted systems.
 			}
 		}
 	}
