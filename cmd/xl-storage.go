@@ -1427,6 +1427,7 @@ func (s *xlStorage) readRaw(ctx context.Context, volume, volumeDir, filePath str
 	if link {
 		xlPath = filePath
 	}
+
 	if readData {
 		buf, dmTime, err = s.readAllData(ctx, volume, volumeDir, xlPath, true)
 	} else {
@@ -1443,18 +1444,21 @@ func (s *xlStorage) readRaw(ctx context.Context, volume, volumeDir, filePath str
 		}
 	}
 
-	if err != nil {
-		if errors.Is(err, errFileNotFound) && !link {
-			buf, dmTime, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFileV1), true)
-			if err != nil {
-				return nil, time.Time{}, err
-			}
-		} else {
+	if link {
+		return buf, dmTime, err
+	}
+
+	if err != nil && errors.Is(err, errFileNotFound) {
+		buf, dmTime, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFileV1), true)
+		if err != nil {
 			return nil, time.Time{}, err
 		}
 	}
 
 	if len(buf) == 0 {
+		if err != nil {
+			return nil, time.Time{}, err
+		}
 		return nil, time.Time{}, errFileNotFound
 	}
 
