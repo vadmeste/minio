@@ -367,7 +367,7 @@ func validateSubSysConfig(ctx context.Context, s config.Config, subSys string, o
 			return errors.New("Deployment is not registered with SUBNET. Please register the deployment via 'mc license register ALIAS'")
 		}
 	case config.CacheSubSys:
-		if _, err := cache.LookupConfig(s[config.CacheSubSys][config.Default], NewHTTPTransport()); err != nil {
+		if _, err := cache.LookupConfig(s[config.CacheSubSys][config.Default], globalRemoteTargetTransport); err != nil {
 			return err
 		}
 	case config.PolicyOPASubSys:
@@ -646,7 +646,7 @@ func applyDynamicConfigForSubSys(ctx context.Context, objAPI ObjectLayer, s conf
 			}
 		}
 	case config.CacheSubSys:
-		cacheCfg, err := cache.LookupConfig(s[config.CacheSubSys][config.Default], NewHTTPTransport())
+		cacheCfg, err := cache.LookupConfig(s[config.CacheSubSys][config.Default], globalRemoteTargetTransport)
 		if err != nil {
 			logger.LogIf(ctx, fmt.Errorf("Unable to load cache config: %w", err))
 		} else {
