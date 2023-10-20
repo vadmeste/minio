@@ -156,7 +156,10 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// We do not want Get's to take so much time, anything
+	// beyond 250ms we should cut it, remote cache is too
+	// busy already.
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+"/_mcache/v1/check", bytes.NewReader(buf))
@@ -212,10 +215,7 @@ func (c Config) Set(ci *ObjectInfo) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.Endpoint+"/_mcache/v1/update", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, c.Endpoint+"/_mcache/v1/update", bytes.NewReader(buf))
 	if err != nil {
 		return
 	}
