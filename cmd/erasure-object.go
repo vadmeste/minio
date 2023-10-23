@@ -715,10 +715,9 @@ func readAllXL(ctx context.Context, disks []StorageAPI, bucket, object string, r
 
 func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object string, opts ObjectOptions, readData bool) (fi FileInfo, metaArr []FileInfo, onlineDisks []StorageAPI, err error) {
 	var (
-		modTime    time.Time
-		etag       string
-		readQuorum = -1
-		errs       []error
+		modTime time.Time
+		etag    string
+		errs    []error
 
 		mu sync.Mutex
 	)
@@ -849,7 +848,7 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 			metaArr, errs = pickLatestQuorumFilesInfo(ctx, rawArr, errs, bucket, object, readData, opts.InclFreeVersions, true)
 		}
 
-		readQuorum, _, err = objectQuorumFromMeta(ctx, metaArr, errs, er.defaultParityCount)
+		readQuorum, _, err := objectQuorumFromMeta(ctx, metaArr, errs, er.defaultParityCount)
 		if err != nil {
 			continue
 		}
