@@ -241,7 +241,7 @@ type FileInfo struct {
 	Versioned bool `msg:"vs"`
 }
 
-// Light copy
+// ShallowCopy - copies minimal information for READ MRF checks.
 func (fi FileInfo) ShallowCopy() (n FileInfo) {
 	n.Volume = fi.Volume
 	n.Name = fi.Name
