@@ -700,7 +700,6 @@ type GetObjectReader struct {
 	io.Reader
 	ObjInfo    ObjectInfo
 	cleanUpFns []func()
-	opts       ObjectOptions
 	once       sync.Once
 }
 
@@ -725,7 +724,6 @@ func NewGetObjectReaderFromReader(r io.Reader, oi ObjectInfo, opts ObjectOptions
 		ObjInfo:    oi,
 		Reader:     r,
 		cleanUpFns: cleanupFns,
-		opts:       opts,
 	}, nil
 }
 
@@ -862,7 +860,6 @@ func NewGetObjectReader(rs *HTTPRangeSpec, oi ObjectInfo, opts ObjectOptions) (
 				ObjInfo:    oi,
 				Reader:     decReader,
 				cleanUpFns: cFns,
-				opts:       opts,
 			}
 			return r, nil
 		}
@@ -916,7 +913,6 @@ func NewGetObjectReader(rs *HTTPRangeSpec, oi ObjectInfo, opts ObjectOptions) (
 				ObjInfo:    oi,
 				Reader:     decReader,
 				cleanUpFns: cFns,
-				opts:       opts,
 			}
 			return r, nil
 		}
@@ -931,7 +927,6 @@ func NewGetObjectReader(rs *HTTPRangeSpec, oi ObjectInfo, opts ObjectOptions) (
 				ObjInfo:    oi,
 				Reader:     inputReader,
 				cleanUpFns: cFns,
-				opts:       opts,
 			}
 			return r, nil
 		}
