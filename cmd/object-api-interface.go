@@ -110,7 +110,7 @@ type ObjectOptions struct {
 	MetadataChg           bool                  // is true if it is a metadata update operation.
 	EvalRetentionBypassFn EvalRetentionBypassFn // only set for enforcing retention bypass on DeleteObject.
 
-	FastGetObjInfo bool // Only for S3 GetObject calls for now
+	FastGetObjInfo bool // Only for S3 Head/Get Object calls for now
 }
 
 // ExpirationOptions represents object options for object expiration at objectLayer.

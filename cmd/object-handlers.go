@@ -708,6 +708,8 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 		}
 	}
 
+	opts.FastGetObjInfo = true
+
 	// Get request range.
 	var rs *HTTPRangeSpec
 	rangeHeader := r.Header.Get(xhttp.Range)
