@@ -12,7 +12,6 @@ import (
 // ObjectInfo represents the object information cached remotely
 type ObjectInfo struct {
 	Key        string    `json:"key"`
-	VID        string    `json:"vid"`
 	Bucket     string    `json:"bucket"`
 	ETag       string    `json:"etag"`
 	ModTime    time.Time `json:"modTime"`
@@ -47,9 +46,8 @@ func canonicalizeETag(etag string) string {
 
 // Init - populates the input values, initializes CondCheck
 // before sending the request remotely.
-func (r *CondCheck) Init(bucket, object, vid string, header http.Header) {
+func (r *CondCheck) Init(bucket, object string, header http.Header) {
 	r.Key = object
-	r.VID = vid
 	r.Bucket = bucket
 
 	ifModifiedSinceHeader := header.Get(xhttp.IfModifiedSince)

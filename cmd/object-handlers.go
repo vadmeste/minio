@@ -379,9 +379,9 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 	}
 
 	var update bool
-	if globalCacheConfig.EnabledRemote() {
+	if globalCacheConfig.EnabledRemote() && opts.VersionID == "" {
 		rc := &cache.CondCheck{}
-		rc.Init(bucket, object, opts.VersionID, r.Header)
+		rc.Init(bucket, object, r.Header)
 
 		ci, err := globalCacheConfig.Get(rc)
 		if ci != nil {
@@ -391,10 +391,6 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 			w.Header().Set(xhttp.LastModified, ci.ModTime.UTC().Format(http.TimeFormat))
 			if ci.ETag != "" {
 				w.Header()[xhttp.ETag] = []string{"\"" + ci.ETag + "\""}
-			}
-
-			if ci.VID != "" {
-				w.Header()[xhttp.AmzVersionID] = []string{ci.VID}
 			}
 
 			if ci.StatusCode == http.StatusPreconditionFailed {
@@ -424,7 +420,6 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 				Bucket:  oi.Bucket,
 				ETag:    oi.ETag,
 				ModTime: oi.ModTime,
-				VID:     oi.VersionID,
 			})
 		}
 
@@ -685,9 +680,9 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 	}
 
 	var update bool
-	if globalCacheConfig.EnabledRemote() {
+	if globalCacheConfig.EnabledRemote() && opts.VersionID == "" {
 		rc := &cache.CondCheck{}
-		rc.Init(bucket, object, opts.VersionID, r.Header)
+		rc.Init(bucket, object, r.Header)
 
 		ci, err := globalCacheConfig.Get(rc)
 		if ci != nil {
@@ -697,10 +692,6 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 			w.Header().Set(xhttp.LastModified, ci.ModTime.UTC().Format(http.TimeFormat))
 			if ci.ETag != "" {
 				w.Header()[xhttp.ETag] = []string{"\"" + ci.ETag + "\""}
-			}
-
-			if ci.VID != "" {
-				w.Header()[xhttp.AmzVersionID] = []string{ci.VID}
 			}
 
 			if ci.StatusCode == http.StatusPreconditionFailed {
@@ -819,7 +810,6 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 			Bucket:  objInfo.Bucket,
 			ETag:    objInfo.ETag,
 			ModTime: objInfo.ModTime,
-			VID:     objInfo.VersionID,
 		})
 	}
 
@@ -1622,7 +1612,6 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		Bucket:  objInfo.Bucket,
 		ETag:    objInfo.ETag,
 		ModTime: objInfo.ModTime,
-		VID:     objInfo.VersionID,
 	})
 
 	if !remoteCallRequired && !globalTierConfigMgr.Empty() {
@@ -2003,7 +1992,6 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		Bucket:  objInfo.Bucket,
 		ETag:    objInfo.ETag,
 		ModTime: objInfo.ModTime,
-		VID:     objInfo.VersionID,
 	})
 
 	// Notify object created event.
@@ -2318,7 +2306,6 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 			Bucket:  objInfo.Bucket,
 			ETag:    objInfo.ETag,
 			ModTime: objInfo.ModTime,
-			VID:     objInfo.VersionID,
 		})
 
 		// Notify object created event.
@@ -2491,14 +2478,12 @@ func (api objectAPIHandlers) DeleteObjectHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if !objInfo.DeleteMarker {
-		go globalCacheConfig.Delete(bucket, object, opts.VersionID)
-	}
-
 	if objInfo.Name == "" {
 		writeSuccessNoContent(w)
 		return
 	}
+
+	defer globalCacheConfig.Delete(bucket, object)
 
 	setPutObjHeaders(w, objInfo, true)
 	writeSuccessNoContent(w)

@@ -669,9 +669,7 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 			continue
 		}
 
-		if !dobj.DeleteMarker {
-			go globalCacheConfig.Delete(bucket, dobj.ObjectName, dobj.VersionID)
-		}
+		defer globalCacheConfig.Delete(bucket, dobj.ObjectName)
 
 		if replicateDeletes && (dobj.DeleteMarkerReplicationStatus() == replication.Pending || dobj.VersionPurgeStatus() == Pending) {
 			// copy so we can re-add null ID.
@@ -1353,7 +1351,6 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 					Bucket:  objInfo.Bucket,
 					ETag:    getDecryptedETag(formValues, objInfo, false),
 					ModTime: objInfo.ModTime,
-					VID:     objInfo.VersionID,
 				})
 
 				fanOutResp = append(fanOutResp, minio.PutObjectFanOutResponse{
@@ -1433,7 +1430,6 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		Bucket:  objInfo.Bucket,
 		ETag:    etag,
 		ModTime: objInfo.ModTime,
-		VID:     objInfo.VersionID,
 	})
 
 	// Notify object created event.
