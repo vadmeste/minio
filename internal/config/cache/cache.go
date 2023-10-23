@@ -183,7 +183,6 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 		}
 		co := &ObjectInfo{
 			Key:        r.Key,
-			VID:        r.VID,
 			Bucket:     r.Bucket,
 			ETag:       resp.Header.Get(mcacheETag),
 			ModTime:    lastMod,
@@ -228,7 +227,7 @@ func (c Config) Set(ci *ObjectInfo) {
 }
 
 // Delete deletes remote cached content for object and its version.
-func (c Config) Delete(bucket, key, vid string) {
+func (c Config) Delete(bucket, key string) {
 	configLock.RLock()
 	defer configLock.RUnlock()
 
@@ -243,7 +242,6 @@ func (c Config) Delete(bucket, key, vid string) {
 	ci := &ObjectInfo{
 		Bucket: bucket,
 		Key:    key,
-		VID:    vid,
 	}
 	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	buf, err := json.Marshal(ci)
