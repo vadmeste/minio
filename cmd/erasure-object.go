@@ -883,11 +883,10 @@ func (er erasureObjects) getObjectFileInfo(ctx context.Context, bucket, object s
 		if success {
 			validResp++
 		}
-		if !opts.FastGetObjInfo {
-			if totalResp < er.setDriveCount {
+		if totalResp < er.setDriveCount {
+			if !opts.FastGetObjInfo {
 				continue
 			}
-		} else {
 			if validResp < minDisks {
 				continue
 			}
