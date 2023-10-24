@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path"
 	"strings"
@@ -126,7 +127,15 @@ func LinkAll(source, dest, baseDir string) (err error) {
 	}
 
 	defer updateOSMetrics(osMetricLink, source, dest)(err)
-	return os.Link(source, dest)
+
+	err = os.Link(source, dest)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			os.Remove(dest)
+			err = os.Link(source, dest)
+		}
+	}
+	return err
 }
 
 // RemoveAll captures time taken to call the underlying os.RemoveAll
