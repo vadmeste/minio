@@ -18,7 +18,7 @@
 package cmd
 
 const (
-	storageRESTVersion       = "v50" // Added DiskInfo metrics query
+	storageRESTVersion       = "v51" // LinkXL new API
 	storageRESTVersionPrefix = SlashSeparator + storageRESTVersion
 	storageRESTPrefix        = minioReservedBucketPath + "/storage"
 )
@@ -55,6 +55,7 @@ const (
 	storageRESTMethodStatInfoFile   = "/statfile"
 	storageRESTMethodReadMultiple   = "/readmultiple"
 	storageRESTMethodCleanAbandoned = "/cleanabandoned"
+	storageRESTMethodLinkXL         = "/linkxl"
 )
 
 const (

@@ -70,6 +70,7 @@ const (
 	storageMetricReadMultiple
 	storageMetricDeleteAbandonedParts
 	storageMetricDiskInfo
+	storageMetricLinkXL
 
 	// .... add more
 
@@ -644,6 +645,19 @@ func (p *xlStorageDiskIDCheck) ReadXL(ctx context.Context, volume string, path s
 		return rf, rerr
 	}
 	return rf, err
+}
+
+func (p *xlStorageDiskIDCheck) LinkXL(ctx context.Context, volume string, path string) (err error) {
+	ctx, done, err := p.TrackDiskHealth(ctx, storageMetricLinkXL, volume, path)
+	if err != nil {
+		return err
+	}
+	defer done(&err)
+
+	w := xioutil.NewDeadlineWorker(diskMaxTimeout)
+	return w.Run(func() error {
+		return p.storage.LinkXL(ctx, volume, path)
+	})
 }
 
 func (p *xlStorageDiskIDCheck) StatInfoFile(ctx context.Context, volume, path string, glob bool) (stat []StatInfo, err error) {

@@ -1454,6 +1454,36 @@ func (s *xlStorage) readRaw(ctx context.Context, volume, volumeDir, filePath str
 	return buf, dmTime, nil
 }
 
+// LinkXL performs a consistent hash hardlink creation at .minio.sys/.pcache/xxx/xxx.meta for path/xl.meta
+func (s *xlStorage) LinkXL(ctx context.Context, volume, path string) error {
+	volumeDir, err := s.getVolDir(volume)
+	if err != nil {
+		return err
+	}
+
+	// Validate file path length, before reading.
+	filePath := pathJoin(volumeDir, path)
+	if err = checkPathLength(filePath); err != nil {
+		return err
+	}
+
+	var linkHash string
+	{
+		ohashUint := xxh3.HashString128(path)
+		bhash := strconv.FormatUint(xxh3.HashString(volume), 16)
+		ohash := pathutil.Join(strconv.FormatUint(ohashUint.Hi, 16), strconv.FormatUint(ohashUint.Lo, 16)) + ".meta"
+		if globalCacheConfig.MatchesDepth(path) {
+			linkHash = pathutil.Join(s.drivePath, minioMetaBucket, prefixCachePrefix, bhash, ohash)
+		}
+	}
+
+	if linkHash != "" {
+		return LinkAll(filePath, linkHash, pathJoin(s.drivePath, minioMetaBucket))
+	}
+
+	return nil
+}
+
 // ReadXL reads from path/xl.meta, does not interpret the data it read. This
 // is a raw call equivalent of ReadVersion().
 func (s *xlStorage) ReadXL(ctx context.Context, volume, path string, readData bool) (RawFileInfo, error) {

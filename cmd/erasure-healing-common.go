@@ -20,9 +20,12 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
+	"strconv"
 	"time"
 
 	"github.com/minio/madmin-go/v3"
+	"github.com/zeebo/xxh3"
 )
 
 func commonETags(etags []string) (etag string, maxima int) {
@@ -286,6 +289,34 @@ func disksWithAllParts(ctx context.Context, onlineDisks []StorageAPI, partsMetad
 
 	availableDisks := make([]StorageAPI, len(onlineDisks))
 	dataErrs := make([]error, len(onlineDisks))
+
+	var linkHash string
+	ohashUint := xxh3.HashString128(object)
+	bhash := strconv.FormatUint(xxh3.HashString(bucket), 16)
+	ohash := pathJoin(strconv.FormatUint(ohashUint.Hi, 16), strconv.FormatUint(ohashUint.Lo, 16)) + ".meta"
+	if globalCacheConfig.MatchesDepth(object) {
+		linkHash = pathJoin(prefixCachePrefix, bhash, ohash)
+	}
+
+	defer func() {
+		if linkHash == "" {
+			return
+		}
+		for _, disk := range onlineDisks {
+			if disk == nil {
+				continue
+			}
+			_, err := disk.StatInfoFile(ctx, minioMetaBucket, linkHash, false)
+			if errors.Is(err, errPathNotFound) {
+				// We do not need really worry about having
+				// hardlinks not present, this may get healed
+				// the next time - so just ignore the
+				// error for now.
+				_ = disk.LinkXL(ctx, bucket, object)
+			}
+		}
+	}()
+
 	inconsistent := 0
 	for i, meta := range partsMetadata {
 		if !meta.IsValid() {
