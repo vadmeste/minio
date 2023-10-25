@@ -1478,7 +1478,7 @@ func (s *xlStorage) LinkXL(ctx context.Context, volume, path string) error {
 	}
 
 	if linkHash != "" {
-		return LinkAll(filePath, linkHash, pathJoin(s.drivePath, minioMetaBucket))
+		return LinkAll(pathJoin(filePath, xlStorageFormatFile), linkHash, pathJoin(s.drivePath, minioMetaBucket))
 	}
 
 	return nil
