@@ -600,6 +600,19 @@ func (client *storageRESTClient) ReadXL(ctx context.Context, volume string, path
 	return rf, err
 }
 
+// LinkXL - reads all contents of xl.meta of a file.
+func (client *storageRESTClient) LinkXL(ctx context.Context, volume string, path string) (err error) {
+	values := make(url.Values)
+	values.Set(storageRESTVolume, volume)
+	values.Set(storageRESTFilePath, path)
+	respBody, err := client.call(ctx, storageRESTMethodLinkXL, values, nil, -1)
+	if err != nil {
+		return err
+	}
+	defer xhttp.DrainBody(respBody)
+	return nil
+}
+
 // ReadAll - reads all contents of a file.
 func (client *storageRESTClient) ReadAll(ctx context.Context, volume string, path string) ([]byte, error) {
 	values := make(url.Values)

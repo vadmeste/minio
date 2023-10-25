@@ -288,6 +288,13 @@ func (d *naughtyDisk) ReadXL(ctx context.Context, volume string, path string, re
 	return d.disk.ReadXL(ctx, volume, path, readData)
 }
 
+func (d *naughtyDisk) LinkXL(ctx context.Context, volume string, path string) (err error) {
+	if err := d.calcError(); err != nil {
+		return err
+	}
+	return d.disk.LinkXL(ctx, volume, path)
+}
+
 func (d *naughtyDisk) VerifyFile(ctx context.Context, volume, path string, fi FileInfo) error {
 	if err := d.calcError(); err != nil {
 		return err

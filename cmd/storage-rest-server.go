@@ -550,6 +550,21 @@ func (s *storageRESTServer) ReadXLHandler(w http.ResponseWriter, r *http.Request
 	logger.LogIf(r.Context(), msgp.Encode(w, &rf))
 }
 
+// LinkXLHandler - read xl.meta for an object at path.
+func (s *storageRESTServer) LinkXLHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.IsValid(w, r) {
+		return
+	}
+	volume := r.Form.Get(storageRESTVolume)
+	filePath := r.Form.Get(storageRESTFilePath)
+
+	err := s.storage.LinkXL(r.Context(), volume, filePath)
+	if err != nil {
+		s.writeErrorResponse(w, err)
+		return
+	}
+}
+
 // ReadFileHandler - read section of a file.
 func (s *storageRESTServer) ReadFileHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.IsValid(w, r) {
@@ -1409,6 +1424,7 @@ func registerStorageRESTHandlers(router *mux.Router, endpointServerPools Endpoin
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodDeleteVersion).HandlerFunc(h(server.DeleteVersionHandler))
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodReadVersion).HandlerFunc(h(server.ReadVersionHandler))
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodReadXL).HandlerFunc(h(server.ReadXLHandler))
+			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodLinkXL).HandlerFunc(h(server.LinkXLHandler))
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodRenameData).HandlerFunc(h(server.RenameDataHandler))
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodCreateFile).HandlerFunc(h(server.CreateFileHandler))
 			subrouter.Methods(http.MethodPost).Path(storageRESTVersionPrefix + storageRESTMethodCheckParts).HandlerFunc(h(server.CheckPartsHandler))

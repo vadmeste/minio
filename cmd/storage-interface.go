@@ -85,6 +85,7 @@ type StorageAPI interface {
 	UpdateMetadata(ctx context.Context, volume, path string, fi FileInfo, opts UpdateMetadataOpts) error
 	ReadVersion(ctx context.Context, volume, path, versionID string, readData bool) (FileInfo, error)
 	ReadXL(ctx context.Context, volume, path string, readData bool) (RawFileInfo, error)
+	LinkXL(ctx context.Context, volume, path string) error
 	RenameData(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string) (uint64, error)
 
 	// File operations.
@@ -266,6 +267,10 @@ func (p *unrecognizedDisk) ReadVersion(ctx context.Context, volume, path, versio
 
 func (p *unrecognizedDisk) ReadXL(ctx context.Context, volume, path string, readData bool) (rf RawFileInfo, err error) {
 	return rf, errDiskNotFound
+}
+
+func (p *unrecognizedDisk) LinkXL(ctx context.Context, volume, path string) (err error) {
+	return errDiskNotFound
 }
 
 func (p *unrecognizedDisk) ReadAll(ctx context.Context, volume string, path string) (buf []byte, err error) {
