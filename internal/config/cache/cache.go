@@ -21,17 +21,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	jsoniter "github.com/json-iterator/go"
-	"github.com/minio/minio/internal/amztime"
 	"github.com/minio/minio/internal/config"
 	xhttp "github.com/minio/minio/internal/http"
 	"github.com/minio/pkg/v2/env"
+	"github.com/tinylib/msgp/msgp"
 )
 
 // Cache related keys
@@ -120,12 +120,6 @@ func (c *Config) Update(ncfg Config) {
 	c.clnt = ncfg.clnt
 }
 
-const (
-	mcacheETag         = "x-mcache-etag"
-	mcacheLastModified = "x-mcache-last-modified"
-	mcacheVersionID    = "x-mcache-version-id"
-)
-
 // cache related errors
 var (
 	ErrInvalidArgument = errors.New("invalid argument")
@@ -150,8 +144,12 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 		return nil, nil
 	}
 
-	json := jsoniter.ConfigCompatibleWithStandardLibrary
-	buf, err := json.Marshal(r)
+	if !r.IsSet() {
+		// Conditional checks not set.
+		return nil, nil
+	}
+
+	buf, err := r.MarshalMsg(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -171,24 +169,14 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	xhttp.DrainBody(resp.Body)
+	defer xhttp.DrainBody(resp.Body)
 
 	switch resp.StatusCode {
 	case http.StatusNotFound:
 		return nil, ErrKeyMissing
-	case http.StatusPreconditionFailed, http.StatusNotModified:
-		lastMod, err := amztime.ParseHeader(resp.Header.Get(mcacheLastModified))
-		if err != nil {
-			return nil, ErrKeyMissing
-		}
-		co := &ObjectInfo{
-			Key:        r.Key,
-			Bucket:     r.Bucket,
-			ETag:       resp.Header.Get(mcacheETag),
-			ModTime:    lastMod,
-			StatusCode: resp.StatusCode,
-		}
-		return co, nil
+	case http.StatusOK:
+		co := &ObjectInfo{}
+		return co, co.DecodeMsg(msgp.NewReader(resp.Body))
 	default:
 		return nil, ErrInvalidArgument
 	}
@@ -208,8 +196,7 @@ func (c Config) Set(ci *ObjectInfo) {
 		return
 	}
 
-	json := jsoniter.ConfigCompatibleWithStandardLibrary
-	buf, err := json.Marshal(ci)
+	buf, err := ci.MarshalMsg(nil)
 	if err != nil {
 		return
 	}
@@ -239,17 +226,7 @@ func (c Config) Delete(bucket, key string) {
 		return
 	}
 
-	ci := &ObjectInfo{
-		Bucket: bucket,
-		Key:    key,
-	}
-	json := jsoniter.ConfigCompatibleWithStandardLibrary
-	buf, err := json.Marshal(ci)
-	if err != nil {
-		return
-	}
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, c.Endpoint+"/_mcache/v1/delete", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, c.Endpoint+fmt.Sprintf("/_mcache/v1/delete?bucket=%s&key=%s", bucket, key), nil)
 	if err != nil {
 		return
 	}

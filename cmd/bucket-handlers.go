@@ -1347,10 +1347,12 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 				}
 
 				globalCacheConfig.Set(&cache.ObjectInfo{
-					Key:     objInfo.Name,
-					Bucket:  objInfo.Bucket,
-					ETag:    getDecryptedETag(formValues, objInfo, false),
-					ModTime: objInfo.ModTime,
+					Key:          objInfo.Name,
+					Bucket:       objInfo.Bucket,
+					ETag:         getDecryptedETag(formValues, objInfo, false),
+					ModTime:      objInfo.ModTime,
+					Expires:      objInfo.Expires.UTC().Format(http.TimeFormat),
+					CacheControl: objInfo.CacheControl,
 				})
 
 				fanOutResp = append(fanOutResp, minio.PutObjectFanOutResponse{
@@ -1426,10 +1428,12 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	}
 
 	defer globalCacheConfig.Set(&cache.ObjectInfo{
-		Key:     objInfo.Name,
-		Bucket:  objInfo.Bucket,
-		ETag:    etag,
-		ModTime: objInfo.ModTime,
+		Key:          objInfo.Name,
+		Bucket:       objInfo.Bucket,
+		ETag:         etag,
+		ModTime:      objInfo.ModTime,
+		Expires:      objInfo.ExpiresStr(),
+		CacheControl: objInfo.CacheControl,
 	})
 
 	// Notify object created event.

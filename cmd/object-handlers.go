@@ -385,20 +385,16 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 
 		ci, err := globalCacheConfig.Get(rc)
 		if ci != nil {
-			// set common headers
-			setCommonHeaders(w)
-
-			w.Header().Set(xhttp.LastModified, ci.ModTime.UTC().Format(http.TimeFormat))
-			if ci.ETag != "" {
-				w.Header()[xhttp.ETag] = []string{"\"" + ci.ETag + "\""}
-			}
-
-			if ci.StatusCode == http.StatusPreconditionFailed {
-				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
-				return
-			}
-
-			w.WriteHeader(ci.StatusCode)
+			ci.WriteHeaders(w, func() {
+				// set common headers
+				setCommonHeaders(w)
+			}, func() {
+				if ci.StatusCode == http.StatusPreconditionFailed {
+					writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
+				} else {
+					w.WriteHeader(ci.StatusCode)
+				}
+			})
 			return
 		}
 
@@ -416,10 +412,12 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 
 		if update {
 			defer globalCacheConfig.Set(&cache.ObjectInfo{
-				Key:     oi.Name,
-				Bucket:  oi.Bucket,
-				ETag:    oi.ETag,
-				ModTime: oi.ModTime,
+				Key:          oi.Name,
+				Bucket:       oi.Bucket,
+				ETag:         oi.ETag,
+				ModTime:      oi.ModTime,
+				Expires:      oi.ExpiresStr(),
+				CacheControl: oi.CacheControl,
 			})
 		}
 
@@ -686,20 +684,16 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 
 		ci, err := globalCacheConfig.Get(rc)
 		if ci != nil {
-			// set common headers
-			setCommonHeaders(w)
-
-			w.Header().Set(xhttp.LastModified, ci.ModTime.UTC().Format(http.TimeFormat))
-			if ci.ETag != "" {
-				w.Header()[xhttp.ETag] = []string{"\"" + ci.ETag + "\""}
-			}
-
-			if ci.StatusCode == http.StatusPreconditionFailed {
-				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
-				return
-			}
-
-			w.WriteHeader(ci.StatusCode)
+			ci.WriteHeaders(w, func() {
+				// set common headers
+				setCommonHeaders(w)
+			}, func() {
+				if ci.StatusCode == http.StatusPreconditionFailed {
+					writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
+				} else {
+					w.WriteHeader(ci.StatusCode)
+				}
+			})
 			return
 		}
 
@@ -808,10 +802,12 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 
 	if update {
 		defer globalCacheConfig.Set(&cache.ObjectInfo{
-			Key:     objInfo.Name,
-			Bucket:  objInfo.Bucket,
-			ETag:    objInfo.ETag,
-			ModTime: objInfo.ModTime,
+			Key:          objInfo.Name,
+			Bucket:       objInfo.Bucket,
+			ETag:         objInfo.ETag,
+			ModTime:      objInfo.ModTime,
+			Expires:      objInfo.ExpiresStr(),
+			CacheControl: objInfo.CacheControl,
 		})
 	}
 
@@ -1610,10 +1606,12 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	})
 
 	defer globalCacheConfig.Set(&cache.ObjectInfo{
-		Key:     objInfo.Name,
-		Bucket:  objInfo.Bucket,
-		ETag:    objInfo.ETag,
-		ModTime: objInfo.ModTime,
+		Key:          objInfo.Name,
+		Bucket:       objInfo.Bucket,
+		ETag:         objInfo.ETag,
+		ModTime:      objInfo.ModTime,
+		Expires:      objInfo.ExpiresStr(),
+		CacheControl: objInfo.CacheControl,
 	})
 
 	if !remoteCallRequired && !globalTierConfigMgr.Empty() {
@@ -1990,10 +1988,12 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	setPutObjHeaders(w, objInfo, false)
 
 	defer globalCacheConfig.Set(&cache.ObjectInfo{
-		Key:     objInfo.Name,
-		Bucket:  objInfo.Bucket,
-		ETag:    objInfo.ETag,
-		ModTime: objInfo.ModTime,
+		Key:          objInfo.Name,
+		Bucket:       objInfo.Bucket,
+		ETag:         objInfo.ETag,
+		ModTime:      objInfo.ModTime,
+		Expires:      objInfo.ExpiresStr(),
+		CacheControl: objInfo.CacheControl,
 	})
 
 	// Notify object created event.
@@ -2304,10 +2304,12 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 		}
 
 		defer globalCacheConfig.Set(&cache.ObjectInfo{
-			Key:     objInfo.Name,
-			Bucket:  objInfo.Bucket,
-			ETag:    objInfo.ETag,
-			ModTime: objInfo.ModTime,
+			Key:          objInfo.Name,
+			Bucket:       objInfo.Bucket,
+			ETag:         objInfo.ETag,
+			ModTime:      objInfo.ModTime,
+			Expires:      objInfo.ExpiresStr(),
+			CacheControl: objInfo.CacheControl,
 		})
 
 		// Notify object created event.

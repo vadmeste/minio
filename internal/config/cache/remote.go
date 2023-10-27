@@ -9,23 +9,50 @@ import (
 	xhttp "github.com/minio/minio/internal/http"
 )
 
+//go:generate msgp -file=$GOFILE
+
 // ObjectInfo represents the object information cached remotely
 type ObjectInfo struct {
-	Key        string    `json:"key"`
-	Bucket     string    `json:"bucket"`
-	ETag       string    `json:"etag"`
-	ModTime    time.Time `json:"modTime"`
-	StatusCode int       `json:"-"`
+	Key          string    `json:"key"`
+	Bucket       string    `json:"bucket"`
+	ETag         string    `json:"etag,omitempty" msg:",omitempty"`
+	ModTime      time.Time `json:"modTime"`
+	CacheControl string    `json:"cacheControl,omitempty" msg:",omitempty"`
+	Expires      string    `json:"expires,omitempty" msg:",omitempty"`
+	StatusCode   int       `json:"statusCode"`
+}
+
+// WriteHeaders writes the response headers for conditional requests
+func (oi ObjectInfo) WriteHeaders(w http.ResponseWriter, preamble, statusCode func()) {
+	preamble()
+
+	if !oi.ModTime.IsZero() {
+		w.Header().Set(xhttp.LastModified, oi.ModTime.UTC().Format(http.TimeFormat))
+	}
+
+	if oi.ETag != "" {
+		w.Header()[xhttp.ETag] = []string{"\"" + oi.ETag + "\""}
+	}
+
+	if oi.Expires != "" {
+		w.Header().Set(xhttp.Expires, oi.Expires)
+	}
+
+	if oi.CacheControl != "" {
+		w.Header().Set(xhttp.CacheControl, oi.CacheControl)
+	}
+
+	statusCode()
 }
 
 // CondCheck represents the conditional request made to the remote cache
 // for validation during GET/HEAD object requests.
 type CondCheck struct {
 	ObjectInfo
-	IfMatch           string     `json:"ifMatch,omitempty"`
-	IfNoneMatch       string     `json:"ifNoneMatch,omitempty"`
-	IfModifiedSince   *time.Time `json:"ifModSince,omitempty"`
-	IfUnModifiedSince *time.Time `json:"ifUnmodSince,omitempty"`
+	IfMatch           string     `json:"ifMatch,omitempty" msg:",omitempty"`
+	IfNoneMatch       string     `json:"ifNoneMatch,omitempty" msg:",omitempty"`
+	IfModifiedSince   *time.Time `json:"ifModSince,omitempty" msg:",omitempty"`
+	IfUnModifiedSince *time.Time `json:"ifUnmodSince,omitempty" msg:",omitempty"`
 }
 
 // IsSet tells the cache lookup to avoid sending a request

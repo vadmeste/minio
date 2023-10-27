@@ -35,6 +35,7 @@ import (
 	sse "github.com/minio/minio/internal/bucket/encryption"
 	objectlock "github.com/minio/minio/internal/bucket/object/lock"
 	"github.com/minio/minio/internal/bucket/replication"
+	"github.com/minio/minio/internal/config/cache"
 	"github.com/minio/minio/internal/config/dns"
 	"github.com/minio/minio/internal/config/storageclass"
 	"github.com/minio/minio/internal/crypto"
@@ -1010,6 +1011,15 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 		Host:         handlers.GetSourceIP(r),
 	}
 	sendEvent(evt)
+
+	defer globalCacheConfig.Set(&cache.ObjectInfo{
+		Key:          objInfo.Name,
+		Bucket:       objInfo.Bucket,
+		ETag:         objInfo.ETag,
+		ModTime:      objInfo.ModTime,
+		Expires:      objInfo.ExpiresStr(),
+		CacheControl: objInfo.CacheControl,
+	})
 
 	if objInfo.NumVersions > dataScannerExcessiveVersionsThreshold {
 		evt.EventName = event.ObjectManyVersions
