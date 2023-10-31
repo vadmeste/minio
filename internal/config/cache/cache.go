@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/minio/minio/internal/config"
 	xhttp "github.com/minio/minio/internal/http"
 	"github.com/minio/pkg/v2/env"
@@ -39,10 +40,12 @@ const (
 	Enable      = "enable"
 	PrefixDepth = "prefix_depth"
 	Endpoint    = "endpoint"
+	ObjectSize  = "object_size"
 
 	EnvEnable      = "MINIO_CACHE_ENABLE"
 	EnvPrefixDepth = "MINIO_CACHE_PREFIX_DEPTH"
 	EnvEndpoint    = "MINIO_CACHE_ENDPOINT"
+	EnvObjectSize  = "MINIO_CACHE_OBJECT_SIZE"
 )
 
 // DefaultKVS - default KV config for cache settings
@@ -57,6 +60,10 @@ var DefaultKVS = config.KVS{
 	},
 	config.KV{
 		Key:   Endpoint,
+		Value: "",
+	},
+	config.KV{
+		Key:   ObjectSize,
 		Value: "",
 	},
 }
@@ -75,6 +82,10 @@ type Config struct {
 	// store and retrieve pre-condition check entities such as
 	// Etag and ModTime of an object + version
 	Endpoint string `json:"endpoint"`
+
+	// ObjectSize indicates the maximum object size below which
+	// data is cached and fetched remotely from DRAM.
+	ObjectSize int64
 
 	// Is the HTTP client used for communicating with mcache server
 	clnt *http.Client
@@ -109,6 +120,14 @@ func (c Config) MatchesDepth(object string) bool {
 	return false
 }
 
+// MatchesSize verifies if input 'size' falls under cacheable threshold
+func (c Config) MatchesSize(size int64) bool {
+	configLock.RLock()
+	defer configLock.RUnlock()
+
+	return c.Enable && c.ObjectSize > 0 && size <= c.ObjectSize
+}
+
 // Update updates new cache frequency
 func (c *Config) Update(ncfg Config) {
 	configLock.Lock()
@@ -124,6 +143,12 @@ func (c *Config) Update(ncfg Config) {
 var (
 	ErrInvalidArgument = errors.New("invalid argument")
 	ErrKeyMissing      = errors.New("key is missing")
+)
+
+const (
+	mcacheV1Check  = "/_mcache/v1/check"
+	mcacheV1Update = "/_mcache/v1/update"
+	mcacheV1Delete = "/_mcache/v1/delete"
 )
 
 // Get performs conditional check and returns the cached object info if any.
@@ -160,7 +185,7 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+"/_mcache/v1/check", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+mcacheV1Check, bytes.NewReader(buf))
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +226,7 @@ func (c Config) Set(ci *ObjectInfo) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, c.Endpoint+"/_mcache/v1/update", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, c.Endpoint+mcacheV1Update, bytes.NewReader(buf))
 	if err != nil {
 		return
 	}
@@ -226,7 +251,7 @@ func (c Config) Delete(bucket, key string) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, c.Endpoint+fmt.Sprintf("/_mcache/v1/delete?bucket=%s&key=%s", bucket, key), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, c.Endpoint+fmt.Sprintf("%s?bucket=%s&key=%s", mcacheV1Delete, bucket, key), nil)
 	if err != nil {
 		return
 	}
@@ -248,6 +273,14 @@ func LookupConfig(kvs config.KVS, transport http.RoundTripper) (cfg Config, err 
 			return cfg, err
 		}
 		cfg.PrefixDepth = prefixDepth
+	}
+
+	if d := env.Get(EnvObjectSize, kvs.GetWithDefault(ObjectSize, DefaultKVS)); d != "" {
+		objectSize, err := humanize.ParseBytes(d)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.ObjectSize = int64(objectSize)
 	}
 
 	cfg.Endpoint = env.Get(EnvEndpoint, kvs.GetWithDefault(Endpoint, DefaultKVS))
