@@ -136,6 +136,7 @@ func (c *Config) Update(ncfg Config) {
 	c.Enable = ncfg.Enable
 	c.Endpoint = ncfg.Endpoint
 	c.PrefixDepth = ncfg.PrefixDepth
+	c.ObjectSize = ncfg.ObjectSize
 	c.clnt = ncfg.clnt
 }
 
@@ -153,10 +154,6 @@ const (
 
 // Get performs conditional check and returns the cached object info if any.
 func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
-	if !r.IsSet() {
-		return nil, ErrInvalidArgument
-	}
-
 	configLock.RLock()
 	defer configLock.RUnlock()
 
@@ -166,11 +163,6 @@ func (c Config) Get(r *CondCheck) (*ObjectInfo, error) {
 
 	if c.Endpoint == "" {
 		// Endpoint not set, make this a no-op
-		return nil, nil
-	}
-
-	if !r.IsSet() {
-		// Conditional checks not set.
 		return nil, nil
 	}
 

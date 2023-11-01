@@ -1019,6 +1019,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 		ModTime:      objInfo.ModTime,
 		Expires:      objInfo.ExpiresStr(),
 		CacheControl: objInfo.CacheControl,
+		Metadata:     cloneMSS(objInfo.UserDefined),
 	})
 
 	if objInfo.NumVersions > dataScannerExcessiveVersionsThreshold {

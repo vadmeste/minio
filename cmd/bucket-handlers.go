@@ -1346,6 +1346,11 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 					continue
 				}
 
+				asize, err := objInfo.GetActualSize()
+				if err != nil {
+					asize = objInfo.Size
+				}
+
 				globalCacheConfig.Set(&cache.ObjectInfo{
 					Key:          objInfo.Name,
 					Bucket:       objInfo.Bucket,
@@ -1353,6 +1358,8 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 					ModTime:      objInfo.ModTime,
 					Expires:      objInfo.Expires.UTC().Format(http.TimeFormat),
 					CacheControl: objInfo.CacheControl,
+					Metadata:     cloneMSS(objInfo.UserDefined),
+					Size:         asize,
 				})
 
 				fanOutResp = append(fanOutResp, minio.PutObjectFanOutResponse{
@@ -1427,6 +1434,11 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		w.Header().Set(xhttp.Location, obj)
 	}
 
+	asize, err := objInfo.GetActualSize()
+	if err != nil {
+		asize = objInfo.Size
+	}
+
 	defer globalCacheConfig.Set(&cache.ObjectInfo{
 		Key:          objInfo.Name,
 		Bucket:       objInfo.Bucket,
@@ -1434,6 +1446,8 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		ModTime:      objInfo.ModTime,
 		Expires:      objInfo.ExpiresStr(),
 		CacheControl: objInfo.CacheControl,
+		Metadata:     cloneMSS(objInfo.UserDefined),
+		Size:         asize,
 	})
 
 	// Notify object created event.

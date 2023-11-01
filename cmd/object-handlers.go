@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2021 MinIO, Inc.
+// Copyright (c) 2015-2023 MinIO, Inc.
 //
 // This file is part of MinIO Object Storage stack
 //
@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/xml"
@@ -33,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/gzhttp"
@@ -61,6 +63,7 @@ import (
 	"github.com/minio/minio/internal/s3select"
 	"github.com/minio/mux"
 	"github.com/minio/pkg/v2/policy"
+	"github.com/valyala/bytebufferpool"
 )
 
 // supportedHeadGetReqParams - supported request parameters for GET and HEAD presigned request.
@@ -378,24 +381,85 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		}
 	}
 
+	cachedResult := globalCacheConfig.EnabledRemote() && opts.VersionID == ""
+
 	var update bool
-	if globalCacheConfig.EnabledRemote() && opts.VersionID == "" {
+	if cachedResult {
 		rc := &cache.CondCheck{}
-		rc.Init(bucket, object, r.Header)
+		h := r.Header.Clone()
+		if opts.PartNumber > 0 {
+			h.Set(xhttp.PartNumber, strconv.Itoa(opts.PartNumber))
+		}
+		rc.Init(bucket, object, h)
 
 		ci, err := globalCacheConfig.Get(rc)
 		if ci != nil {
-			ci.WriteHeaders(w, func() {
-				// set common headers
-				setCommonHeaders(w)
-			}, func() {
-				if ci.StatusCode == http.StatusPreconditionFailed {
-					writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
-				} else {
-					w.WriteHeader(ci.StatusCode)
+			tgs, ok := ci.Metadata[xhttp.AmzObjectTagging]
+			if ok {
+				// Set this such that authorization policies can be applied on the object tags.
+				r.Header.Set(xhttp.AmzObjectTagging, tgs)
+			}
+
+			if s3Error := authorizeRequest(ctx, r, policy.GetObjectAction); s3Error != ErrNone {
+				writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(s3Error))
+				return
+			}
+
+			okSt := (ci.StatusCode == http.StatusOK || ci.StatusCode == http.StatusPartialContent ||
+				ci.StatusCode == http.StatusPreconditionFailed || ci.StatusCode == http.StatusNotModified)
+			if okSt {
+				ci.WriteHeaders(w, func() {
+					// set common headers
+					setCommonHeaders(w)
+				}, func() {
+					okSt := (ci.StatusCode == http.StatusOK || ci.StatusCode == http.StatusPartialContent)
+					if okSt && len(ci.Data) > 0 {
+						for k, v := range ci.Metadata {
+							w.Header().Set(k, v)
+						}
+
+						if opts.PartNumber > 0 && strings.Contains(ci.ETag, "-") {
+							w.Header()[xhttp.AmzMpPartsCount] = []string{
+								strings.TrimLeftFunc(ci.ETag, func(r rune) bool {
+									return !unicode.IsNumber(r)
+								}),
+							}
+						}
+
+						// For providing ranged content
+						start, rangeLen, err := rs.GetOffsetLength(ci.Size)
+						if err != nil {
+							start, rangeLen = 0, ci.Size
+						}
+
+						// Set content length.
+						w.Header().Set(xhttp.ContentLength, strconv.FormatInt(rangeLen, 10))
+						if rs != nil {
+							contentRange := fmt.Sprintf("bytes %d-%d/%d", start, start+rangeLen-1, ci.Size)
+							w.Header().Set(xhttp.ContentRange, contentRange)
+						}
+
+						io.Copy(w, bytes.NewReader(ci.Data))
+						return
+					}
+					if ci.StatusCode == http.StatusPreconditionFailed {
+						writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
+						return
+					} else if ci.StatusCode == http.StatusNotModified {
+						w.WriteHeader(ci.StatusCode)
+						return
+					}
+
+					// We did not satisfy any requirement from the cache, update the cache.
+					// this basically means that we do not have the Data for the object
+					// cached yet
+					update = true
+				})
+				if !update {
+					// No update is needed means we have written already to the client just return here.
+					return
 				}
-			})
-			return
+			}
 		}
 
 		if errors.Is(err, cache.ErrKeyMissing) {
@@ -408,17 +472,6 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		if _, err := DecryptObjectInfo(&oi, r); err != nil {
 			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 			return true
-		}
-
-		if update {
-			defer globalCacheConfig.Set(&cache.ObjectInfo{
-				Key:          oi.Name,
-				Bucket:       oi.Bucket,
-				ETag:         oi.ETag,
-				ModTime:      oi.ModTime,
-				Expires:      oi.ExpiresStr(),
-				CacheControl: oi.CacheControl,
-			})
 		}
 
 		return checkPreconditions(ctx, w, r, oi, opts)
@@ -546,6 +599,33 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		hash.AddChecksumHeader(w, objInfo.decryptChecksums(opts.PartNumber))
 	}
 
+	var buf *bytebufferpool.ByteBuffer
+	if update {
+		if globalCacheConfig.MatchesSize(objInfo.Size) {
+			buf = bytebufferpool.Get()
+			defer bytebufferpool.Put(buf)
+		}
+		defer func() {
+			var data []byte
+			if buf != nil {
+				data = buf.Bytes()
+			}
+			globalCacheConfig.Set(&cache.ObjectInfo{
+				Key:          objInfo.Name,
+				Bucket:       objInfo.Bucket,
+				ETag:         objInfo.ETag,
+				ModTime:      objInfo.ModTime,
+				Expires:      objInfo.ExpiresStr(),
+				CacheControl: objInfo.CacheControl,
+				Metadata:     cloneMSS(objInfo.UserDefined),
+				Range:        rangeHeader,
+				PartNumber:   opts.PartNumber,
+				Size:         objInfo.Size,
+				Data:         data,
+			})
+		}()
+	}
+
 	if err = setObjectHeaders(w, objInfo, rs, opts); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
 		return
@@ -558,8 +638,14 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 
 	setHeadGetRespHeaders(w, r.Form)
 
+	var iw io.Writer
+	iw = w
+	if buf != nil {
+		iw = io.MultiWriter(w, buf)
+	}
+
 	statusCodeWritten := false
-	httpWriter := xioutil.WriteOnClose(w)
+	httpWriter := xioutil.WriteOnClose(iw)
 	if rs != nil || opts.PartNumber > 0 {
 		statusCodeWritten = true
 		w.WriteHeader(http.StatusPartialContent)
@@ -677,26 +763,101 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 		return
 	}
 
-	var update bool
-	if globalCacheConfig.EnabledRemote() && opts.VersionID == "" {
-		rc := &cache.CondCheck{}
-		rc.Init(bucket, object, r.Header)
+	// Get request range.
+	var rs *HTTPRangeSpec
+	rangeHeader := r.Header.Get(xhttp.Range)
+	if rangeHeader != "" {
+		rs, _ = parseRequestRangeSpec(rangeHeader)
+	}
 
-		ci, err := globalCacheConfig.Get(rc)
-		if ci != nil {
-			ci.WriteHeaders(w, func() {
-				// set common headers
-				setCommonHeaders(w)
-			}, func() {
-				if ci.StatusCode == http.StatusPreconditionFailed {
-					writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
-				} else {
-					w.WriteHeader(ci.StatusCode)
-				}
-			})
+	if rangeHeader != "" {
+		// Both 'Range' and 'partNumber' cannot be specified at the same time
+		if opts.PartNumber > 0 {
+			writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrInvalidRangePartNumber))
 			return
 		}
 
+		if rs, err = parseRequestRangeSpec(rangeHeader); err != nil {
+			// Handle only errInvalidRange. Ignore other
+			// parse error and treat it as regular Get
+			// request like Amazon S3.
+			if errors.Is(err, errInvalidRange) {
+				writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrInvalidRange))
+				return
+			}
+		}
+	}
+
+	cachedResult := globalCacheConfig.EnabledRemote() && opts.VersionID == ""
+
+	var update bool
+	if cachedResult {
+		rc := &cache.CondCheck{}
+		h := r.Header.Clone()
+		if opts.PartNumber > 0 {
+			h.Set(xhttp.PartNumber, strconv.Itoa(opts.PartNumber))
+		}
+		rc.Init(bucket, object, h)
+
+		ci, err := globalCacheConfig.Get(rc)
+		if ci != nil {
+			tgs, ok := ci.Metadata[xhttp.AmzObjectTagging]
+			if ok {
+				// Set this such that authorization policies can be applied on the object tags.
+				r.Header.Set(xhttp.AmzObjectTagging, tgs)
+			}
+
+			if s3Error := authorizeRequest(ctx, r, policy.GetObjectAction); s3Error != ErrNone {
+				writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(s3Error))
+				return
+			}
+
+			okSt := (ci.StatusCode == http.StatusOK || ci.StatusCode == http.StatusPartialContent ||
+				ci.StatusCode == http.StatusPreconditionFailed || ci.StatusCode == http.StatusNotModified)
+			if okSt {
+				ci.WriteHeaders(w, func() {
+					// set common headers
+					setCommonHeaders(w)
+				}, func() {
+					okSt := (ci.StatusCode == http.StatusOK || ci.StatusCode == http.StatusPartialContent)
+					if okSt {
+						for k, v := range ci.Metadata {
+							w.Header().Set(k, v)
+						}
+
+						// For providing ranged content
+						start, rangeLen, err := rs.GetOffsetLength(ci.Size)
+						if err != nil {
+							start, rangeLen = 0, ci.Size
+						}
+
+						if opts.PartNumber > 0 && strings.Contains(ci.ETag, "-") {
+							w.Header()[xhttp.AmzMpPartsCount] = []string{
+								strings.TrimLeftFunc(ci.ETag, func(r rune) bool {
+									return !unicode.IsNumber(r)
+								}),
+							}
+						}
+
+						// Set content length for the range.
+						w.Header().Set(xhttp.ContentLength, strconv.FormatInt(rangeLen, 10))
+						if rs != nil {
+							contentRange := fmt.Sprintf("bytes %d-%d/%d", start, start+rangeLen-1, ci.Size)
+							w.Header().Set(xhttp.ContentRange, contentRange)
+						}
+
+						return
+					}
+					if ci.StatusCode == http.StatusPreconditionFailed {
+						writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL)
+						return
+					}
+
+					w.WriteHeader(ci.StatusCode)
+				})
+				return
+			}
+		}
 		if errors.Is(err, cache.ErrKeyMissing) {
 			update = true
 		}
@@ -704,19 +865,12 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 
 	opts.FastGetObjInfo = true
 
-	// Get request range.
-	var rs *HTTPRangeSpec
-	rangeHeader := r.Header.Get(xhttp.Range)
-
 	objInfo, err := getObjectInfo(ctx, bucket, object, opts)
 	var proxy proxyResult
 	if err != nil {
 		// proxy HEAD to replication target if active-active replication configured on bucket
 		proxytgts := getProxyTargets(ctx, bucket, object, opts)
 		if !proxytgts.Empty() {
-			if rangeHeader != "" {
-				rs, _ = parseRequestRangeSpec(rangeHeader)
-			}
 			var oi ObjectInfo
 			oi, proxy = proxyHeadToReplicationTarget(ctx, bucket, object, rs, opts, proxytgts)
 			if proxy.Proxy {
@@ -808,30 +962,13 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 			ModTime:      objInfo.ModTime,
 			Expires:      objInfo.ExpiresStr(),
 			CacheControl: objInfo.CacheControl,
+			Metadata:     cloneMSS(objInfo.UserDefined),
 		})
 	}
 
 	// Validate pre-conditions if any.
 	if checkPreconditions(ctx, w, r, objInfo, opts) {
 		return
-	}
-
-	if rangeHeader != "" {
-		// Both 'Range' and 'partNumber' cannot be specified at the same time
-		if opts.PartNumber > 0 {
-			writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrInvalidRangePartNumber))
-			return
-		}
-
-		if rs, err = parseRequestRangeSpec(rangeHeader); err != nil {
-			// Handle only errInvalidRange. Ignore other
-			// parse error and treat it as regular Get
-			// request like Amazon S3.
-			if errors.Is(err, errInvalidRange) {
-				writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrInvalidRange))
-				return
-			}
-		}
 	}
 
 	// Set encryption response headers
@@ -1612,6 +1749,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		ModTime:      objInfo.ModTime,
 		Expires:      objInfo.ExpiresStr(),
 		CacheControl: objInfo.CacheControl,
+		Metadata:     cloneMSS(objInfo.UserDefined),
 	})
 
 	if !remoteCallRequired && !globalTierConfigMgr.Empty() {
@@ -1716,7 +1854,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	var (
 		md5hex              = clientETag.String()
 		sha256hex           = ""
-		reader    io.Reader = r.Body
+		rd        io.Reader = r.Body
 		s3Err     APIErrorCode
 		putObject = objectAPI.PutObject
 	)
@@ -1730,14 +1868,14 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	switch rAuthType {
 	case authTypeStreamingSigned, authTypeStreamingSignedTrailer:
 		// Initialize stream signature verifier.
-		reader, s3Err = newSignV4ChunkedReader(r, rAuthType == authTypeStreamingSignedTrailer)
+		rd, s3Err = newSignV4ChunkedReader(r, rAuthType == authTypeStreamingSignedTrailer)
 		if s3Err != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
 			return
 		}
 	case authTypeStreamingUnsignedTrailer:
 		// Initialize stream chunked reader with optional trailers.
-		reader, s3Err = newUnsignedV4ChunkedReader(r, true)
+		rd, s3Err = newUnsignedV4ChunkedReader(r, true)
 		if s3Err != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
 			return
@@ -1784,6 +1922,18 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	sseConfig.Apply(r.Header, sse.ApplyOptions{
 		AutoEncrypt: globalAutoEncryption,
 	})
+
+	var buf *bytebufferpool.ByteBuffer
+	if globalCacheConfig.MatchesSize(size) {
+		buf = bytebufferpool.Get()
+		defer bytebufferpool.Put(buf)
+	}
+
+	var reader io.Reader
+	reader = rd
+	if buf != nil {
+		reader = io.TeeReader(rd, buf)
+	}
 
 	actualSize := size
 	var idxCb func() []byte
@@ -1987,14 +2137,23 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	setPutObjHeaders(w, objInfo, false)
 
-	defer globalCacheConfig.Set(&cache.ObjectInfo{
-		Key:          objInfo.Name,
-		Bucket:       objInfo.Bucket,
-		ETag:         objInfo.ETag,
-		ModTime:      objInfo.ModTime,
-		Expires:      objInfo.ExpiresStr(),
-		CacheControl: objInfo.CacheControl,
-	})
+	defer func() {
+		var data []byte
+		if buf != nil {
+			data = buf.Bytes()
+		}
+		globalCacheConfig.Set(&cache.ObjectInfo{
+			Key:          objInfo.Name,
+			Bucket:       objInfo.Bucket,
+			ETag:         objInfo.ETag,
+			ModTime:      objInfo.ModTime,
+			Expires:      objInfo.ExpiresStr(),
+			CacheControl: objInfo.CacheControl,
+			Size:         objInfo.Size,
+			Metadata:     cloneMSS(objInfo.UserDefined),
+			Data:         data,
+		})
+	}()
 
 	// Notify object created event.
 	evt := eventArgs{
@@ -2310,6 +2469,7 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 			ModTime:      objInfo.ModTime,
 			Expires:      objInfo.ExpiresStr(),
 			CacheControl: objInfo.CacheControl,
+			Metadata:     cloneMSS(objInfo.UserDefined),
 		})
 
 		// Notify object created event.
