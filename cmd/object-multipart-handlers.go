@@ -1012,6 +1012,11 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	}
 	sendEvent(evt)
 
+	asize, err := objInfo.GetActualSize()
+	if err != nil {
+		asize = objInfo.Size
+	}
+
 	defer globalCacheConfig.Set(&cache.ObjectInfo{
 		Key:          objInfo.Name,
 		Bucket:       objInfo.Bucket,
@@ -1019,7 +1024,8 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 		ModTime:      objInfo.ModTime,
 		Expires:      objInfo.ExpiresStr(),
 		CacheControl: objInfo.CacheControl,
-		Metadata:     cloneMSS(objInfo.UserDefined),
+		Size:         asize,
+		Metadata:     cleanReservedKeys(objInfo.UserDefined),
 	})
 
 	if objInfo.NumVersions > dataScannerExcessiveVersionsThreshold {

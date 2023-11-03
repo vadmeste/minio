@@ -610,6 +610,12 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 			if buf != nil {
 				data = buf.Bytes()
 			}
+
+			asize, err := objInfo.GetActualSize()
+			if err != nil {
+				asize = objInfo.Size
+			}
+
 			globalCacheConfig.Set(&cache.ObjectInfo{
 				Key:          objInfo.Name,
 				Bucket:       objInfo.Bucket,
@@ -617,10 +623,10 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 				ModTime:      objInfo.ModTime,
 				Expires:      objInfo.ExpiresStr(),
 				CacheControl: objInfo.CacheControl,
-				Metadata:     cloneMSS(objInfo.UserDefined),
+				Metadata:     cleanReservedKeys(objInfo.UserDefined),
 				Range:        rangeHeader,
 				PartNumber:   opts.PartNumber,
-				Size:         objInfo.Size,
+				Size:         asize,
 				Data:         data,
 			})
 		}()
@@ -955,6 +961,11 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 	}
 
 	if update {
+		asize, err := objInfo.GetActualSize()
+		if err != nil {
+			asize = objInfo.Size
+		}
+
 		defer globalCacheConfig.Set(&cache.ObjectInfo{
 			Key:          objInfo.Name,
 			Bucket:       objInfo.Bucket,
@@ -962,7 +973,8 @@ func (api objectAPIHandlers) headObjectHandler(ctx context.Context, objectAPI Ob
 			ModTime:      objInfo.ModTime,
 			Expires:      objInfo.ExpiresStr(),
 			CacheControl: objInfo.CacheControl,
-			Metadata:     cloneMSS(objInfo.UserDefined),
+			Size:         asize,
+			Metadata:     cleanReservedKeys(objInfo.UserDefined),
 		})
 	}
 
@@ -1742,6 +1754,11 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		Host:         handlers.GetSourceIP(r),
 	})
 
+	asize, err := objInfo.GetActualSize()
+	if err != nil {
+		asize = objInfo.Size
+	}
+
 	defer globalCacheConfig.Set(&cache.ObjectInfo{
 		Key:          objInfo.Name,
 		Bucket:       objInfo.Bucket,
@@ -1749,7 +1766,8 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		ModTime:      objInfo.ModTime,
 		Expires:      objInfo.ExpiresStr(),
 		CacheControl: objInfo.CacheControl,
-		Metadata:     cloneMSS(objInfo.UserDefined),
+		Size:         asize,
+		Metadata:     cleanReservedKeys(objInfo.UserDefined),
 	})
 
 	if !remoteCallRequired && !globalTierConfigMgr.Empty() {
@@ -2142,6 +2160,12 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		if buf != nil {
 			data = buf.Bytes()
 		}
+
+		asize, err := objInfo.GetActualSize()
+		if err != nil {
+			asize = objInfo.Size
+		}
+
 		globalCacheConfig.Set(&cache.ObjectInfo{
 			Key:          objInfo.Name,
 			Bucket:       objInfo.Bucket,
@@ -2149,8 +2173,8 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 			ModTime:      objInfo.ModTime,
 			Expires:      objInfo.ExpiresStr(),
 			CacheControl: objInfo.CacheControl,
-			Size:         objInfo.Size,
-			Metadata:     cloneMSS(objInfo.UserDefined),
+			Size:         asize,
+			Metadata:     cleanReservedKeys(objInfo.UserDefined),
 			Data:         data,
 		})
 	}()
@@ -2462,6 +2486,11 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 			scheduleReplication(ctx, objInfo, objectAPI, dsc, replication.ObjectReplicationType)
 		}
 
+		asize, err := objInfo.GetActualSize()
+		if err != nil {
+			asize = objInfo.Size
+		}
+
 		defer globalCacheConfig.Set(&cache.ObjectInfo{
 			Key:          objInfo.Name,
 			Bucket:       objInfo.Bucket,
@@ -2469,7 +2498,8 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 			ModTime:      objInfo.ModTime,
 			Expires:      objInfo.ExpiresStr(),
 			CacheControl: objInfo.CacheControl,
-			Metadata:     cloneMSS(objInfo.UserDefined),
+			Size:         asize,
+			Metadata:     cleanReservedKeys(objInfo.UserDefined),
 		})
 
 		// Notify object created event.

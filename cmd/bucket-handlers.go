@@ -1358,7 +1358,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 					ModTime:      objInfo.ModTime,
 					Expires:      objInfo.Expires.UTC().Format(http.TimeFormat),
 					CacheControl: objInfo.CacheControl,
-					Metadata:     cloneMSS(objInfo.UserDefined),
+					Metadata:     cleanReservedKeys(objInfo.UserDefined),
 					Size:         asize,
 				})
 
@@ -1446,7 +1446,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		ModTime:      objInfo.ModTime,
 		Expires:      objInfo.ExpiresStr(),
 		CacheControl: objInfo.CacheControl,
-		Metadata:     cloneMSS(objInfo.UserDefined),
+		Metadata:     cleanReservedKeys(objInfo.UserDefined),
 		Size:         asize,
 	})
 
