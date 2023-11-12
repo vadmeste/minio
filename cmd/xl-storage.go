@@ -1171,12 +1171,12 @@ func (s *xlStorage) DeleteVersion(ctx context.Context, volume, path string, fi F
 	var legacyJSON bool
 	var buf []byte
 	if linkHash != "" {
-		buf, _, err = s.readAllData(ctx, volume, volumeDir, linkHash, true)
+		buf, _, err = s.readAllData(ctx, volume, volumeDir, linkHash, false)
 		if err != nil {
-			buf, _, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFile), true)
+			buf, _, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFile), false)
 		}
 	} else {
-		buf, _, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFile), true)
+		buf, _, err = s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFile), false)
 	}
 	if err != nil {
 		if !errors.Is(err, errFileNotFound) {
@@ -1705,7 +1705,7 @@ func (s *xlStorage) readAllData(ctx context.Context, volume, volumeDir string, f
 	// Get size for precise allocation.
 	stat, err := f.Stat()
 	if err != nil {
-		buf, err = io.ReadAll(diskHealthReader(ctx, r))
+		buf, err = io.ReadAll(r)
 		return buf, dmTime, osErrToFileErr(err)
 	}
 	if stat.IsDir() {
@@ -1724,7 +1724,7 @@ func (s *xlStorage) readAllData(ctx context.Context, volume, volumeDir string, f
 		dr.SmallFile = sz <= xioutil.BlockSizeSmall*2
 	}
 	// Read file...
-	_, err = io.ReadFull(diskHealthReader(ctx, r), buf)
+	_, err = io.ReadFull(r, buf)
 
 	return buf, stat.ModTime().UTC(), osErrToFileErr(err)
 }
@@ -1753,7 +1753,7 @@ func (s *xlStorage) ReadAll(ctx context.Context, volume string, path string) (bu
 		return nil, err
 	}
 
-	buf, _, err = s.readAllData(ctx, volume, volumeDir, filePath, true)
+	buf, _, err = s.readAllData(ctx, volume, volumeDir, filePath, false)
 	return buf, err
 }
 
