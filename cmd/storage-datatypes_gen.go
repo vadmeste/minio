@@ -245,12 +245,6 @@ func (z *DeleteFileHandlerParams) DecodeMsg(dc *msgp.Reader) (err error) {
 						err = msgp.WrapError(err, "Opts", "Recursive")
 						return
 					}
-				case "f":
-					z.Opts.Force, err = dc.ReadBool()
-					if err != nil {
-						err = msgp.WrapError(err, "Opts", "Force")
-						return
-					}
 				default:
 					err = dc.Skip()
 					if err != nil {
@@ -308,25 +302,15 @@ func (z *DeleteFileHandlerParams) EncodeMsg(en *msgp.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	// map header, size 2
+	// map header, size 1
 	// write "r"
-	err = en.Append(0x82, 0xa1, 0x72)
+	err = en.Append(0x81, 0xa1, 0x72)
 	if err != nil {
 		return
 	}
 	err = en.WriteBool(z.Opts.Recursive)
 	if err != nil {
 		err = msgp.WrapError(err, "Opts", "Recursive")
-		return
-	}
-	// write "f"
-	err = en.Append(0xa1, 0x66)
-	if err != nil {
-		return
-	}
-	err = en.WriteBool(z.Opts.Force)
-	if err != nil {
-		err = msgp.WrapError(err, "Opts", "Force")
 		return
 	}
 	return
@@ -347,13 +331,10 @@ func (z *DeleteFileHandlerParams) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendString(o, z.FilePath)
 	// string "do"
 	o = append(o, 0xa2, 0x64, 0x6f)
-	// map header, size 2
+	// map header, size 1
 	// string "r"
-	o = append(o, 0x82, 0xa1, 0x72)
+	o = append(o, 0x81, 0xa1, 0x72)
 	o = msgp.AppendBool(o, z.Opts.Recursive)
-	// string "f"
-	o = append(o, 0xa1, 0x66)
-	o = msgp.AppendBool(o, z.Opts.Force)
 	return
 }
 
@@ -414,12 +395,6 @@ func (z *DeleteFileHandlerParams) UnmarshalMsg(bts []byte) (o []byte, err error)
 						err = msgp.WrapError(err, "Opts", "Recursive")
 						return
 					}
-				case "f":
-					z.Opts.Force, bts, err = msgp.ReadBoolBytes(bts)
-					if err != nil {
-						err = msgp.WrapError(err, "Opts", "Force")
-						return
-					}
 				default:
 					bts, err = msgp.Skip(bts)
 					if err != nil {
@@ -442,7 +417,7 @@ func (z *DeleteFileHandlerParams) UnmarshalMsg(bts []byte) (o []byte, err error)
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *DeleteFileHandlerParams) Msgsize() (s int) {
-	s = 1 + 3 + msgp.StringPrefixSize + len(z.DiskID) + 2 + msgp.StringPrefixSize + len(z.Volume) + 3 + msgp.StringPrefixSize + len(z.FilePath) + 3 + 1 + 2 + msgp.BoolSize + 2 + msgp.BoolSize
+	s = 1 + 3 + msgp.StringPrefixSize + len(z.DiskID) + 2 + msgp.StringPrefixSize + len(z.Volume) + 3 + msgp.StringPrefixSize + len(z.FilePath) + 3 + 1 + 2 + msgp.BoolSize
 	return
 }
 
@@ -470,12 +445,6 @@ func (z *DeleteOptions) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "Recursive")
 				return
 			}
-		case "f":
-			z.Force, err = dc.ReadBool()
-			if err != nil {
-				err = msgp.WrapError(err, "Force")
-				return
-			}
 		default:
 			err = dc.Skip()
 			if err != nil {
@@ -489,9 +458,9 @@ func (z *DeleteOptions) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z DeleteOptions) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 2
+	// map header, size 1
 	// write "r"
-	err = en.Append(0x82, 0xa1, 0x72)
+	err = en.Append(0x81, 0xa1, 0x72)
 	if err != nil {
 		return
 	}
@@ -500,29 +469,16 @@ func (z DeleteOptions) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "Recursive")
 		return
 	}
-	// write "f"
-	err = en.Append(0xa1, 0x66)
-	if err != nil {
-		return
-	}
-	err = en.WriteBool(z.Force)
-	if err != nil {
-		err = msgp.WrapError(err, "Force")
-		return
-	}
 	return
 }
 
 // MarshalMsg implements msgp.Marshaler
 func (z DeleteOptions) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 2
+	// map header, size 1
 	// string "r"
-	o = append(o, 0x82, 0xa1, 0x72)
+	o = append(o, 0x81, 0xa1, 0x72)
 	o = msgp.AppendBool(o, z.Recursive)
-	// string "f"
-	o = append(o, 0xa1, 0x66)
-	o = msgp.AppendBool(o, z.Force)
 	return
 }
 
@@ -550,12 +506,6 @@ func (z *DeleteOptions) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "Recursive")
 				return
 			}
-		case "f":
-			z.Force, bts, err = msgp.ReadBoolBytes(bts)
-			if err != nil {
-				err = msgp.WrapError(err, "Force")
-				return
-			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
@@ -570,7 +520,7 @@ func (z *DeleteOptions) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z DeleteOptions) Msgsize() (s int) {
-	s = 1 + 2 + msgp.BoolSize + 2 + msgp.BoolSize
+	s = 1 + 2 + msgp.BoolSize
 	return
 }
 

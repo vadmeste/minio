@@ -232,7 +232,6 @@ func (h *healingTracker) delete(ctx context.Context) error {
 		pathJoin(bucketMetaPrefix, healingTrackerFilename),
 		DeleteOptions{
 			Recursive: false,
-			Force:     false,
 		},
 	)
 }

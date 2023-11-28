@@ -979,7 +979,6 @@ func (p *xlStorageDiskIDCheck) monitorDiskStatus(spent time.Duration) {
 		}
 		err = p.storage.Delete(context.Background(), minioMetaTmpBucket, fn, DeleteOptions{
 			Recursive: false,
-			Force:     false,
 		})
 		if err == nil {
 			t := time.Unix(0, atomic.LoadInt64(&p.health.lastSuccess))
