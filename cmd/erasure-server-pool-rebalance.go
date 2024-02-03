@@ -758,7 +758,8 @@ func (z *erasureServerPools) rebalanceObject(ctx context.Context, bucket string,
 			}
 		}
 		_, err = z.CompleteMultipartUpload(ctx, bucket, oi.Name, res.UploadID, parts, ObjectOptions{
-			MTime: oi.ModTime,
+			DataMovement: true,
+			MTime:        oi.ModTime,
 		})
 		if err != nil {
 			err = fmt.Errorf("rebalanceObject: CompleteMultipartUpload() %w", err)
@@ -770,11 +771,13 @@ func (z *erasureServerPools) rebalanceObject(ctx context.Context, bucket string,
 	if err != nil {
 		return fmt.Errorf("rebalanceObject: hash.NewReader() %w", err)
 	}
+
 	_, err = z.PutObject(ctx,
 		bucket,
 		oi.Name,
 		NewPutObjReader(hr),
 		ObjectOptions{
+			DataMovement: true,
 			VersionID:    oi.VersionID,
 			MTime:        oi.ModTime,
 			UserDefined:  oi.UserDefined,

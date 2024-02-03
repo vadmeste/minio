@@ -95,10 +95,13 @@ type ObjectOptions struct {
 	// participating in a rebalance operation. Typically set for 'write' operations.
 	SkipRebalancing bool
 
-	WalkFilter      func(info FileInfo) bool // return WalkFilter returns 'true/false'
-	WalkMarker      string                   // set to skip until this object
-	WalkLatestOnly  bool                     // returns only latest versions for all matching objects
-	WalkAskDisks    string                   // dictates how many disks are being listed
+	WalkFilter     func(info FileInfo) bool // return WalkFilter returns 'true/false'
+	WalkMarker     string                   // set to skip until this object
+	WalkLatestOnly bool                     // returns only latest versions for all matching objects
+	WalkAskDisks   string                   // dictates how many disks are being listed
+
+	DataMovement bool // indicates an going decommisionning or rebalacing
+
 	PrefixEnabledFn func(prefix string) bool // function which returns true if versioning is enabled on prefix
 
 	// IndexCB will return any index created but the compression.

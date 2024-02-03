@@ -355,7 +355,10 @@ func shouldHealObjectOnDisk(erErr, dataErr error, meta FileInfo, latestMeta File
 	return false
 }
 
-const xMinIOHealing = ReservedMetadataPrefix + "healing"
+const (
+	xMinIOHealing = ReservedMetadataPrefix + "healing"
+	xMinIODataMov = ReservedMetadataPrefix + "data-mov"
+)
 
 // SetHealing marks object (version) as being healed.
 // Note: this is to be used only from healObject
@@ -373,6 +376,21 @@ func (fi FileInfo) Healing() bool {
 		return true
 	}
 	return false
+}
+
+// SetDataMov marks object (version) as being currently
+// in movement, such as decommissioning or rebalance.
+func (fi *FileInfo) SetDataMov() {
+	if fi.Metadata == nil {
+		fi.Metadata = make(map[string]string)
+	}
+	fi.Metadata[xMinIODataMov] = "true"
+}
+
+// DataMov returns true if object is being in movement
+func (fi FileInfo) DataMov() bool {
+	_, ok := fi.Metadata[xMinIODataMov]
+	return ok
 }
 
 // Heals an object by re-writing corrupt/missing erasure blocks.
