@@ -1238,7 +1238,7 @@ func applyExpiryOnNonTransitionedObjects(ctx context.Context, objLayer ObjectLay
 		}
 	}()
 
-	dobj, err = objLayer.DeleteObject(ctx, obj.Bucket, obj.Name, opts)
+	dobj, err = objLayer.DeleteObject(ctx, obj.Bucket, encodeDirObject(obj.Name), opts)
 	if err != nil {
 		if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
 			return false
@@ -1259,7 +1259,9 @@ func applyExpiryOnNonTransitionedObjects(ctx context.Context, objLayer ObjectLay
 	if obj.DeleteMarker {
 		eventName = event.ObjectRemovedDeleteMarkerCreated
 	}
-
+	if lcEvent.Action.DeleteAll() {
+		eventName = event.ObjectRemovedDeleteAllVersions
+	}
 	// Notify object deleted event.
 	sendEvent(eventArgs{
 		EventName:  eventName,
