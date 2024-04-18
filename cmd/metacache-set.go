@@ -574,6 +574,7 @@ func (er *erasureObjects) streamMetadataParts(ctx context.Context, o listPathOpt
 					continue
 				case InsufficientReadQuorum:
 					retries++
+					loadedPart = -1
 					time.Sleep(retryDelay250)
 					continue
 				default:
