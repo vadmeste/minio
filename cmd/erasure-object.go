@@ -409,11 +409,6 @@ func (er erasureObjects) getObjectWithFileInfo(ctx context.Context, bucket, obje
 				return toObjectErr(err, bucket, object)
 			}
 		}
-		for i, r := range readers {
-			if r == nil {
-				onlineDisks[i] = OfflineDisk
-			}
-		}
 		// Track total bytes read from disk and written to the client.
 		totalBytesRead += partLength
 		// partOffset will be valid only for the first part, hence reset it to 0 for
