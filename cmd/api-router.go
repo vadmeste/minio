@@ -55,7 +55,17 @@ func setConsoleSrv(srv *consoleapi.Server) {
 func newObjectLayerFn() ObjectLayer {
 	globalObjLayerMutex.RLock()
 	defer globalObjLayerMutex.RUnlock()
-	return globalObjectAPI
+
+	if globalObjectAPI != nil {
+		return globalObjectAPI
+	}
+
+	select {
+	case globalObjLayerInit <- struct{}{}:
+	default:
+	}
+
+	return nil
 }
 
 func setObjectLayer(o ObjectLayer) {

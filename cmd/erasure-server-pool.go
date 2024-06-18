@@ -205,25 +205,44 @@ func newErasureServerPools(ctx context.Context, endpointServerPools EndpointServ
 
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	attempt := 1
+	lastAttempt := time.Time{}
+
+	t := time.NewTimer(0)
+	defer t.Stop()
+
 	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-globalObjLayerInit:
+			if time.Since(lastAttempt) < time.Duration(attempt)*time.Second {
+				continue
+			}
+		case <-t.C:
+		}
+
 		var err error
 		bootstrapTrace(fmt.Sprintf("poolMeta.Init: loading pool metadata, attempt: %d", attempt), func() {
 			err = z.Init(ctx) // Initializes all pools.
 		})
+		lastAttempt = time.Now()
 		if err != nil {
 			if !configRetriableErrors(err) {
 				logger.Fatal(err, "Unable to initialize backend")
 			}
-			retry := time.Duration(r.Float64() * float64(5*time.Second))
+			retry := time.Duration(r.Float64() * float64(attempt) * float64(5*time.Second))
+			if retry > 30*time.Second {
+				retry = 30 * time.Second
+			}
 			storageLogIf(ctx, fmt.Errorf("Unable to initialize backend: %w, retrying in %s", err, retry))
-			time.Sleep(retry)
+			t.Reset(retry)
 			attempt++
 			continue
 		}
 		break
 	}
-
 	return z, nil
+
 }
 
 func (z *erasureServerPools) NewNSLock(bucket string, objects ...string) RWLocker {

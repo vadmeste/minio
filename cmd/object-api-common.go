@@ -46,11 +46,16 @@ const (
 	emptyETag = "d41d8cd98f00b204e9800998ecf8427e"
 )
 
-// Global object layer mutex, used for safely updating object layer.
-var globalObjLayerMutex sync.RWMutex
+var (
+	// Global object layer mutex, used for safely updating object layer.
+	globalObjLayerMutex sync.RWMutex
 
-// Global object layer, only accessed by globalObjectAPI.
-var globalObjectAPI ObjectLayer
+	// Global object layer, only accessed by globalObjectAPI.
+	globalObjectAPI ObjectLayer
+
+	// A channel to trigger a lazy initialization of pool.bin and rebalance.bin
+	globalObjLayerInit = make(chan struct{}, 1)
+)
 
 type storageOpts struct {
 	cleanUp     bool
