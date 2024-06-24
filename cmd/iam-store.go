@@ -562,7 +562,7 @@ func (store *IAMStoreSys) LoadIAMCache(ctx context.Context, firstTime bool) erro
 			return err
 		}
 	} else {
-
+		// Only non-object IAM store (i.e. only etcd backend).
 		bootstrapTraceMsg("loading policy documents")
 		if err := store.loadPolicyDocs(ctx, newCache.iamPolicyDocsMap); err != nil {
 			return err
