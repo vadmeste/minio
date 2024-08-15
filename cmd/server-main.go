@@ -1084,11 +1084,6 @@ func serverMain(ctx *cli.Context) {
 			globalSiteReplicationSys.Init(GlobalContext, newObject)
 		})
 
-		// Initialize quota manager.
-		bootstrapTrace("globalBucketQuotaSys.Init", func() {
-			globalBucketQuotaSys.Init(newObject)
-		})
-
 		// Populate existing buckets to the etcd backend
 		if globalDNSConfig != nil {
 			// Background this operation.
