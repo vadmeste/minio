@@ -52,9 +52,9 @@ type ServerSystemConfig struct {
 
 // Diff - returns error on first difference found in two configs.
 func (s1 *ServerSystemConfig) Diff(s2 *ServerSystemConfig) error {
-	if s1.Checksum != s2.Checksum {
-		return fmt.Errorf("Expected MinIO binary checksum: %s, seen: %s", s1.Checksum, s2.Checksum)
-	}
+	// if s1.Checksum != s2.Checksum {
+	//	return fmt.Errorf("Expected MinIO binary checksum: %s, seen: %s", s1.Checksum, s2.Checksum)
+	// }
 
 	ns1 := s1.NEndpoints
 	ns2 := s2.NEndpoints
