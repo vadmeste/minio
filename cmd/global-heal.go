@@ -377,6 +377,7 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 				if !contextCanceled(ctx) {
 					healingLogIf(ctx, ctx.Err())
 				}
+				fmt.Println(time.Now(), "healing context is canceled")
 				return false
 			case results <- result:
 				return true
@@ -389,6 +390,7 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 
 			if entry.name == "" && len(entry.metadata) == 0 {
 				// ignore entries that don't have metadata.
+				fmt.Println(time.Now(), "entry name and metadata are empty")
 				return
 			}
 			if entry.isDir() {
@@ -506,6 +508,13 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 			bucket:    bucket,
 		}
 
+		fmt.Println(time.Now(), "start listing", len(disks), len(fallbackDisks), bucket, forwardTo)
+		dListAgreed := 0
+		dListPartial := 0
+
+		firstObj := ""
+		endObj := ""
+
 		err = listPathRaw(ctx, listPathRawOptions{
 			disks:          disks,
 			fallbackDisks:  fallbackDisks,
@@ -515,16 +524,26 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 			minDisks:       1,
 			reportNotFound: false,
 			agreed: func(entry metaCacheEntry) {
+				dListAgreed++
+				if firstObj == "" {
+					firstObj = entry.name
+				}
+				endObj = entry.name
 				jt.Take()
 				go healEntry(bucket, entry)
 			},
 			partial: func(entries metaCacheEntries, _ []error) {
+				dListPartial++
 				entry, ok := entries.resolve(&resolver)
 				if !ok {
 					// check if we can get one entry at least
 					// proceed to heal nonetheless.
 					entry, _ = entries.firstFound()
 				}
+				if firstObj == "" {
+					firstObj = entry.name
+				}
+				endObj = entry.name
 				jt.Take()
 				go healEntry(bucket, *entry)
 			},
@@ -534,6 +553,9 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 				}
 			},
 		})
+
+		fmt.Println(time.Now(), "listing finished", bucket, firstObj, endObj, dListAgreed, dListPartial)
+
 		jt.Wait() // synchronize all the concurrent heal jobs
 		if err != nil {
 			// Set this such that when we return this function

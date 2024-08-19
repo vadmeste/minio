@@ -481,10 +481,26 @@ func healFreshDisk(ctx context.Context, z *erasureServerPools, endpoint Endpoint
 		return err
 	}
 
+	lowLevelHealObject = 0
+	lowLevelHealRename = 0
+	lowLevelHealErasure = 0
+	highLevelHealObjectErrs = 0
+	lowLevelDiskToHealCount = 0
+
+	fmt.Println(time.Now(), "heal erasure set started")
+
 	// Start or resume healing of this erasure set
 	if err = z.serverPools[poolIdx].sets[setIdx].healErasureSet(ctx, tracker.QueuedBuckets, tracker); err != nil {
 		return err
 	}
+
+	fmt.Println(time.Now(), "heal erasure set finished:",
+		lowLevelHealObject,
+		lowLevelHealRename,
+		lowLevelHealErasure,
+		highLevelHealObjectErrs,
+		lowLevelDiskToHealCount,
+	)
 
 	// if objects have failed healing, we attempt a retry to heal the drive upto 3 times before giving up.
 	if tracker.ItemsFailed > 0 && tracker.RetryAttempts < 4 {
