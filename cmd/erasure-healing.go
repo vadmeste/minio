@@ -404,6 +404,7 @@ func (er *erasureObjects) healObject(ctx context.Context, bucket string, object 
 	}
 
 	if disksToHealCount == 0 {
+		lowLevelDiskToHealCount++
 		// Nothing to heal!
 		return result, nil
 	}
@@ -512,6 +513,9 @@ func (er *erasureObjects) healObject(ctx context.Context, bucket string, object 
 
 	var inlineBuffers []*bytes.Buffer
 	if !latestMeta.Deleted && !latestMeta.IsRemote() {
+
+		lowLevelHealErasure++
+
 		if latestMeta.InlineData() {
 			inlineBuffers = make([]*bytes.Buffer, len(outDatedDisks))
 		}
@@ -602,6 +606,8 @@ func (er *erasureObjects) healObject(ctx context.Context, bucket string, object 
 	}
 
 	defer er.deleteAll(context.Background(), minioMetaTmpBucket, tmpID)
+
+	lowLevelHealRename++
 
 	// Rename from tmp location to the actual location.
 	for i, disk := range outDatedDisks {
@@ -1017,8 +1023,22 @@ func isObjectDangling(metaArr []FileInfo, errs []error, dataErrsByPart map[int][
 	return validMeta, false
 }
 
+var lowLevelHealObject = 0
+var lowLevelHealRename = 0
+var lowLevelHealErasure = 0
+var highLevelHealObjectErrs = 0
+var lowLevelDiskToHealCount = 0
+
 // HealObject - heal the given object, automatically deletes the object if stale/corrupted if `remove` is true.
 func (er erasureObjects) HealObject(ctx context.Context, bucket, object, versionID string, opts madmin.HealOpts) (hr madmin.HealResultItem, err error) {
+	lowLevelHealObject++
+
+	defer func() {
+		if err != nil {
+			highLevelHealObjectErrs++
+		}
+	}()
+
 	// Create context that also contains information about the object and bucket.
 	// The top level handler might not have this information.
 	reqInfo := logger.GetReqInfo(ctx)
