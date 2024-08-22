@@ -421,8 +421,7 @@ func sendLog(ctx context.Context, entry log.Entry) {
 	for _, t := range systemTgts {
 		if err := t.Send(ctx, entry); err != nil {
 			if consoleTgt != nil { // Sending to the console never fails
-				entry.Trace.Message = fmt.Sprintf("event(%#v) was not sent to Logger target (%#v): %#v", entry, t, err)
-				consoleTgt.Send(ctx, entry)
+				consoleTgt.Send(ctx, errToEntry(ctx, "logging", fmt.Errorf("unable to send log event to Logger target (%s): %v", t.String(), err), entry.Level))
 			}
 		}
 	}
