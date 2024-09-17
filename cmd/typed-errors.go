@@ -92,6 +92,9 @@ var errGroupNotEmpty = errors.New("Specified group is not empty - cannot remove 
 // error returned in IAM subsystem when a group is disabled
 var errGroupDisabled = errors.New("Specified group is disabled")
 
+// error returned in IAM subsystem when an external user doesn't exist.
+var errNoSuchExternalUser = errors.New("Specified external user does not exist")
+
 // error returned in IAM subsystem when policy doesn't exist.
 var errNoSuchPolicy = errors.New("Specified canned policy does not exist")
 

@@ -44,6 +44,7 @@ import (
 	"github.com/minio/minio/internal/auth"
 	"github.com/minio/minio/internal/bucket/lifecycle"
 	sreplication "github.com/minio/minio/internal/bucket/replication"
+	"github.com/minio/minio/internal/config/identity/openid"
 	"github.com/minio/minio/internal/logger"
 	xldap "github.com/minio/pkg/v3/ldap"
 	"github.com/minio/pkg/v3/policy"
@@ -1246,6 +1247,43 @@ func (c *SiteReplicationSys) PeerAddPolicyHandler(ctx context.Context, policyNam
 		err = globalIAMSys.DeletePolicy(ctx, policyName, true)
 	} else {
 		_, err = globalIAMSys.SetPolicy(ctx, policyName, *p)
+	}
+	if err != nil {
+		return wrapSRErr(err)
+	}
+	return nil
+}
+
+// PeerIAMExternalUserChangeHandler - copies external user information to local.
+func (c *SiteReplicationSys) PeerIAMExternalUserChangeHandler(ctx context.Context, change *madmin.SRExternalUser, updatedAt time.Time) error {
+	if change == nil {
+		return errSRInvalidRequest(errInvalidArgument)
+	}
+	// skip overwrite of local update if peer sent stale info
+	if !updatedAt.IsZero() {
+		if ui, err := globalIAMSys.GetExternalUser(ctx, openid.DummyRoleARN.String(), change.Name); err == nil && ui.UpdatedAt.After(updatedAt) {
+			return nil
+		}
+	}
+
+	var err error
+	if change.IsDeleteReq {
+		err = globalIAMSys.DeleteExternalUser(ctx, openid.DummyRoleARN.String(), change.Name)
+	} else {
+		r := change.OpenIDRefreshToken
+		if r == nil || r.RefreshToken == "" || r.AccessToken == "" {
+			return errSRInvalidRequest(errInvalidArgument)
+		}
+		offlineAccess, err := parseOpenIDRefreshTokens(r.AccessToken, r.RefreshToken)
+		if err == nil {
+			_, err = globalIAMSys.SetExternalUser(ctx, openid.DummyRoleARN.String(), change.Name,
+				ExternalUserInfo{
+					Version:          1,
+					UpdatedAt:        time.Now().UTC(),
+					OpenIDUserAccess: &offlineAccess,
+				},
+			)
+		}
 	}
 	if err != nil {
 		return wrapSRErr(err)

@@ -187,6 +187,8 @@ func (a adminAPIHandlers) SRPeerReplicateIAMItem(w http.ResponseWriter, r *http.
 		err = globalSiteReplicationSys.PeerSTSAccHandler(ctx, item.STSCredential, item.UpdatedAt)
 	case madmin.SRIAMItemIAMUser:
 		err = globalSiteReplicationSys.PeerIAMUserChangeHandler(ctx, item.IAMUser, item.UpdatedAt)
+	case madmin.SRIAMItemExternalUser:
+		err = globalSiteReplicationSys.PeerIAMExternalUserChangeHandler(ctx, item.ExternalUser, item.UpdatedAt)
 	case madmin.SRIAMItemGroupInfo:
 		err = globalSiteReplicationSys.PeerGroupInfoChangeHandler(ctx, item.GroupInfo, item.UpdatedAt)
 	}

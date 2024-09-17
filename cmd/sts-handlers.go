@@ -44,17 +44,18 @@ import (
 
 const (
 	// STS API version.
-	stsAPIVersion             = "2011-06-15"
-	stsVersion                = "Version"
-	stsAction                 = "Action"
-	stsPolicy                 = "Policy"
-	stsToken                  = "Token"
-	stsRoleArn                = "RoleArn"
-	stsWebIdentityToken       = "WebIdentityToken"
-	stsWebIdentityAccessToken = "WebIdentityAccessToken" // only valid if UserInfo is enabled.
-	stsDurationSeconds        = "DurationSeconds"
-	stsLDAPUsername           = "LDAPUsername"
-	stsLDAPPassword           = "LDAPPassword"
+	stsAPIVersion              = "2011-06-15"
+	stsVersion                 = "Version"
+	stsAction                  = "Action"
+	stsPolicy                  = "Policy"
+	stsToken                   = "Token"
+	stsRoleArn                 = "RoleArn"
+	stsWebIdentityToken        = "WebIdentityToken"
+	stsWebIdentityAccessToken  = "WebIdentityAccessToken"  // only valid if UserInfo is enabled.
+	stsWebIdentityRefreshToken = "WebIdentityRefreshToken" // only valid if UserInfo is enabled.
+	stsDurationSeconds         = "DurationSeconds"
+	stsLDAPUsername            = "LDAPUsername"
+	stsLDAPPassword            = "LDAPPassword"
 
 	// STS API action constants
 	clientGrants        = "AssumeRoleWithClientGrants"
@@ -397,6 +398,7 @@ func (sts *stsAPIHandlers) AssumeRoleWithSSO(w http.ResponseWriter, r *http.Requ
 	}
 
 	accessToken := r.Form.Get(stsWebIdentityAccessToken)
+	refreshToken := r.Form.Get(stsWebIdentityRefreshToken)
 
 	// RoleARN parameter processing: If a role ARN is given in the request, we
 	// use that and validate the authentication request. If not, we assume this
@@ -542,6 +544,39 @@ func (sts *stsAPIHandlers) AssumeRoleWithSSO(w http.ResponseWriter, r *http.Requ
 			writeSTSErrorResponse(ctx, w, ErrSTSAccessDenied, errors.New("this user does not have enough permission"))
 			return
 		}
+	}
+
+	if accessToken != "" && refreshToken != "" {
+		offlineAccess, err := parseOpenIDRefreshTokens(accessToken, refreshToken)
+		if err != nil {
+			writeSTSErrorResponse(ctx, w, ErrSTSAccessDenied, err)
+			return
+		}
+		updatedAt, err := globalIAMSys.SetExternalUser(ctx, roleArn.String(), cred.ParentUser,
+			ExternalUserInfo{
+				Version:          1,
+				UpdatedAt:        time.Now().UTC(),
+				OpenIDUserAccess: &offlineAccess,
+			},
+		)
+		if err != nil {
+			writeSTSErrorResponse(ctx, w, ErrSTSAccessDenied, err)
+			return
+		}
+
+		// Call hook for site replication.
+		replLogIf(ctx, globalSiteReplicationSys.IAMChangeHook(ctx, madmin.SRIAMItem{
+			Type: madmin.SRIAMItemExternalUser,
+			ExternalUser: &madmin.SRExternalUser{
+				Name: cred.ParentUser,
+				OpenIDRefreshToken: &madmin.OpenIDRefreshToken{
+					AccessToken:  offlineAccess.AccessToken,
+					RefreshToken: offlineAccess.RefreshToken,
+				},
+			},
+			UpdatedAt: updatedAt,
+		}))
+
 	}
 
 	// Set the newly generated credentials.

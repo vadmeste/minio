@@ -247,6 +247,26 @@ func (iamOS *IAMObjectStore) loadSecretKey(ctx context.Context, user string, use
 	return u.Credentials.SecretKey, nil
 }
 
+func (iamOS *IAMObjectStore) loadExternalUsers(ctx context.Context, roleArn string) (map[string]ExternalUserInfo, error) {
+	users := make(map[string]ExternalUserInfo)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	for item := range listIAMConfigItems(ctx, iamOS.objAPI, iamConfigExternalUsersPrefix) {
+		if item.Err != nil {
+			return nil, item.Err
+		}
+		var uv ExternalUserInfo
+		virtualUser := path.Dir(item.Item)
+		err := iamOS.loadIAMConfig(ctx, &uv, pathJoin(iamConfigExternalUsersPrefix, virtualUser, iamIdentityFile))
+		if err != nil && err != errNoSuchExternalUser {
+			continue
+		}
+		users[virtualUser] = uv
+	}
+	return users, nil
+}
+
 func (iamOS *IAMObjectStore) loadUserIdentity(ctx context.Context, user string, userType IAMUserType) (UserIdentity, error) {
 	var u UserIdentity
 	err := iamOS.loadIAMConfig(ctx, &u, getUserIdentityPath(user, userType))
@@ -829,6 +849,27 @@ func (iamOS *IAMObjectStore) savePolicyDoc(ctx context.Context, policyName strin
 
 func (iamOS *IAMObjectStore) saveMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool, mp MappedPolicy, opts ...options) error {
 	return iamOS.saveIAMConfig(ctx, mp, getMappedPolicyPath(name, userType, isGroup), opts...)
+}
+
+func (iamOS *IAMObjectStore) saveExternalUser(ctx context.Context, roleArn, virtualUser string, info ExternalUserInfo, opts ...options) error {
+	return iamOS.saveIAMConfig(ctx, info, pathJoin(iamConfigExternalUsersPrefix, virtualUser, iamIdentityFile), opts...)
+}
+
+func (iamOS *IAMObjectStore) loadExternalUser(ctx context.Context, roleArn, parentUser string) (ExternalUserInfo, error) {
+	var uv ExternalUserInfo
+	err := iamOS.loadIAMConfig(ctx, &uv, pathJoin(iamConfigExternalUsersPrefix, parentUser, iamIdentityFile))
+	if err == errConfigNotFound {
+		err = errNoSuchExternalUser
+	}
+	return uv, err
+}
+
+func (iamOS *IAMObjectStore) deleteExternalUser(ctx context.Context, roleArn, parentUser string) error {
+	err := iamOS.deleteIAMConfig(ctx, pathJoin(iamConfigExternalUsersPrefix, parentUser, iamIdentityFile))
+	if err == errConfigNotFound {
+		err = errNoSuchExternalUser
+	}
+	return err
 }
 
 func (iamOS *IAMObjectStore) saveUserIdentity(ctx context.Context, name string, userType IAMUserType, u UserIdentity, opts ...options) error {

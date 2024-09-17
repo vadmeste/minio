@@ -251,3 +251,9 @@ require (
 	google.golang.org/protobuf v1.34.2 // indirect
 
 )
+
+replace github.com/minio/console => ../console
+
+replace github.com/minio/minio-go/v7 => ../minio-go
+
+replace github.com/minio/madmin-go/v3 => ../madmin-go

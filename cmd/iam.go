@@ -33,6 +33,7 @@ import (
 	"time"
 
 	libldap "github.com/go-ldap/ldap/v3"
+	jwtgo "github.com/golang-jwt/jwt/v4"
 	"github.com/minio/madmin-go/v3"
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio/internal/arn"
@@ -47,6 +48,7 @@ import (
 	polplugin "github.com/minio/minio/internal/config/policy/plugin"
 	xhttp "github.com/minio/minio/internal/http"
 	"github.com/minio/minio/internal/jwt"
+	xjwt "github.com/minio/minio/internal/jwt"
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/v3/env"
 	"github.com/minio/pkg/v3/ldap"
@@ -386,21 +388,8 @@ func (sys *IAMSys) periodicRoutines(ctx context.Context, baseInterval time.Durat
 		}()
 	}
 
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	// Calculate the waitInterval between periodic refreshes so that each server
-	// independently picks a (uniformly distributed) random time in an interval
-	// of size = baseInterval.
-	//
-	// For example:
-	//
-	//    - if baseInterval=10s, then 5s <= waitInterval() < 15s
-	//
-	//    - if baseInterval=10m, then 5m <= waitInterval() < 15m
 	waitInterval := func() time.Duration {
-		// Calculate a random value such that 0 <= value < baseInterval
-		randAmt := time.Duration(r.Float64() * float64(baseInterval))
-		return baseInterval/2 + randAmt
+		return 5 * time.Second
 	}
 
 	timer := time.NewTimer(waitInterval())
@@ -423,16 +412,17 @@ func (sys *IAMSys) periodicRoutines(ctx context.Context, baseInterval time.Durat
 
 			// The following actions are performed about once in 4 times that
 			// IAM is refreshed:
-			if r.Intn(4) == 0 {
-				// Poll and remove accounts for those users who were removed
-				// from LDAP/OpenID.
-				if sys.LDAPConfig.Enabled() {
-					sys.purgeExpiredCredentialsForLDAP(ctx)
-					sys.updateGroupMembershipsForLDAP(ctx)
-				}
-				if sys.OpenIDConfig.ProviderEnabled() {
-					sys.purgeExpiredCredentialsForExternalSSO(ctx)
-				}
+			// Poll and remove accounts for those users who were removed
+			// from LDAP/OpenID.
+			if sys.LDAPConfig.Enabled() {
+				sys.purgeExpiredCredentialsForLDAP(ctx)
+				sys.updateGroupMembershipsForLDAP(ctx)
+			}
+			if sys.OpenIDConfig.ProviderEnabled() {
+				sys.purgeExpiredCredentialsForExternalSSO(ctx)
+				sys.refreshParentUsers(ctx, "arn:minio:iam:::role/dummy-internal")
+				sys.updateParentUsersPolicyMapping(ctx, "arn:minio:iam:::role/dummy-internal")
+				sys.updateServiceAccountsClaimsForOpenID(ctx, "arn:minio:iam:::role/dummy-internal")
 			}
 
 			timer.Reset(waitInterval())
@@ -702,6 +692,40 @@ func (sys *IAMSys) notifyForUser(ctx context.Context, accessKey string, isTemp b
 			}
 		}
 	}
+}
+
+func (sys *IAMSys) LoadExternalUsers(ctx context.Context, roleArn string) (map[string]ExternalUserInfo, error) {
+	if !sys.Initialized() {
+		return nil, errServerNotInitialized
+	}
+	return sys.store.LoadExternalUsers(ctx, roleArn)
+}
+
+func (sys *IAMSys) GetExternalUser(ctx context.Context, roleArn, parentUser string) (ExternalUserInfo, error) {
+	if !sys.Initialized() {
+		return ExternalUserInfo{}, errServerNotInitialized
+	}
+	return sys.store.GetExternalUser(ctx, roleArn, parentUser)
+}
+
+// TODO: shall we notify peers ?
+func (sys *IAMSys) DeleteExternalUser(ctx context.Context, roleArn, parentUser string) error {
+	if !sys.Initialized() {
+		return errServerNotInitialized
+	}
+	return sys.store.DeleteExternalUser(ctx, roleArn, parentUser)
+}
+
+// TODO: shall we notify peers ?
+func (sys *IAMSys) SetExternalUser(ctx context.Context, roleArn, parentUser string, uinfo ExternalUserInfo) (time.Time, error) {
+	if !sys.Initialized() {
+		return time.Time{}, errServerNotInitialized
+	}
+	updatedAt, err := sys.store.SetExternalUser(ctx, roleArn, parentUser, uinfo)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return updatedAt, nil
 }
 
 // SetTempUser - set temporary user credentials, these credentials have an
@@ -1556,6 +1580,171 @@ func (sys *IAMSys) updateGroupMembershipsForLDAP(ctx context.Context) {
 				// Log and continue error - perhaps it'll work the next time.
 				iamLogIf(GlobalContext, err)
 			}
+		}
+	}
+}
+
+func parseOpenIDRefreshTokens(access, refresh string) (OpenIDUserAccess, error) {
+	v := OpenIDUserAccess{
+		AccessToken:  access,
+		RefreshToken: refresh,
+	}
+
+	parser := jwtgo.NewParser()
+
+	claims := xjwt.NewStandardClaims()
+	_, _, err := parser.ParseUnverified(v.AccessToken, claims)
+	if err != nil {
+		return OpenIDUserAccess{}, err
+	}
+	v.AccessExpiresAt = time.Unix(claims.ExpiresAt, 0)
+	v.Issuer = claims.Issuer
+	v.Subject = claims.Subject
+
+	claims = xjwt.NewStandardClaims()
+	_, _, err = parser.ParseUnverified(v.RefreshToken, claims)
+	if err != nil {
+		return OpenIDUserAccess{}, err
+	}
+	v.RefreshIssuedAt = time.Unix(claims.IssuedAt, 0)
+	v.RefreshExpiresAt = time.Unix(claims.ExpiresAt, 0)
+	return v, nil
+}
+
+func (sys *IAMSys) refreshParentUsers(ctx context.Context, roleArn string) {
+	users, err := sys.LoadExternalUsers(ctx, roleArn)
+	if err != nil {
+		iamLogIf(ctx, err)
+		return
+	}
+
+	for name, vuser := range users {
+		offlineToken := vuser.OpenIDUserAccess
+		if offlineToken == nil {
+			continue
+		}
+		if offlineToken.RefreshExpiresAt.IsZero() {
+			continue
+		}
+		now := time.Now()
+		if !now.After(offlineToken.AccessExpiresAt) &&
+			now.Before(offlineToken.RefreshIssuedAt.Add(offlineToken.RefreshExpiresAt.Sub(offlineToken.RefreshIssuedAt)/2)) {
+			continue
+		}
+		refresh, err := sys.OpenIDConfig.RefreshToken(roleArn, offlineToken.RefreshToken)
+		if err != nil {
+			iamLogIf(ctx, err)
+			continue
+		}
+		newOfflineToken, err := parseOpenIDRefreshTokens(refresh.AccessToken, refresh.RefreshToken)
+		if err != nil {
+			iamLogIf(ctx, err)
+			continue
+		}
+		_, err = sys.SetExternalUser(ctx, roleArn, name, ExternalUserInfo{
+			Version:          1,
+			UpdatedAt:        time.Now().UTC(),
+			OpenIDUserAccess: &newOfflineToken,
+		},
+		)
+		if err != nil {
+			iamLogIf(ctx, err)
+			continue
+		}
+	}
+}
+
+func (sys *IAMSys) updateParentUsersPolicyMapping(ctx context.Context, roleArn string) {
+	users, err := sys.LoadExternalUsers(ctx, roleArn)
+	if err != nil {
+		iamLogIf(GlobalContext, err)
+		return
+	}
+
+	for name, vuser := range users {
+		offlineToken := vuser.OpenIDUserAccess
+		if offlineToken == nil {
+			continue
+		}
+
+		var oldClaims, newClaims set.StringSet
+
+		policies, err := globalIAMSys.PolicyDBGet(name)
+		if err != nil {
+			iamLogIf(ctx, err)
+			continue
+		}
+		oldClaims = set.CreateStringSet(policies...)
+
+		stdJWTClaims, err := sys.OpenIDConfig.UserInfo(roleArn, offlineToken.AccessToken)
+		if err != nil {
+			iamLogIf(ctx, err)
+			continue
+		}
+		remoteJWTClaims := xjwt.MapClaims{MapClaims: *stdJWTClaims}
+		if c, ok := remoteJWTClaims.LookupAggregated(sys.OpenIDConfig.GetIAMPolicyClaimName()); ok {
+			newClaims = set.CreateStringSet(c...)
+		}
+		if oldClaims.Equals(newClaims) {
+			continue
+		}
+		_, err = globalIAMSys.PolicyDBSet(ctx, name, strings.Join(newClaims.ToSlice(), ","), stsUser, false)
+		if err != nil {
+			iamLogIf(ctx, err)
+			continue
+		}
+	}
+}
+
+func splitClaims(ss []string) []string {
+	r := make([]string, 0, len(ss))
+	for _, s := range ss {
+		spl := strings.Split(s, ",")
+		r = append(r, spl...)
+	}
+	return r
+}
+
+func (sys *IAMSys) updateServiceAccountsClaimsForOpenID(ctx context.Context, roleArn string) {
+	for _, cred := range sys.store.GetServiceAccounts() {
+		if cred.IsExpired() {
+			continue
+		}
+
+		var (
+			svcJWTClaims *jwt.MapClaims
+			err          error
+		)
+		svcJWTClaims, err = auth.ExtractClaims(cred.SessionToken, cred.SecretKey)
+		if err != nil {
+			svcJWTClaims, err = auth.ExtractClaims(cred.SessionToken, globalActiveCred.SecretKey)
+		}
+		if err != nil {
+			// skip this cred - session token seems invalid
+			continue
+		}
+
+		var svcPolicyClaims set.StringSet
+		if claims, ok := svcJWTClaims.LookupAggregated(sys.OpenIDConfig.GetIAMPolicyClaimName()); !ok {
+			continue
+		} else {
+			svcPolicyClaims = set.CreateStringSet(splitClaims(claims)...)
+		}
+
+		currentPolicies, err := globalIAMSys.PolicyDBGet(cred.ParentUser)
+		if err != nil {
+			continue
+		}
+
+		if svcPolicyClaims.Equals(set.CreateStringSet(currentPolicies...)) {
+			continue
+		}
+
+		svcJWTClaims.Set(sys.OpenIDConfig.GetIAMPolicyClaimName(), strings.Join(currentPolicies, ","))
+		cred.SessionToken, err = auth.JWTSignWithAccessKey(cred.AccessKey, svcJWTClaims.Map(), cred.SecretKey)
+		if err := sys.store.UpdateUserIdentity(ctx, cred); err != nil {
+			// Log and continue error - perhaps it'll work the next time.
+			iamLogIf(GlobalContext, err)
 		}
 	}
 }

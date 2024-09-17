@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	jwtgo "github.com/golang-jwt/jwt/v4"
 	"github.com/minio/madmin-go/v3"
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio/internal/arn"
@@ -552,6 +553,9 @@ func (r *Config) GetIAMPolicyClaimName() string {
 
 // LookupUser lookup userid for the provider
 func (r Config) LookupUser(roleArn, userid string) (provider.User, error) {
+	if roleArn == "" {
+		roleArn = "arn:minio:iam:::role/dummy-internal"
+	}
 	// Can safely ignore error here as empty or invalid ARNs will not be
 	// mapped.
 	arnVal, _ := arn.Parse(roleArn)
@@ -572,6 +576,44 @@ func (r Config) LookupUser(roleArn, userid string) (provider.User, error) {
 	// Without any specific logic for a provider, all accounts
 	// are always enabled.
 	return provider.User{ID: userid, Enabled: true}, nil
+}
+
+type RefreshToken struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+func (r Config) RefreshToken(roleArn, token string) (RefreshToken, error) {
+	if roleArn == "" {
+		roleArn = "arn:minio:iam:::role/dummy-internal"
+	}
+	// Can safely ignore error here as empty or invalid ARNs will not be
+	// mapped.
+	arnVal, _ := arn.Parse(roleArn)
+	pCfg, ok := r.arnProviderCfgsMap[arnVal]
+	if !ok {
+		return RefreshToken{}, errors.New("no role-arn found")
+	}
+
+	rt, err := pCfg.provider.RefreshToken(pCfg.ClientID, pCfg.ClientSecret, token)
+	if err != nil {
+		return RefreshToken{}, err
+	}
+	return RefreshToken(rt), nil
+}
+
+func (r Config) UserInfo(roleArn, token string) (*jwtgo.MapClaims, error) {
+	if roleArn == "" {
+		roleArn = "arn:minio:iam:::role/dummy-internal"
+	}
+	// Can safely ignore error here as empty or invalid ARNs will not be
+	// mapped.
+	arnVal, _ := arn.Parse(roleArn)
+	pCfg, ok := r.arnProviderCfgsMap[arnVal]
+	if !ok {
+		return nil, errors.New("no role-arn found")
+	}
+	return pCfg.provider.UserInfo(token)
 }
 
 // ProviderEnabled returns true if any vendor specific provider is enabled.

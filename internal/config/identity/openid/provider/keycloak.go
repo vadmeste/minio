@@ -26,6 +26,8 @@ import (
 	"path"
 	"strings"
 	"sync"
+
+	jwtgo "github.com/golang-jwt/jwt/v4"
 )
 
 // Token - parses the output from IDP id_token.
@@ -82,13 +84,82 @@ func (k *KeycloakProvider) LoginWithClientID(clientID, clientSecret string) erro
 	return nil
 }
 
+func (k *KeycloakProvider) UserInfo(accessToken string) (*jwtgo.MapClaims, error) {
+	req, err := http.NewRequest(http.MethodPost, k.oeConfig.UserInfoEndpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := k.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New(resp.Status)
+	}
+
+	var claims jwtgo.MapClaims
+	if err = json.NewDecoder(resp.Body).Decode(&claims); err != nil {
+		return nil, err
+	}
+
+	return &claims, nil
+}
+
+type RefreshToken struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+// LoginWithClientID is implemented by Keycloak service account support
+func (k *KeycloakProvider) RefreshToken(clientID, clientSecret, token string) (RefreshToken, error) {
+	if token == "" {
+		return RefreshToken{}, errors.New("empty token")
+	}
+
+	values := url.Values{}
+	values.Set("client_id", clientID)
+	values.Set("client_secret", clientSecret)
+	values.Set("grant_type", "refresh_token")
+	values.Set("refresh_token", token)
+
+	req, err := http.NewRequest(http.MethodPost, k.oeConfig.TokenEndpoint, strings.NewReader(values.Encode()))
+	if err != nil {
+		return RefreshToken{}, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := k.client.Do(req)
+	if err != nil {
+		return RefreshToken{}, err
+	}
+	defer resp.Body.Close()
+
+	var r RefreshToken
+	if err = json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return RefreshToken{}, err
+	}
+	return r, nil
+}
+
 // LookupUser lookup user by their userid.
 func (k *KeycloakProvider) LookupUser(userid string) (User, error) {
 	req, err := http.NewRequest(http.MethodGet, k.adminURL, nil)
 	if err != nil {
 		return User{}, err
 	}
+
+	if userid == "" {
+		userid = "51a38c9d-e2fb-44b9-9613-aa0f4802cf1d"
+	}
+
 	req.URL.Path = path.Join(req.URL.Path, "realms", k.realm, "users", userid)
+	req.URL.RawQuery = "userProfileMetadata="
 
 	k.Lock()
 	accessToken := k.accessToken
@@ -97,6 +168,7 @@ func (k *KeycloakProvider) LookupUser(userid string) (User, error) {
 		return User{}, ErrAccessTokenExpired
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken.AccessToken)
+
 	resp, err := k.client.Do(req)
 	if err != nil {
 		return User{}, err

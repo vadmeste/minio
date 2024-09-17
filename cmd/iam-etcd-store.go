@@ -411,6 +411,22 @@ func (ies *IAMEtcdStore) saveUserIdentity(ctx context.Context, name string, user
 	return ies.saveIAMConfig(ctx, u, getUserIdentityPath(name, userType), opts...)
 }
 
+func (ies *IAMEtcdStore) saveExternalUser(ctx context.Context, roleArn, virtualUser string, info ExternalUserInfo, opts ...options) error {
+	return errors.New("not implemented")
+}
+
+func (ies *IAMEtcdStore) loadExternalUsers(ctx context.Context, roleArn string) (map[string]ExternalUserInfo, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (ies *IAMEtcdStore) loadExternalUser(ctx context.Context, roleArn, user string) (ExternalUserInfo, error) {
+	return ExternalUserInfo{}, errors.New("not implemented")
+}
+
+func (ies *IAMEtcdStore) deleteExternalUser(ctx context.Context, roleArn, user string) error {
+	return errors.New("not implemented")
+}
+
 func (ies *IAMEtcdStore) saveGroupInfo(ctx context.Context, name string, gi GroupInfo) error {
 	return ies.saveIAMConfig(ctx, gi, getGroupInfoPath(name))
 }

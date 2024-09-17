@@ -17,7 +17,11 @@
 
 package provider
 
-import "errors"
+import (
+	"errors"
+
+	jwtgo "github.com/golang-jwt/jwt/v4"
+)
 
 // DiscoveryDoc - parses the output from openid-configuration
 // for example https://accounts.google.com/.well-known/openid-configuration
@@ -59,4 +63,6 @@ type Provider interface {
 	LoginWithUser(username, password string) error
 	LoginWithClientID(clientID, clientSecret string) error
 	LookupUser(userid string) (User, error)
+	UserInfo(accessToken string) (*jwtgo.MapClaims, error)
+	RefreshToken(clientID, clientSecret, token string) (RefreshToken, error)
 }

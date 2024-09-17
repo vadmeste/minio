@@ -132,8 +132,7 @@ const (
 	azpClaim = "azp"
 )
 
-// Validate - validates the id_token.
-func (r *Config) Validate(ctx context.Context, arn arn.ARN, token, accessToken, dsecs string, claims map[string]interface{}) error {
+func (r *Config) Parse(arn arn.ARN, token string, claims jwtgo.Claims) error {
 	jp := new(jwtgo.Parser)
 	jp.ValidMethods = []string{
 		"RS256", "RS384", "RS512",
@@ -155,20 +154,14 @@ func (r *Config) Validate(ctx context.Context, arn arn.ARN, token, accessToken, 
 		return pubkey, nil
 	}
 
-	pCfg, ok := r.arnProviderCfgsMap[arn]
-	if !ok {
-		return fmt.Errorf("Role %s does not exist", arn)
-	}
-
-	mclaims := jwtgo.MapClaims(claims)
-	jwtToken, err := jp.ParseWithClaims(token, &mclaims, keyFuncCallback)
+	jwtToken, err := jp.ParseWithClaims(token, claims, keyFuncCallback)
 	if err != nil {
 		// Re-populate the public key in-case the JWKS
 		// pubkeys are refreshed
 		if err = r.PopulatePublicKey(arn); err != nil {
 			return err
 		}
-		jwtToken, err = jwtgo.ParseWithClaims(token, &mclaims, keyFuncCallback)
+		jwtToken, err = jwtgo.ParseWithClaims(token, claims, keyFuncCallback)
 		if err != nil {
 			return err
 		}
@@ -178,11 +171,27 @@ func (r *Config) Validate(ctx context.Context, arn arn.ARN, token, accessToken, 
 		return ErrTokenExpired
 	}
 
-	if err = updateClaimsExpiry(dsecs, mclaims); err != nil {
+	return nil
+}
+
+// Validate - validates the id_token.
+func (r *Config) Validate(ctx context.Context, arn arn.ARN, token, accessToken, dsecs string, claims map[string]interface{}) error {
+	pCfg, ok := r.arnProviderCfgsMap[arn]
+	if !ok {
+		return fmt.Errorf("Role %s does not exist", arn)
+	}
+
+	mclaims := jwtgo.MapClaims(claims)
+
+	if err := r.Parse(arn, token, mclaims); err != nil {
 		return err
 	}
 
-	if err = r.updateUserinfoClaims(ctx, arn, accessToken, mclaims); err != nil {
+	if err := updateClaimsExpiry(dsecs, mclaims); err != nil {
+		return err
+	}
+
+	if err := r.UpdateUserinfoClaims(ctx, arn, accessToken, mclaims); err != nil {
 		return err
 	}
 
@@ -221,7 +230,7 @@ func (r *Config) Validate(ctx context.Context, arn arn.ARN, token, accessToken, 
 	return nil
 }
 
-func (r *Config) updateUserinfoClaims(ctx context.Context, arn arn.ARN, accessToken string, claims map[string]interface{}) error {
+func (r *Config) UpdateUserinfoClaims(ctx context.Context, arn arn.ARN, accessToken string, claims map[string]interface{}) error {
 	pCfg, ok := r.arnProviderCfgsMap[arn]
 	// If claim user info is enabled, get claims from userInfo
 	// and overwrite them with the claims from JWT.

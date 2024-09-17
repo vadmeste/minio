@@ -245,6 +245,12 @@ func NewMapClaims() *MapClaims {
 	return &MapClaims{MapClaims: jwtgo.MapClaims{}}
 }
 
+func (c *MapClaims) SetFromMap(m map[string]interface{}) {
+	for k, v := range m {
+		c.Set(k, v)
+	}
+}
+
 // Set Adds new arbitrary claim keys and values.
 func (c *MapClaims) Set(key string, val interface{}) {
 	if c == nil {
@@ -272,6 +278,32 @@ func (c *MapClaims) Lookup(key string) (value string, ok bool) {
 		value, ok = vinterface.(string)
 	}
 	return
+}
+
+// LookupAggregated returns a single OR aggregated value if the key is found.
+func (c *MapClaims) LookupAggregated(key string) (values []string, ok bool) {
+	if c == nil {
+		return nil, false
+	}
+	switch v := c.MapClaims[key].(type) {
+	case string:
+		values = append(values, v)
+	case []string:
+		values = v
+	case []interface{}:
+		for _, a := range v {
+			vs, ok := a.(string)
+			if !ok {
+				return nil, false
+			}
+			values = append(values, vs)
+		}
+	}
+
+	if len(values) > 0 {
+		ok = true
+	}
+	return values, ok
 }
 
 // SetExpiry sets expiry in unix epoch secs

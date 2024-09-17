@@ -48,6 +48,9 @@ const (
 	// IAM users directory.
 	iamConfigUsersPrefix = iamConfigPrefix + "/users/"
 
+	// IAM external users directory.
+	iamConfigExternalUsersPrefix = iamConfigPrefix + "/external-users/"
+
 	// IAM service accounts directory.
 	iamConfigServiceAccountsPrefix = iamConfigPrefix + "/service-accounts/"
 
@@ -151,6 +154,25 @@ func getMappedPolicyPath(name string, userType IAMUserType, isGroup bool) string
 	default:
 		return pathJoin(iamConfigPolicyDBUsersPrefix, name+".json")
 	}
+}
+
+type OpenIDUserAccess struct {
+	RefreshToken     string    `json:"refreshToken,omitempty"`
+	RefreshIssuedAt  time.Time `json:"refreshIssuedAt,omitempty"`
+	RefreshExpiresAt time.Time `json:"refreshExpiresAt,omitempty"`
+
+	AccessToken     string    `json:"accessToken,omitempty"`
+	AccessExpiresAt time.Time `json:"accessExpiresAt,omitempty"`
+
+	Issuer  string `json:"provider,omitempty"`
+	Subject string `json:"id,omitempty"`
+}
+
+type ExternalUserInfo struct {
+	Version   int       `json:"version"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+
+	OpenIDUserAccess *OpenIDUserAccess `json:"openidUserAccess,omitempty"`
 }
 
 // UserIdentity represents a user's secret key and their status
@@ -541,6 +563,7 @@ type IAMStorageAPI interface {
 	loadUser(ctx context.Context, user string, userType IAMUserType, m map[string]UserIdentity) error
 	loadSecretKey(ctx context.Context, user string, userType IAMUserType) (string, error)
 	loadUsers(ctx context.Context, userType IAMUserType, m map[string]UserIdentity) error
+	loadExternalUsers(ctx context.Context, roleArn string) (map[string]ExternalUserInfo, error)
 	loadGroup(ctx context.Context, group string, m map[string]GroupInfo) error
 	loadGroups(ctx context.Context, m map[string]GroupInfo) error
 	loadMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool, m *xsync.MapOf[string, MappedPolicy]) error
@@ -552,6 +575,9 @@ type IAMStorageAPI interface {
 	savePolicyDoc(ctx context.Context, policyName string, p PolicyDoc) error
 	saveMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool, mp MappedPolicy, opts ...options) error
 	saveUserIdentity(ctx context.Context, name string, userType IAMUserType, u UserIdentity, opts ...options) error
+	loadExternalUser(ctx context.Context, roleArn, user string) (ExternalUserInfo, error)
+	saveExternalUser(ctx context.Context, roleArn, user string, info ExternalUserInfo, opts ...options) error
+	deleteExternalUser(ctx context.Context, roleArn, user string) error
 	saveGroupInfo(ctx context.Context, group string, gi GroupInfo) error
 	deletePolicyDoc(ctx context.Context, policyName string) error
 	deleteMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool) error
@@ -1913,6 +1939,56 @@ func (store *IAMStoreSys) DeleteUser(ctx context.Context, accessKey string, user
 	return err
 }
 
+func (store *IAMStoreSys) GetExternalUser(ctx context.Context, roleArn, parentUser string) (ExternalUserInfo, error) {
+	if roleArn == "" || parentUser == "" {
+		return ExternalUserInfo{}, errInvalidArgument
+	}
+
+	store.lock()
+	defer store.unlock()
+
+	return store.loadExternalUser(ctx, roleArn, parentUser)
+}
+
+func (store *IAMStoreSys) DeleteExternalUser(ctx context.Context, roleArn, parentUser string) error {
+	if roleArn == "" || parentUser == "" {
+		return errInvalidArgument
+	}
+
+	cache := store.lock()
+	defer store.unlock()
+	err := store.deleteExternalUser(ctx, roleArn, parentUser)
+	if err == nil {
+		cache.updatedAt = time.Now()
+	}
+	return err
+}
+
+// SetExternalUser -
+func (store *IAMStoreSys) SetExternalUser(ctx context.Context, roleArn, parentUser string, uinfo ExternalUserInfo) (time.Time, error) {
+	if roleArn == "" || parentUser == "" {
+		return time.Time{}, errInvalidArgument
+	}
+
+	cache := store.lock()
+	defer store.unlock()
+
+	err := store.saveExternalUser(ctx, roleArn, parentUser, uinfo)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	cache.updatedAt = time.Now()
+	return uinfo.UpdatedAt, nil
+
+}
+
+func (store *IAMStoreSys) LoadExternalUsers(ctx context.Context, roleArn string) (map[string]ExternalUserInfo, error) {
+	// cache := store.lock()
+	// defer store.unlock()
+	return store.loadExternalUsers(ctx, roleArn)
+}
+
 // SetTempUser - saves temporary (STS) credential to storage and cache. If a
 // policy name is given, it is associated with the parent user specified in the
 // credential.
@@ -2048,7 +2124,7 @@ func (store *IAMStoreSys) getParentUsers(cache *iamCache) map[string]ParentUserI
 		if err != nil {
 			continue
 		}
-		if cred.ParentUser == "" {
+		if cred.ParentUser == "" || cred.ParentUser == globalActiveCred.AccessKey {
 			continue
 		}
 
@@ -2709,6 +2785,21 @@ func (store *IAMStoreSys) UpdateUserSecretKey(ctx context.Context, accessKey, se
 	}
 
 	return cache.updateUserWithClaims(accessKey, u)
+}
+
+// GetServiceAccounts - returns all service account credentials from teh cache
+func (store *IAMStoreSys) GetServiceAccounts() []auth.Credentials {
+	cache := store.rlock()
+	defer store.runlock()
+
+	var res []auth.Credentials
+	for _, u := range cache.iamUsersMap {
+		cred := u.Credentials
+		if cred.IsServiceAccount() {
+			res = append(res, cred)
+		}
+	}
+	return res
 }
 
 // GetSTSAndServiceAccounts - returns all STS and Service account credentials.
