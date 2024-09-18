@@ -371,9 +371,12 @@ func (oiCache objInfoCache) Get(toDel ObjectToDelete) (*ObjectInfo, bool) {
 
 func batchObjsForDelete(ctx context.Context, r *BatchJobExpire, ri *batchJobInfo, job BatchJobRequest, api ObjectLayer, wk *workers.Workers, expireCh <-chan []expireObjInfo) {
 	vc, _ := globalBucketVersioningSys.Get(r.Bucket)
-	retryAttempts := r.Retry.Attempts
+	retryAttempts := job.Expire.Retry.Attempts
+	if retryAttempts <= 0 {
+		retryAttempts = batchExpireJobDefaultRetries
+	}
 	delay := job.Expire.Retry.Delay
-	if delay == 0 {
+	if delay <= 0 {
 		delay = batchExpireJobDefaultRetryDelay
 	}
 

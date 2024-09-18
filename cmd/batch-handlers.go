@@ -276,8 +276,12 @@ func (r *BatchJobReplicateV1) StartFromSource(ctx context.Context, api ObjectLay
 	}
 	globalBatchJobsMetrics.save(job.ID, ri)
 
+	retryAttempts := job.Replicate.Flags.Retry.Attempts
+	if retryAttempts <= 0 {
+		retryAttempts = batchReplJobDefaultRetries
+	}
 	delay := job.Replicate.Flags.Retry.Delay
-	if delay == 0 {
+	if delay <= 0 {
 		delay = batchReplJobDefaultRetryDelay
 	}
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -377,7 +381,6 @@ func (r *BatchJobReplicateV1) StartFromSource(ctx context.Context, api ObjectLay
 		return err
 	}
 
-	retryAttempts := ri.RetryAttempts
 	retry := false
 	for attempts := 1; attempts <= retryAttempts; attempts++ {
 		attempts := attempts
@@ -753,22 +756,10 @@ func (ri *batchJobInfo) loadOrInit(ctx context.Context, api ObjectLayer, job Bat
 		switch {
 		case job.Replicate != nil:
 			ri.Version = batchReplVersionV1
-			ri.RetryAttempts = batchReplJobDefaultRetries
-			if job.Replicate.Flags.Retry.Attempts > 0 {
-				ri.RetryAttempts = job.Replicate.Flags.Retry.Attempts
-			}
 		case job.KeyRotate != nil:
 			ri.Version = batchKeyRotateVersionV1
-			ri.RetryAttempts = batchKeyRotateJobDefaultRetries
-			if job.KeyRotate.Flags.Retry.Attempts > 0 {
-				ri.RetryAttempts = job.KeyRotate.Flags.Retry.Attempts
-			}
 		case job.Expire != nil:
 			ri.Version = batchExpireVersionV1
-			ri.RetryAttempts = batchExpireJobDefaultRetries
-			if job.Expire.Retry.Attempts > 0 {
-				ri.RetryAttempts = job.Expire.Retry.Attempts
-			}
 		}
 		return nil
 	}
@@ -1015,10 +1006,15 @@ func (r *BatchJobReplicateV1) Start(ctx context.Context, api ObjectLayer, job Ba
 	globalBatchJobsMetrics.save(job.ID, ri)
 	lastObject := ri.Object
 
+	retryAttempts := job.Replicate.Flags.Retry.Attempts
+	if retryAttempts <= 0 {
+		retryAttempts = batchReplJobDefaultRetries
+	}
 	delay := job.Replicate.Flags.Retry.Delay
-	if delay == 0 {
+	if delay <= 0 {
 		delay = batchReplJobDefaultRetryDelay
 	}
+
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	selectObj := func(info FileInfo) (ok bool) {
@@ -1106,7 +1102,6 @@ func (r *BatchJobReplicateV1) Start(ctx context.Context, api ObjectLayer, job Ba
 
 	c.SetAppInfo("minio-"+batchJobPrefix, r.APIVersion+" "+job.ID)
 
-	retryAttempts := ri.RetryAttempts
 	retry := false
 	for attempts := 1; attempts <= retryAttempts; attempts++ {
 		attempts := attempts
