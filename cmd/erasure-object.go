@@ -1366,8 +1366,8 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 	if opts.EncryptFn != nil {
 		fi.Checksum = opts.EncryptFn("object-checksum", fi.Checksum)
 	}
-	if userDefined[ReplicationSsecChecksumHeader] != "" {
-		if v, err := base64.StdEncoding.DecodeString(userDefined[ReplicationSsecChecksumHeader]); err == nil {
+	if ckSum := userDefined[ReplicationSsecChecksumHeader]; ckSum != "" {
+		if v, err := base64.StdEncoding.DecodeString(ckSum); err == nil {
 			fi.Checksum = v
 		}
 	}
@@ -1496,6 +1496,32 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 		modTime = UTCNow()
 	}
 
+	kind, encrypted := crypto.IsEncrypted(userDefined)
+	actualSize := data.ActualSize()
+	if actualSize < 0 {
+		compressed := fi.IsCompressed()
+		switch {
+		case compressed:
+			// ... nothing changes for compressed stream.
+			// if actualSize is -1 we have no known way to
+			// determine what is the actualSize.
+		case encrypted:
+			decSize, err := sio.DecryptedSize(uint64(n))
+			if err == nil {
+				actualSize = int64(decSize)
+			}
+		default:
+			actualSize = n
+		}
+	}
+	if fi.Checksum == nil {
+		// Trailing headers checksums should now be filled.
+		fi.Checksum = opts.WantChecksum.AppendTo(nil, nil)
+		if opts.EncryptFn != nil {
+			fi.Checksum = opts.EncryptFn("object-checksum", fi.Checksum)
+		}
+	}
+	
 	for i, w := range writers {
 		if w == nil {
 			onlineDisks[i] = nil
@@ -1509,6 +1535,7 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 		// No need to add checksum to part. We already have it on the object.
 		partsMetadata[i].AddObjectPart(1, "", n, data.ActualSize(), modTime, compIndex, nil)
 		partsMetadata[i].Versioned = opts.Versioned || opts.VersionSuspended
+		partsMetadata[i].Checksum = fi.Checksum
 	}
 
 	userDefined["etag"] = r.MD5CurrentHexString()
