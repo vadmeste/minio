@@ -1379,6 +1379,8 @@ func (z *erasureServerPools) ListObjectVersions(ctx context.Context, bucket, pre
 		return loi, NotImplemented{}
 	}
 
+	listQuorum := globalAPIConfig.getListQuorum()
+
 	opts := listPathOptions{
 		Bucket:      bucket,
 		Prefix:      prefix,
@@ -1386,7 +1388,7 @@ func (z *erasureServerPools) ListObjectVersions(ctx context.Context, bucket, pre
 		Limit:       maxKeysPlusOne(maxKeys, marker != ""),
 		Marker:      marker,
 		InclDeleted: true,
-		AskDisks:    globalAPIConfig.getListQuorum(),
+		AskDisks:    listQuorum,
 		Versioned:   true,
 	}
 
@@ -1422,7 +1424,7 @@ func (z *erasureServerPools) ListObjectVersions(ctx context.Context, bucket, pre
 		o.parseMarker()
 		merged.forwardPast(o.Marker)
 	}
-	objects := merged.fileInfoVersions(bucket, prefix, delimiter, versionMarker)
+	objects := merged.fileInfoVersions(bucket, prefix, delimiter, versionMarker, listQuorum == "strict")
 	loi.IsTruncated = err == nil && len(objects) > 0
 	if maxKeys > 0 && len(objects) > maxKeys {
 		objects = objects[:maxKeys]
@@ -1467,6 +1469,7 @@ func maxKeysPlusOne(maxKeys int, addOne bool) int {
 }
 
 func (z *erasureServerPools) listObjectsGeneric(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int, v1 bool) (loi ListObjectsInfo, err error) {
+	listQuorum := globalAPIConfig.getListQuorum()
 	opts := listPathOptions{
 		V1:          v1,
 		Bucket:      bucket,
@@ -1475,7 +1478,7 @@ func (z *erasureServerPools) listObjectsGeneric(ctx context.Context, bucket, pre
 		Limit:       maxKeysPlusOne(maxKeys, marker != ""),
 		Marker:      marker,
 		InclDeleted: false,
-		AskDisks:    globalAPIConfig.getListQuorum(),
+		AskDisks:    listQuorum,
 	}
 	opts.setBucketMeta(ctx)
 	listFn := func(ctx context.Context, opts listPathOptions, limitTo int) (ListObjectsInfo, error) {
@@ -1495,7 +1498,7 @@ func (z *erasureServerPools) listObjectsGeneric(ctx context.Context, bucket, pre
 		}
 
 		// Default is recursive, if delimiter is set then list non recursive.
-		objects := merged.fileInfos(bucket, prefix, delimiter)
+		objects := merged.fileInfos(bucket, prefix, delimiter, listQuorum == "strict")
 		loi.IsTruncated = err == nil && len(objects) > 0
 		if limitTo > 0 && len(objects) > limitTo {
 			objects = objects[:limitTo]
