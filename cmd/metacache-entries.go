@@ -64,6 +64,18 @@ func (e metaCacheEntry) hasPrefix(s string) bool {
 	return strings.HasPrefix(e.name, s)
 }
 
+// Get the quorum found for a specific version, 0 for latest version.
+// Return 0 if the quorum is unknown
+func (e metaCacheEntry) getFoundQuorum(idx int) int {
+	if e.cached == nil {
+		return 0
+	}
+	if len(e.cached.versions) < idx {
+		return 0
+	}
+	return e.cached.versions[idx].quorum
+}
+
 // matches returns if the entries have the same versions.
 // If strict is false we allow signatures to mismatch.
 func (e *metaCacheEntry) matches(other *metaCacheEntry, strict bool) (prefer *metaCacheEntry, matches bool) {
@@ -492,7 +504,7 @@ func (m metaCacheEntriesSorted) shallowClone() metaCacheEntriesSorted {
 
 // fileInfoVersions converts the metadata to FileInfoVersions where possible.
 // Metadata that cannot be decoded is skipped.
-func (m *metaCacheEntriesSorted) fileInfoVersions(bucket, prefix, delimiter, afterV string) (versions []ObjectInfo) {
+func (m *metaCacheEntriesSorted) fileInfoVersions(bucket, prefix, delimiter, afterV string, checkQuorum bool) (versions []ObjectInfo) {
 	versions = make([]ObjectInfo, 0, m.len())
 	prevPrefix := ""
 	vcfg, _ := globalBucketVersioningSys.Get(bucket)
@@ -531,7 +543,12 @@ func (m *metaCacheEntriesSorted) fileInfoVersions(bucket, prefix, delimiter, aft
 				afterV = ""
 			}
 
-			for _, version := range fiVersions {
+			for i, version := range fiVersions {
+				if checkQuorum {
+					if q := entry.getFoundQuorum(i); q > 0 && q < version.Erasure.DataBlocks {
+						continue
+					}
+				}
 				if !version.VersionPurgeStatus().Empty() {
 					continue
 				}
@@ -569,7 +586,7 @@ func (m *metaCacheEntriesSorted) fileInfoVersions(bucket, prefix, delimiter, aft
 
 // fileInfos converts the metadata to ObjectInfo where possible.
 // Metadata that cannot be decoded is skipped.
-func (m *metaCacheEntriesSorted) fileInfos(bucket, prefix, delimiter string) (objects []ObjectInfo) {
+func (m *metaCacheEntriesSorted) fileInfos(bucket, prefix, delimiter string, checkQuorum bool) (objects []ObjectInfo) {
 	objects = make([]ObjectInfo, 0, m.len())
 	prevPrefix := ""
 
@@ -596,10 +613,21 @@ func (m *metaCacheEntriesSorted) fileInfos(bucket, prefix, delimiter string) (ob
 			}
 
 			fi, err := entry.fileInfo(bucket)
-			if err == nil && fi.VersionPurgeStatus().Empty() {
-				versioned := vcfg != nil && vcfg.Versioned(entry.name)
-				objects = append(objects, fi.ToObjectInfo(bucket, entry.name, versioned))
+			if err != nil {
+				continue
 			}
+
+			if checkQuorum {
+				if q := entry.getFoundQuorum(0); q > 0 && q < fi.Erasure.DataBlocks {
+					continue
+				}
+			}
+
+			if !fi.VersionPurgeStatus().Empty() {
+				continue
+			}
+			versioned := vcfg != nil && vcfg.Versioned(entry.name)
+			objects = append(objects, fi.ToObjectInfo(bucket, entry.name, versioned))
 			continue
 		}
 		if entry.isDir() {

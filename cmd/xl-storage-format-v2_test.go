@@ -907,11 +907,12 @@ func Test_mergeXLV2Versions2(t *testing.T) {
 	vObj.meta, _ = base64.StdEncoding.DecodeString("gqRUeXBlAaVWMk9iat4AEaJJRMQQEkaOteYCSrWB3nqppSIKTqRERGlyxBAO8fXSJ5RI+YEtsp8KneVVpkVjQWxnbwGjRWNNDKNFY04Ep0VjQlNpemXSABAAAKdFY0luZGV4BaZFY0Rpc3TcABAFBgcICQoLDA0ODxABAgMEqENTdW1BbGdvAahQYXJ0TnVtc5EBqVBhcnRFVGFnc8CpUGFydFNpemVzkdEBL6pQYXJ0QVNpemVzkdEBL6RTaXpl0QEvpU1UaW1l0xbgJhIa6ABvp01ldGFTeXOBvHgtbWluaW8taW50ZXJuYWwtaW5saW5lLWRhdGHEBHRydWWnTWV0YVVzcoKsY29udGVudC10eXBluGFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbaRldGFn2SBlYTIxMDE2MmVlYjRhZGMzMWZmOTg0Y2I3NDRkNmFmNg==")
 
 	testCases := []struct {
-		name        string
-		input       [][]xlMetaV2ShallowVersion
-		quorum      int
-		reqVersions int
-		want        []xlMetaV2ShallowVersion
+		name         string
+		input        [][]xlMetaV2ShallowVersion
+		quorum       int
+		reqVersions  int
+		wantVersions []xlMetaV2ShallowVersion
+		wantQuorums  []int
 	}{
 		{
 			name: "obj-on-one",
@@ -920,9 +921,10 @@ func Test_mergeXLV2Versions2(t *testing.T) {
 				1: {vDelMarker},       // disk 1
 				2: {vDelMarker},       // disk 2
 			},
-			quorum:      2,
-			reqVersions: 0,
-			want:        []xlMetaV2ShallowVersion{vDelMarker},
+			quorum:       2,
+			reqVersions:  0,
+			wantVersions: []xlMetaV2ShallowVersion{vDelMarker},
+			wantQuorums:  []int{3},
 		},
 		{
 			name: "obj-on-two",
@@ -931,9 +933,10 @@ func Test_mergeXLV2Versions2(t *testing.T) {
 				1: {vDelMarker, vObj}, // disk 1
 				2: {vDelMarker},       // disk 2
 			},
-			quorum:      2,
-			reqVersions: 0,
-			want:        []xlMetaV2ShallowVersion{vDelMarker, vObj},
+			quorum:       2,
+			reqVersions:  0,
+			wantVersions: []xlMetaV2ShallowVersion{vDelMarker, vObj},
+			wantQuorums:  []int{3, 2},
 		},
 		{
 			name: "obj-on-all",
@@ -942,9 +945,10 @@ func Test_mergeXLV2Versions2(t *testing.T) {
 				1: {vDelMarker, vObj}, // disk 1
 				2: {vDelMarker, vObj}, // disk 2
 			},
-			quorum:      2,
-			reqVersions: 0,
-			want:        []xlMetaV2ShallowVersion{vDelMarker, vObj},
+			quorum:       2,
+			reqVersions:  0,
+			wantVersions: []xlMetaV2ShallowVersion{vDelMarker, vObj},
+			wantQuorums:  []int{3, 3},
 		},
 		{
 			name: "del-on-one",
@@ -953,9 +957,10 @@ func Test_mergeXLV2Versions2(t *testing.T) {
 				1: {vObj},             // disk 1
 				2: {vObj},             // disk 2
 			},
-			quorum:      2,
-			reqVersions: 0,
-			want:        []xlMetaV2ShallowVersion{vObj},
+			quorum:       2,
+			reqVersions:  0,
+			wantVersions: []xlMetaV2ShallowVersion{vObj},
+			wantQuorums:  []int{3},
 		},
 		{
 			name: "del-on-two",
@@ -964,9 +969,10 @@ func Test_mergeXLV2Versions2(t *testing.T) {
 				1: {vDelMarker, vObj}, // disk 1
 				2: {vObj},             // disk 2
 			},
-			quorum:      2,
-			reqVersions: 0,
-			want:        []xlMetaV2ShallowVersion{vDelMarker, vObj},
+			quorum:       2,
+			reqVersions:  0,
+			wantVersions: []xlMetaV2ShallowVersion{vDelMarker, vObj},
+			wantQuorums:  []int{2, 3},
 		},
 		{
 			name: "del-on-two-16stripe",
@@ -988,9 +994,10 @@ func Test_mergeXLV2Versions2(t *testing.T) {
 				14: {vDelMarker, vObj}, // disk 14
 				15: {vDelMarker, vObj}, // disk 15
 			},
-			quorum:      7,
-			reqVersions: 0,
-			want:        []xlMetaV2ShallowVersion{vDelMarker, vObj},
+			quorum:       7,
+			reqVersions:  0,
+			wantVersions: []xlMetaV2ShallowVersion{vDelMarker, vObj},
+			wantQuorums:  []int{14, 16},
 		},
 	}
 	for _, test := range testCases {
@@ -1003,8 +1010,16 @@ func Test_mergeXLV2Versions2(t *testing.T) {
 						test.input[i], test.input[j] = test.input[j], test.input[i]
 					})
 					got := mergeXLV2Versions(test.quorum, true, 0, test.input...)
-					if !reflect.DeepEqual(test.want, got) {
-						t.Errorf("want %v != got %v", test.want, got)
+					for i := range got {
+						if got[i].quorum != test.wantQuorums[i] {
+							t.Errorf("unexpected quorum calculation: want %v != got %v", test.wantQuorums[i], got[i].quorum)
+						}
+						// This is needed for the next reflect.DeepEqual test since we are the same
+						// vDelMarker and vObj in all the tests with different test use cases
+						got[i].quorum = 0
+					}
+					if !reflect.DeepEqual(test.wantVersions, got) {
+						t.Errorf("want %v != got %v", test.wantVersions, got)
 					}
 				})
 			}

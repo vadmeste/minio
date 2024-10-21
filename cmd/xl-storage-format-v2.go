@@ -887,12 +887,14 @@ func isIndexedMetaV2(buf []byte) (meta xlMetaBuf, data xlMetaInlineData, err err
 	return meta, data, nil
 }
 
+//msgp:ignore xlMetaV2 xlMetaV2ShallowVersion
+
 type xlMetaV2ShallowVersion struct {
 	header xlMetaV2VersionHeader
 	meta   []byte
-}
 
-//msgp:ignore xlMetaV2 xlMetaV2ShallowVersion
+	quorum int // zero means unknown
+}
 
 type xlMetaV2 struct {
 	versions []xlMetaV2ShallowVersion
@@ -1869,20 +1871,21 @@ func (x xlMetaV2) ListVersions(volume, path string, allParts bool) ([]FileInfo, 
 // mergeXLV2Versions will merge all versions, typically from different disks
 // that have at least quorum entries in all metas.
 // Each version slice should be sorted.
-// Quorum must be the minimum number of matching metadata files.
-// Quorum should be > 1 and <= len(versions).
+// minQuorum must be the minimum number of matching metadata files.
+// minQuorum should be > 1 and <= len(versions).
+// If minQuorum =< 1, do not calculate the quorum of versions
 // If strict is set to false, entries that match type
-func mergeXLV2Versions(quorum int, strict bool, requestedVersions int, versions ...[]xlMetaV2ShallowVersion) (merged []xlMetaV2ShallowVersion) {
-	if quorum <= 0 {
-		quorum = 1
+func mergeXLV2Versions(minQuorum int, strict bool, requestedVersions int, versions ...[]xlMetaV2ShallowVersion) (merged []xlMetaV2ShallowVersion) {
+	if minQuorum <= 0 {
+		minQuorum = 1
 	}
-	if len(versions) < quorum || len(versions) == 0 {
+	if len(versions) < minQuorum || len(versions) == 0 {
 		return nil
 	}
 	if len(versions) == 1 {
 		return versions[0]
 	}
-	if quorum == 1 {
+	if minQuorum == 1 {
 		// No need for non-strict checks if quorum is 1.
 		strict = true
 	}
@@ -1915,7 +1918,7 @@ func mergeXLV2Versions(quorum int, strict bool, requestedVersions int, versions 
 		}
 
 		// Check if done...
-		if len(tops) < quorum {
+		if len(tops) < minQuorum {
 			// We couldn't gather enough for quorum
 			break
 		}
@@ -1924,6 +1927,9 @@ func mergeXLV2Versions(quorum int, strict bool, requestedVersions int, versions 
 		if consistent {
 			// All had the same signature, easy.
 			latest = tops[0]
+			if minQuorum > 1 {
+				latest.quorum = len(tops)
+			}
 			merged = append(merged, latest)
 
 			// Calculate latest 'n' non-free versions.
@@ -1994,7 +2000,10 @@ func mergeXLV2Versions(quorum int, strict bool, requestedVersions int, versions 
 					break
 				}
 			}
-			if latestCount >= quorum {
+			if latestCount >= minQuorum {
+				if minQuorum > 1 {
+					latest.quorum = latestCount
+				}
 				merged = append(merged, latest)
 
 				// Calculate latest 'n' non-free versions.
