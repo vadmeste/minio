@@ -494,16 +494,61 @@ func (s *xlStorage) readMetadataWithDMTime(ctx context.Context, itemPath string)
 			Err:  syscall.EISDIR,
 		}
 	}
-	buf, err := readXLMetaNoData(f, stat.Size())
+	buf, _, err := readXLMetaNoData(f, stat.Size())
 	if err != nil {
 		return nil, stat.ModTime().UTC(), fmt.Errorf("%w -> %s", err, itemPath)
 	}
 	return buf, stat.ModTime().UTC(), err
 }
 
-func (s *xlStorage) readMetadata(ctx context.Context, itemPath string) ([]byte, error) {
+// readsMetadata and returns inline information for xl.meta
+func (s *xlStorage) readMetadataWithInline(ctx context.Context, itemPath string) ([]byte, bool, error) {
+	if contextCanceled(ctx) {
+		return nil, false, ctx.Err()
+	}
+
+	if err := checkPathLength(itemPath); err != nil {
+		return nil, false, err
+	}
+
+	f, err := OpenFile(itemPath, readMode, 0o666)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, false, err
+	}
+	if stat.IsDir() {
+		return nil, false, &os.PathError{
+			Op:   "open",
+			Path: itemPath,
+			Err:  syscall.EISDIR,
+		}
+	}
+	buf, inline, err := readXLMetaNoData(f, stat.Size())
+	if err != nil {
+		return nil, false, fmt.Errorf("%w -> %s", err, itemPath)
+	}
+	return buf, inline, err
+}
+
+func (s *xlStorage) readMetadata(ctx context.Context, itemPath string, checkDDir bool) ([]byte, error) {
 	return xioutil.WithDeadline[[]byte](ctx, globalDriveConfig.GetMaxTimeout(), func(ctx context.Context) ([]byte, error) {
-		buf, _, err := s.readMetadataWithDMTime(ctx, itemPath)
+		buf, inline, err := s.readMetadataWithInline(ctx, itemPath)
+		if err == nil && checkDDir && !inline {
+			meta, _, _ := isIndexedMetaV2(buf)
+			if meta != nil {
+				ddir := meta.LatestObjectVersionDDir()
+				if ddir != "" {
+					e := Access(pathJoin(itemPath[:strings.LastIndex(itemPath, slashSeparator)], ddir))
+					if osIsNotExist(e) {
+						return nil, errDDirNotFound
+					}
+				}
+			}
+		}
 		return buf, err
 	})
 }
@@ -579,7 +624,7 @@ func (s *xlStorage) NSScanner(ctx context.Context, cache dataUsageCache, updates
 		}()
 
 		doneSz := globalScannerMetrics.timeSize(scannerMetricReadMetadata)
-		buf, err := s.readMetadata(ctx, item.Path)
+		buf, err := s.readMetadata(ctx, item.Path, false)
 		doneSz(len(buf))
 		res["metasize"] = strconv.Itoa(len(buf))
 		if err != nil {

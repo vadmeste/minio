@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sort"
 	"strings"
@@ -122,7 +123,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 	if HasSuffix(opts.BaseDir, SlashSeparator) {
 		metadata, err := s.readMetadata(ctx, pathJoin(volumeDir,
 			opts.BaseDir[:len(opts.BaseDir)-1]+globalDirSuffix,
-			xlStorageFormatFile))
+			xlStorageFormatFile), false)
 		diskHealthCheckOK(ctx, err)
 		if err == nil {
 			// if baseDir is already a directory object, consider it
@@ -236,7 +237,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 				if s.walkReadMu != nil {
 					s.walkReadMu.Lock()
 				}
-				meta.metadata, err = s.readMetadata(ctx, pathJoinBuf(sb, volumeDir, current, entry))
+				meta.metadata, err = s.readMetadata(ctx, pathJoinBuf(sb, volumeDir, current, entry), true)
 				if s.walkReadMu != nil {
 					s.walkReadMu.Unlock()
 				}
@@ -331,12 +332,13 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 			if s.walkReadMu != nil {
 				s.walkReadMu.Lock()
 			}
-			meta.metadata, err = s.readMetadata(ctx, pathJoinBuf(sb, volumeDir, meta.name, xlStorageFormatFile))
+			meta.metadata, err = s.readMetadata(ctx, pathJoinBuf(sb, volumeDir, meta.name, xlStorageFormatFile), true)
 			if s.walkReadMu != nil {
 				s.walkReadMu.Unlock()
 			}
 			diskHealthCheckOK(ctx, err)
 			switch {
+			case errors.Is(err, errDDirNotFound): // ignore
 			case err == nil:
 				// It was an object
 				if isDirObj {

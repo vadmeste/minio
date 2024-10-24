@@ -714,7 +714,7 @@ func metaDataPoolPut(buf []byte) {
 // readXLMetaNoData will load the metadata, but skip data segments.
 // This should only be used when data is never interesting.
 // If data is not xlv2, it is returned in full.
-func readXLMetaNoData(r io.Reader, size int64) ([]byte, error) {
+func readXLMetaNoData(r io.Reader, size int64) ([]byte, bool, error) {
 	initial := size
 	hasFull := true
 	if initial > metaDataReadDefault {
@@ -723,9 +723,8 @@ func readXLMetaNoData(r io.Reader, size int64) ([]byte, error) {
 	}
 
 	buf := metaDataPoolGet()[:initial]
-	_, err := io.ReadFull(r, buf)
-	if err != nil {
-		return nil, fmt.Errorf("readXLMetaNoData(io.ReadFull): %w", err)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, false, fmt.Errorf("readXLMetaNoData(io.ReadFull): %w", err)
 	}
 	readMore := func(n int64) error {
 		has := int64(len(buf))
@@ -755,27 +754,27 @@ func readXLMetaNoData(r io.Reader, size int64) ([]byte, error) {
 	tmp, major, minor, err := checkXL2V1(buf)
 	if err != nil {
 		err = readMore(size)
-		return buf, err
+		return buf, false, err
 	}
 	switch major {
 	case 1:
 		switch minor {
 		case 0:
 			err = readMore(size)
-			return buf, err
+			return buf, false, err
 		case 1, 2, 3:
 			sz, tmp, err := msgp.ReadBytesHeader(tmp)
 			if err != nil {
-				return nil, fmt.Errorf("readXLMetaNoData(read_meta): unknown metadata version %w", err)
+				return nil, false, fmt.Errorf("readXLMetaNoData(read_meta): unknown metadata version %w", err)
 			}
 			want := int64(sz) + int64(len(buf)-len(tmp))
 
 			// v1.1 does not have CRC.
 			if minor < 2 {
 				if err := readMore(want); err != nil {
-					return nil, err
+					return nil, false, err
 				}
-				return buf[:want], nil
+				return buf[:want], want < size, nil
 			}
 
 			// CRC is variable length, so we need to truncate exactly that.
@@ -784,27 +783,26 @@ func readXLMetaNoData(r io.Reader, size int64) ([]byte, error) {
 				wantMax = size
 			}
 			if err := readMore(wantMax); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 
 			if int64(len(buf)) < want {
-				return nil, fmt.Errorf("buffer shorter than expected (buflen: %d, want: %d): %w", len(buf), want, errFileCorrupt)
+				return nil, false, fmt.Errorf("buffer shorter than expected (buflen: %d, want: %d): %w", len(buf), want, errFileCorrupt)
 			}
 
 			tmp = buf[want:]
 			_, after, err := msgp.ReadUint32Bytes(tmp)
 			if err != nil {
-				return nil, fmt.Errorf("readXLMetaNoData(read_meta): unknown metadata version %w", err)
+				return nil, false, fmt.Errorf("readXLMetaNoData(read_meta): unknown metadata version %w", err)
 			}
 			want += int64(len(tmp) - len(after))
 
-			return buf[:want], err
-
+			return buf[:want], want < size, err
 		default:
-			return nil, errors.New("unknown minor metadata version")
+			return nil, false, errors.New("unknown minor metadata version")
 		}
 	default:
-		return nil, errors.New("unknown major metadata version")
+		return nil, false, errors.New("unknown major metadata version")
 	}
 }
 
@@ -2132,6 +2130,32 @@ func (x xlMetaBuf) ToFileInfo(volume, path, versionID string, allParts bool) (fi
 	}
 	fi.NumVersions = nonFreeVersions
 	return fi, err
+}
+
+func (x xlMetaBuf) LatestObjectVersionDDir() (ddir string) {
+	vers, _, metaV, buf, err := decodeXLHeaders(x)
+	if err != nil {
+		return
+	}
+	if vers == 0 {
+		return
+	}
+
+	decodeVersions(buf, 1, func(idx int, hdr, meta []byte) (err error) {
+		var xl xlMetaV2Version
+		if _, err = xl.unmarshalV(metaV, meta); err != nil {
+			return
+		}
+		if !xl.Valid() {
+			return
+		}
+		if v := xl.ObjectV2; v != nil && v.UsesDataDir() && !v.InlineData() {
+			ddir = uuid.UUID(v.DataDir).String()
+			return
+		}
+		return
+	})
+	return
 }
 
 // ListVersions lists current versions, and current deleted

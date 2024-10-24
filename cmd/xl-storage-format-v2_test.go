@@ -57,7 +57,7 @@ func TestReadXLMetaNoData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = readXLMetaNoData(bytes.NewReader(buf), int64(len(buf)))
+	_, _, err = readXLMetaNoData(bytes.NewReader(buf), int64(len(buf)))
 	if err == nil {
 		t.Fatal("expected error but returned success")
 	}
