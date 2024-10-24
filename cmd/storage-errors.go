@@ -70,6 +70,8 @@ var errDiskAccessDenied = StorageErr("drive access denied")
 // errFileNotFound - cannot find the file.
 var errFileNotFound = StorageErr("file not found")
 
+var errDDirNotFound = StorageErr("data-dir not found")
+
 // errFileNotFound - cannot find requested file version.
 var errFileVersionNotFound = StorageErr("file version not found")
 
