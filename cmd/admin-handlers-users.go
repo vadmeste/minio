@@ -1836,6 +1836,7 @@ func (a adminAPIHandlers) ExportIAM(w http.ResponseWriter, r *http.Request) {
 	// Get current object layer instance.
 	objectAPI, _ := validateAdminReq(ctx, w, r, policy.ExportIAMAction)
 	if objectAPI == nil {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
 		return
 	}
 	// Initialize a zip writer which will provide a zipped content
@@ -2048,17 +2049,13 @@ func (a adminAPIHandlers) ExportIAM(w http.ResponseWriter, r *http.Request) {
 func (a adminAPIHandlers) ImportIAM(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
+	// Validate signature, permissions and get current object layer instance.
+	objectAPI, _ := validateAdminReq(ctx, w, r, policy.ImportIAMAction)
 	if objectAPI == nil || globalNotificationSys == nil {
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
 		return
 	}
-	cred, owner, s3Err := validateAdminSignature(ctx, r, "")
-	if s3Err != ErrNone {
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
-		return
-	}
+
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL)
@@ -2142,38 +2139,12 @@ func (a adminAPIHandlers) ImportIAM(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				if (cred.IsTemp() || cred.IsServiceAccount()) && cred.ParentUser == accessKey {
-					// Incoming access key matches parent user then we should
-					// reject password change requests.
-					writeErrorResponseJSON(ctx, w, importErrorWithAPIErr(ctx, ErrAddUserInvalidArgument, err, allUsersFile, accessKey), r.URL)
-					return
-				}
-
 				// Check if accessKey has beginning and end space characters, this only applies to new users.
 				if !exists && hasSpaceBE(accessKey) {
 					writeErrorResponseJSON(ctx, w, importErrorWithAPIErr(ctx, ErrAdminResourceInvalidArgument, err, allUsersFile, accessKey), r.URL)
 					return
 				}
 
-				checkDenyOnly := false
-				if accessKey == cred.AccessKey {
-					// Check that there is no explicit deny - otherwise it's allowed
-					// to change one's own password.
-					checkDenyOnly = true
-				}
-
-				if !globalIAMSys.IsAllowed(policy.Args{
-					AccountName:     cred.AccessKey,
-					Groups:          cred.Groups,
-					Action:          policy.CreateUserAdminAction,
-					ConditionValues: getConditionValues(r, "", cred),
-					IsOwner:         owner,
-					Claims:          cred.Claims,
-					DenyOnly:        checkDenyOnly,
-				}) {
-					writeErrorResponseJSON(ctx, w, importErrorWithAPIErr(ctx, ErrAccessDenied, err, allUsersFile, accessKey), r.URL)
-					return
-				}
 				if _, err = globalIAMSys.CreateUser(ctx, accessKey, ureq); err != nil {
 					writeErrorResponseJSON(ctx, w, importErrorWithAPIErr(ctx, toAdminAPIErrCode(ctx, err), err, allUsersFile, accessKey), r.URL)
 					return
@@ -2265,17 +2236,6 @@ func (a adminAPIHandlers) ImportIAM(w http.ResponseWriter, r *http.Request) {
 				// beginning and end of the string.
 				if hasSpaceBE(svcAcctReq.AccessKey) {
 					writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminResourceInvalidArgument), r.URL)
-					return
-				}
-				if !globalIAMSys.IsAllowed(policy.Args{
-					AccountName:     cred.AccessKey,
-					Groups:          cred.Groups,
-					Action:          policy.CreateServiceAccountAdminAction,
-					ConditionValues: getConditionValues(r, "", cred),
-					IsOwner:         owner,
-					Claims:          cred.Claims,
-				}) {
-					writeErrorResponseJSON(ctx, w, importErrorWithAPIErr(ctx, ErrAccessDenied, err, allSvcAcctsFile, user), r.URL)
 					return
 				}
 				updateReq := true
