@@ -239,6 +239,7 @@ type cachedFolder struct {
 	name              string
 	parent            *dataUsageHash
 	objectHealProbDiv uint32
+	foundObj          *atomic.Bool
 }
 
 type folderScanner struct {
@@ -478,7 +479,7 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 				if h == thisHash {
 					return nil
 				}
-				this := cachedFolder{name: entName, parent: &thisHash, objectHealProbDiv: folder.objectHealProbDiv}
+				this := cachedFolder{name: entName, parent: &thisHash, objectHealProbDiv: folder.objectHealProbDiv, foundObj: folder.foundObj}
 				delete(abandonedChildren, h.Key()) // h.Key() already accounted for.
 				if exists {
 					existingFolders = append(existingFolders, this)
@@ -515,10 +516,14 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 				wait() // wait to proceed to next entry.
 				if err != errSkipFile && f.dataUsageScannerDebug {
 					console.Debugf(scannerLogPrefix+" getSize \"%v/%v\" returned err: %v\n", bucket, item.objectPath(), err)
+				} else if folder.foundObj != nil {
+					folder.foundObj.Store(true)
 				}
 				return nil
 			}
-
+			if folder.foundObj != nil {
+				folder.foundObj.Store(true)
+			}
 			// successfully read means we have a valid object.
 			foundObjects = true
 			// Remove filename i.e is the meta file to construct object name
@@ -583,16 +588,17 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 			}
 		}
 
-		scanFolder := func(folder cachedFolder) {
+		scanFolder := func(folder cachedFolder) (foundAny bool) {
 			if contextCanceled(ctx) {
-				return
+				return true
 			}
 			dst := into
 			if !into.Compacted {
 				dst = &dataUsageEntry{Compacted: false}
 			}
+			folder.foundObj = &atomic.Bool{}
 			if err := f.scanFolder(ctx, folder, dst); err != nil {
-				return
+				return true
 			}
 			if !into.Compacted {
 				h := dataUsageHash(folder.name)
@@ -602,6 +608,7 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 				f.updateCache.copyWithChildren(&f.newCache, h, folder.parent)
 				f.sendUpdate()
 			}
+			return folder.foundObj.Load()
 		}
 
 		// Transfer existing
@@ -638,8 +645,8 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 			}
 			f.updateCurrentPath(folder.name)
 			stopFn := globalScannerMetrics.log(scannerMetricScanFolder, f.root, folder.name)
-			scanFolder(folder)
-			stopFn(map[string]string{"type": "new"})
+			foundAny := scanFolder(folder)
+			stopFn(map[string]string{"type": "new", "found_objects": fmt.Sprintf("%v", foundAny)})
 
 			// Add new folders if this is new and we don't have existing.
 			if !into.Compacted {
@@ -648,6 +655,13 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 					f.updateCache.deleteRecursive(h)
 					f.updateCache.copyWithChildren(&f.newCache, h, &thisHash)
 				}
+			}
+			if !foundAny {
+				// We did not find anything.
+				// Check the folder by sending it to a heal check.
+				abandonedChildren[folder.name] = struct{}{}
+			} else if folder.foundObj != nil {
+				folder.foundObj.Store(true)
 			}
 		}
 
@@ -659,6 +673,9 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 			// and the entry itself is compacted.
 			if !into.Compacted && f.oldCache.isCompacted(h) {
 				if !h.mod(f.oldCache.Info.NextCycle, dataUsageUpdateDirCycles) {
+					if folder.foundObj != nil {
+						folder.foundObj.Store(true)
+					}
 					// Transfer and add as child...
 					f.newCache.copyWithChildren(&f.oldCache, h, folder.parent)
 					into.addChild(h)
@@ -673,8 +690,14 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 			}
 			f.updateCurrentPath(folder.name)
 			stopFn := globalScannerMetrics.log(scannerMetricScanFolder, f.root, folder.name)
-			scanFolder(folder)
-			stopFn(map[string]string{"type": "existing"})
+			foundAny := scanFolder(folder)
+			if foundAny && folder.foundObj != nil {
+				folder.foundObj.Store(foundAny)
+			}
+			stopFn(map[string]string{"type": "existing", "found_objects": fmt.Sprintf("%v", foundAny)})
+			if !foundAny {
+				abandonedChildren[folder.name] = struct{}{}
+			}
 		}
 
 		// Scan for healing
@@ -837,8 +860,11 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 			if foundObjs {
 				this := cachedFolder{name: k, parent: &thisHash, objectHealProbDiv: 1}
 				stopFn := globalScannerMetrics.log(scannerMetricScanFolder, f.root, this.name, "HEALED")
-				scanFolder(this)
-				stopFn(map[string]string{"type": "healed"})
+				foundAny := scanFolder(this)
+				if foundAny && folder.foundObj != nil {
+					folder.foundObj.Store(foundAny)
+				}
+				stopFn(map[string]string{"type": "healed", "found_objects": fmt.Sprintf("%v", foundAny)})
 			}
 		}
 		break
