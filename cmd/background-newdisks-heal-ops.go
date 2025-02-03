@@ -466,26 +466,11 @@ func healFreshDisk(ctx context.Context, z *erasureServerPools, endpoint Endpoint
 		return err
 	}
 
-	// if objects have failed healing, we attempt a retry to heal the drive upto 3 times before giving up.
-	if tracker.ItemsFailed > 0 && tracker.RetryAttempts < 4 {
-		tracker.RetryAttempts++
-		bugLogIf(ctx, tracker.update(ctx))
-
-		healingLogEvent(ctx, "Healing of drive '%s' is incomplete, retrying %s time (healed: %d, skipped: %d, failed: %d).", disk,
-			humanize.Ordinal(int(tracker.RetryAttempts)), tracker.ItemsHealed, tracker.ItemsSkipped, tracker.ItemsFailed)
-		return errRetryHealing
-	}
-
 	if tracker.ItemsFailed > 0 {
-		healingLogEvent(ctx, "Healing of drive '%s' is incomplete, retried %d times (healed: %d, skipped: %d, failed: %d).", disk,
-			tracker.RetryAttempts-1, tracker.ItemsHealed, tracker.ItemsSkipped, tracker.ItemsFailed)
+		healingLogEvent(ctx, "Healing of drive '%s' is finished (healed: %d, skipped: %d, failed: %d).", disk,
+			tracker.ItemsHealed, tracker.ItemsSkipped, tracker.ItemsFailed)
 	} else {
-		if tracker.RetryAttempts > 0 {
-			healingLogEvent(ctx, "Healing of drive '%s' is complete, retried %d times (healed: %d, skipped: %d).", disk,
-				tracker.RetryAttempts-1, tracker.ItemsHealed, tracker.ItemsSkipped)
-		} else {
-			healingLogEvent(ctx, "Healing of drive '%s' is finished (healed: %d, skipped: %d).", disk, tracker.ItemsHealed, tracker.ItemsSkipped)
-		}
+		healingLogEvent(ctx, "Healing of drive '%s' is finished (healed: %d, skipped: %d).", disk, tracker.ItemsHealed, tracker.ItemsSkipped)
 	}
 	if serverDebugLog {
 		tracker.printTo(os.Stdout)

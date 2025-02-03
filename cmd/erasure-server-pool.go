@@ -536,7 +536,7 @@ func (z *erasureServerPools) getPoolInfoExistingWithOpts(ctx context.Context, bu
 			return pinfo, z.poolsWithObject(poolObjInfos, opts), nil
 		}
 		defPool = pinfo
-		if !isErrObjectNotFound(pinfo.Err) {
+		if !isErrObjectNotFound(pinfo.Err) && !isErrVersionNotFound(pinfo.Err) {
 			return pinfo, noReadQuorumPools, pinfo.Err
 		}
 
@@ -1087,6 +1087,14 @@ func (z *erasureServerPools) PutObject(ctx context.Context, bucket string, objec
 		return ObjectInfo{}, err
 	}
 
+	if opts.DataMovement && idx == opts.SrcPoolIdx {
+		return ObjectInfo{}, DataMovementOverwriteErr{
+			Bucket:    bucket,
+			Object:    object,
+			VersionID: opts.VersionID,
+			Err:       errDataMovementSrcDstPoolSame,
+		}
+	}
 	// Overwrite the object at the right pool
 	return z.serverPools[idx].PutObject(ctx, bucket, object, data, opts)
 }
@@ -1139,13 +1147,44 @@ func (z *erasureServerPools) DeleteObject(ctx context.Context, bucket string, ob
 		return pinfo.ObjInfo, nil
 	}
 
+	// Datamovement must never be allowed on the same pool.
+	if opts.DataMovement && opts.SrcPoolIdx == pinfo.Index {
+		return pinfo.ObjInfo, DataMovementOverwriteErr{
+			Bucket:    bucket,
+			Object:    object,
+			VersionID: opts.VersionID,
+			Err:       errDataMovementSrcDstPoolSame,
+		}
+	}
+
+	if opts.DataMovement {
+		objInfo, err = z.serverPools[pinfo.Index].DeleteObject(ctx, bucket, object, opts)
+		objInfo.Name = decodeDirObject(object)
+		return objInfo, err
+	}
+
 	// Delete concurrently in all server pools with read quorum error for unversioned objects.
 	if len(noReadQuorumPools) > 0 && !opts.Versioned && !opts.VersionSuspended {
 		return z.deleteObjectFromAllPools(ctx, bucket, object, opts, noReadQuorumPools)
 	}
-	objInfo, err = z.serverPools[pinfo.Index].DeleteObject(ctx, bucket, object, opts)
+
+	for _, pool := range z.serverPools {
+		objInfo, err := pool.DeleteObject(ctx, bucket, object, opts)
+		if err != nil && !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
+			objInfo.Name = decodeDirObject(object)
+			return objInfo, err
+		}
+		if err == nil {
+			objInfo.Name = decodeDirObject(object)
+			return objInfo, nil
+		}
+	}
+
 	objInfo.Name = decodeDirObject(object)
-	return objInfo, err
+	if opts.VersionID != "" {
+		return objInfo, VersionNotFound{Bucket: bucket, Object: object, VersionID: opts.VersionID}
+	}
+	return objInfo, ObjectNotFound{Bucket: bucket, Object: object}
 }
 
 func (z *erasureServerPools) deleteObjectFromAllPools(ctx context.Context, bucket string, object string, opts ObjectOptions, poolIndices []poolErrs) (objInfo ObjectInfo, err error) {
@@ -1200,88 +1239,42 @@ func (z *erasureServerPools) DeleteObjects(ctx context.Context, bucket string, o
 	ctx = lkctx.Context()
 	defer multiDeleteLock.Unlock(lkctx)
 
-	// Fetch location of up to 10 objects concurrently.
-	poolObjIdxMap := map[int][]ObjectToDelete{}
-	origIndexMap := map[int][]int{}
+	dObjectsByPool := make([][]DeletedObject, len(z.serverPools))
+	dErrsByPool := make([][]error, len(z.serverPools))
 
-	// Always perform 1/10th of the number of objects per delete
-	concurrent := len(objects) / 10
-	if concurrent <= 10 {
-		// if we cannot get 1/10th then choose the number of
-		// objects as concurrent.
-		concurrent = len(objects)
-	}
-
-	var mu sync.Mutex
-	eg := errgroup.WithNErrs(len(objects)).WithConcurrency(concurrent)
-	for j, obj := range objects {
-		j := j
-		obj := obj
+	eg := errgroup.WithNErrs(len(z.serverPools)).WithConcurrency(len(z.serverPools))
+	for i, pool := range z.serverPools {
+		i := i
+		pool := pool
 		eg.Go(func() error {
-			pinfo, _, err := z.getPoolInfoExistingWithOpts(ctx, bucket, obj.ObjectName, ObjectOptions{
-				NoLock: true,
-			})
-			if err != nil {
-				if !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
-					derrs[j] = err
-				}
-				dobjects[j] = DeletedObject{
-					ObjectName: decodeDirObject(obj.ObjectName),
-					VersionID:  obj.VersionID,
-				}
-				return nil
-			}
-
-			// Delete marker already present we are not going to create new delete markers.
-			if pinfo.ObjInfo.DeleteMarker && obj.VersionID == "" {
-				dobjects[j] = DeletedObject{
-					DeleteMarker:          pinfo.ObjInfo.DeleteMarker,
-					DeleteMarkerVersionID: pinfo.ObjInfo.VersionID,
-					DeleteMarkerMTime:     DeleteMarkerMTime{pinfo.ObjInfo.ModTime},
-					ObjectName:            decodeDirObject(pinfo.ObjInfo.Name),
-				}
-				return nil
-			}
-
-			idx := pinfo.Index
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			poolObjIdxMap[idx] = append(poolObjIdxMap[idx], obj)
-			origIndexMap[idx] = append(origIndexMap[idx], j)
+			dObjectsByPool[i], dErrsByPool[i] = pool.DeleteObjects(ctx, bucket, objects, opts)
 			return nil
-		}, j)
+		}, i)
 	}
-
 	eg.Wait() // wait to check all the pools.
 
-	if len(poolObjIdxMap) > 0 {
-		// Delete concurrently in all server pools.
-		var wg sync.WaitGroup
-		wg.Add(len(z.serverPools))
-		for idx, pool := range z.serverPools {
-			go func(idx int, pool *erasureSets) {
-				defer wg.Done()
-				objs := poolObjIdxMap[idx]
-				if len(objs) > 0 {
-					orgIndexes := origIndexMap[idx]
-					deletedObjects, errs := pool.DeleteObjects(ctx, bucket, objs, opts)
-					mu.Lock()
-					for i, derr := range errs {
-						if derr != nil {
-							derrs[orgIndexes[i]] = derr
-						}
-						deletedObjects[i].ObjectName = decodeDirObject(deletedObjects[i].ObjectName)
-						dobjects[orgIndexes[i]] = deletedObjects[i]
-					}
-					mu.Unlock()
-				}
-			}(idx, pool)
+	for i := range dobjects {
+		// Iterate over pools
+		for pool := range z.serverPools {
+			if dErrsByPool[pool][i] == nil && dObjectsByPool[pool][i].found {
+				// A fast exit when the object is found and removed
+				dobjects[i] = dObjectsByPool[pool][i]
+				derrs[i] = nil
+				break
+			}
+			if derrs[i] == nil {
+				// No error related to this object is found, assign this pool result
+				// whether it is nil because there is no object found or because of
+				// some other errors such erasure quorum errors.
+				dobjects[i] = dObjectsByPool[pool][i]
+				derrs[i] = dErrsByPool[pool][i]
+			}
 		}
-		wg.Wait()
 	}
 
+	for i := range dobjects {
+		dobjects[i].ObjectName = decodeDirObject(dobjects[i].ObjectName)
+	}
 	return dobjects, derrs
 }
 
@@ -1752,6 +1745,15 @@ func (z *erasureServerPools) NewMultipartUpload(ctx context.Context, bucket, obj
 	idx, err := z.getPoolIdx(ctx, bucket, object, -1)
 	if err != nil {
 		return nil, err
+	}
+
+	if opts.DataMovement && idx == opts.SrcPoolIdx {
+		return nil, DataMovementOverwriteErr{
+			Bucket:    bucket,
+			Object:    object,
+			VersionID: opts.VersionID,
+			Err:       errDataMovementSrcDstPoolSame,
+		}
 	}
 
 	return z.serverPools[idx].NewMultipartUpload(ctx, bucket, object, opts)
@@ -2780,6 +2782,15 @@ func (z *erasureServerPools) DecomTieredObject(ctx context.Context, bucket, obje
 	idx, err := z.getPoolIdxNoLock(ctx, bucket, object, fi.Size)
 	if err != nil {
 		return err
+	}
+
+	if opts.DataMovement && idx == opts.SrcPoolIdx {
+		return DataMovementOverwriteErr{
+			Bucket:    bucket,
+			Object:    object,
+			VersionID: opts.VersionID,
+			Err:       errDataMovementSrcDstPoolSame,
+		}
 	}
 
 	return z.serverPools[idx].DecomTieredObject(ctx, bucket, object, fi, opts)

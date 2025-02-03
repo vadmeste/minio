@@ -32,6 +32,7 @@ import (
 	"github.com/minio/minio/internal/grid"
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/v3/sync/errgroup"
+	"github.com/puzpuzpuz/xsync/v3"
 	"golang.org/x/exp/slices"
 )
 
@@ -112,9 +113,8 @@ func (er erasureObjects) listAndHeal(ctx context.Context, bucket, prefix string,
 
 // listAllBuckets lists all buckets from all disks. It also
 // returns the occurrence of each buckets in all disks
-func listAllBuckets(ctx context.Context, storageDisks []StorageAPI, healBuckets map[string]VolInfo, readQuorum int) error {
+func listAllBuckets(ctx context.Context, storageDisks []StorageAPI, healBuckets *xsync.MapOf[string, VolInfo], readQuorum int) error {
 	g := errgroup.WithNErrs(len(storageDisks))
-	var mu sync.Mutex
 	for index := range storageDisks {
 		index := index
 		g.Go(func() error {
@@ -126,6 +126,7 @@ func listAllBuckets(ctx context.Context, storageDisks []StorageAPI, healBuckets 
 			if err != nil {
 				return err
 			}
+
 			for _, volInfo := range volsInfo {
 				// StorageAPI can send volume names which are
 				// incompatible with buckets - these are
@@ -133,23 +134,45 @@ func listAllBuckets(ctx context.Context, storageDisks []StorageAPI, healBuckets 
 				if isReservedOrInvalidBucket(volInfo.Name, false) {
 					continue
 				}
-				mu.Lock()
-				if _, ok := healBuckets[volInfo.Name]; !ok {
-					healBuckets[volInfo.Name] = volInfo
-				}
-				mu.Unlock()
+
+				healBuckets.Compute(volInfo.Name, func(oldValue VolInfo, loaded bool) (newValue VolInfo, del bool) {
+					if loaded {
+						newValue = oldValue
+						newValue.count = oldValue.count + 1
+						return newValue, false
+					}
+					return VolInfo{
+						Name:    volInfo.Name,
+						Created: volInfo.Created,
+						count:   1,
+					}, false
+				})
 			}
+
 			return nil
 		}, index)
 	}
-	return reduceReadQuorumErrs(ctx, g.Wait(), bucketMetadataOpIgnoredErrs, readQuorum)
+
+	if err := reduceReadQuorumErrs(ctx, g.Wait(), bucketMetadataOpIgnoredErrs, readQuorum); err != nil {
+		return err
+	}
+
+	healBuckets.Range(func(volName string, volInfo VolInfo) bool {
+		if volInfo.count < readQuorum {
+			healBuckets.Delete(volName)
+		}
+		return true
+	})
+
+	return nil
 }
 
-var errLegacyXLMeta = errors.New("legacy XL meta")
-
-var errOutdatedXLMeta = errors.New("outdated XL meta")
-
-var errPartMissingOrCorrupt = errors.New("part missing or corrupt")
+var (
+	errLegacyXLMeta         = errors.New("legacy XL meta")
+	errOutdatedXLMeta       = errors.New("outdated XL meta")
+	errPartCorrupt          = errors.New("part corrupt")
+	errPartMissingOrCorrupt = errors.New("part missing or corrupt")
+)
 
 // Only heal on disks where we are sure that healing is needed. We can expand
 // this list as and when we figure out more errors can be added to this list safely.
