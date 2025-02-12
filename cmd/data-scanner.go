@@ -420,6 +420,8 @@ func (f *folderScanner) scanFolder(ctx context.Context, folder cachedFolder, int
 		var abandonedChildren dataUsageHashMap
 		if !into.Compacted {
 			abandonedChildren = f.oldCache.findChildrenCopy(thisHash)
+		} else {
+			abandonedChildren = make(dataUsageHashMap)
 		}
 
 		// If there are lifecycle rules for the prefix.
