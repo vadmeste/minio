@@ -36,7 +36,7 @@ var errPeerOffline = errors.New("peer is offline")
 
 type peerS3Client interface {
 	ListBuckets(ctx context.Context, opts BucketOptions) ([]BucketInfo, error)
-	HealBucket(ctx context.Context, bucket string, opts madmin.HealOpts) (madmin.HealResultItem, error)
+	HealBucket(ctx context.Context, bucket string, stale bool, opts madmin.HealOpts) (madmin.HealResultItem, error)
 	GetBucketInfo(ctx context.Context, bucket string, opts BucketOptions) (BucketInfo, error)
 	MakeBucket(ctx context.Context, bucket string, opts MakeBucketOptions) error
 	DeleteBucket(ctx context.Context, bucket string, opts DeleteBucketOptions) error
@@ -68,8 +68,8 @@ func (l localPeerS3Client) ListBuckets(ctx context.Context, opts BucketOptions) 
 	return listBucketsLocal(ctx, opts)
 }
 
-func (l localPeerS3Client) HealBucket(ctx context.Context, bucket string, opts madmin.HealOpts) (madmin.HealResultItem, error) {
-	return healBucketLocal(ctx, bucket, opts)
+func (l localPeerS3Client) HealBucket(ctx context.Context, bucket string, stale bool, opts madmin.HealOpts) (madmin.HealResultItem, error) {
+	return healBucketLocal(ctx, bucket, stale, opts)
 }
 
 func (l localPeerS3Client) GetBucketInfo(ctx context.Context, bucket string, opts BucketOptions) (BucketInfo, error) {
@@ -138,11 +138,13 @@ func (sys *S3PeerSys) HealBucket(ctx context.Context, bucket string, opts madmin
 		poolErrs = append(poolErrs, reduceWriteQuorumErrs(ctx, perPoolErrs, bucketOpIgnoredErrs, quorum))
 	}
 
-	if !opts.Recreate {
-		// when there is no force recreate look for pool
-		// errors to recreate the bucket on all pools.
-		opts.Remove = isAllBucketsNotFound(poolErrs)
-		opts.Recreate = !opts.Remove
+	// Consider a bucket stale only when all pools think the bucket does not exist
+	stale := true
+	for i := range poolErrs {
+		if poolErrs[i] != errVolumeNotFound {
+			stale = false
+			break
+		}
 	}
 
 	g = errgroup.WithNErrs(len(sys.peerClients))
@@ -154,7 +156,7 @@ func (sys *S3PeerSys) HealBucket(ctx context.Context, bucket string, opts madmin
 			if client == nil {
 				return errPeerOffline
 			}
-			res, err := client.HealBucket(ctx, bucket, opts)
+			res, err := client.HealBucket(ctx, bucket, stale, opts)
 			if err != nil {
 				return err
 			}
@@ -341,7 +343,7 @@ func (client *remotePeerS3Client) ListBuckets(ctx context.Context, opts BucketOp
 	return buckets, nil
 }
 
-func (client *remotePeerS3Client) HealBucket(ctx context.Context, bucket string, opts madmin.HealOpts) (madmin.HealResultItem, error) {
+func (client *remotePeerS3Client) HealBucket(ctx context.Context, bucket string, stale bool, opts madmin.HealOpts) (madmin.HealResultItem, error) {
 	conn := client.gridConn()
 	if conn == nil {
 		return madmin.HealResultItem{}, nil
@@ -350,6 +352,7 @@ func (client *remotePeerS3Client) HealBucket(ctx context.Context, bucket string,
 	mss := grid.NewMSSWith(map[string]string{
 		peerS3Bucket:        bucket,
 		peerS3BucketDeleted: strconv.FormatBool(opts.Remove),
+		peerS3BucketStale:   strconv.FormatBool(stale),
 	})
 
 	ctx, cancel := context.WithTimeout(ctx, globalDriveConfig.GetMaxTimeout())

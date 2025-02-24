@@ -1239,7 +1239,8 @@ func (s *peerRESTServer) HealBucketHandler(mss *grid.MSS) (np grid.NoPayload, ne
 	}
 
 	bucketDeleted := mss.Get(peerS3BucketDeleted) == "true"
-	_, err := healBucketLocal(context.Background(), bucket, madmin.HealOpts{
+	bucketStale := mss.Get(peerS3BucketStale) == "true"
+	_, err := healBucketLocal(context.Background(), bucket, bucketStale, madmin.HealOpts{
 		Remove: bucketDeleted,
 	})
 	if err != nil {
