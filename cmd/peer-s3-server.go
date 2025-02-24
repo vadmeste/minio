@@ -28,62 +28,15 @@ import (
 const (
 	peerS3Bucket            = "bucket"
 	peerS3BucketDeleted     = "bucket-deleted"
+	peerS3BucketStale       = "bucket-stale"
 	peerS3BucketForceCreate = "force-create"
 	peerS3BucketForceDelete = "force-delete"
 )
 
-func healBucketLocal(ctx context.Context, bucket string, opts madmin.HealOpts) (res madmin.HealResultItem, err error) {
+func healBucketLocal(ctx context.Context, bucket string, stale bool, opts madmin.HealOpts) (res madmin.HealResultItem, err error) {
 	globalLocalDrivesMu.RLock()
 	localDrives := cloneDrives(globalLocalDrives)
 	globalLocalDrivesMu.RUnlock()
-
-	// Initialize sync waitgroup.
-	g := errgroup.WithNErrs(len(localDrives))
-
-	// Disk states slices
-	beforeState := make([]string, len(localDrives))
-	afterState := make([]string, len(localDrives))
-
-	// Make a volume entry on all underlying storage disks.
-	for index := range localDrives {
-		index := index
-		g.Go(func() (serr error) {
-			if localDrives[index] == nil {
-				beforeState[index] = madmin.DriveStateOffline
-				afterState[index] = madmin.DriveStateOffline
-				return errDiskNotFound
-			}
-
-			beforeState[index] = madmin.DriveStateOk
-			afterState[index] = madmin.DriveStateOk
-
-			if bucket == minioReservedBucket {
-				return nil
-			}
-
-			_, serr = localDrives[index].StatVol(ctx, bucket)
-			if serr != nil {
-				if serr == errDiskNotFound {
-					beforeState[index] = madmin.DriveStateOffline
-					afterState[index] = madmin.DriveStateOffline
-					return serr
-				}
-				if serr != errVolumeNotFound {
-					beforeState[index] = madmin.DriveStateCorrupt
-					afterState[index] = madmin.DriveStateCorrupt
-					return serr
-				}
-
-				beforeState[index] = madmin.DriveStateMissing
-				afterState[index] = madmin.DriveStateMissing
-
-				return serr
-			}
-			return nil
-		}, index)
-	}
-
-	errs := g.Wait()
 
 	// Initialize heal result info
 	res = madmin.HealResultItem{
@@ -93,66 +46,96 @@ func healBucketLocal(ctx context.Context, bucket string, opts madmin.HealOpts) (
 		SetCount:  -1, // explicitly set an invalid value -1, for bucket heal scenario
 	}
 
-	// mutate only if not a dry-run
-	if opts.DryRun {
+	res.Before.Drives = make([]madmin.HealDriveInfo, len(localDrives))
+	res.After.Drives = make([]madmin.HealDriveInfo, len(localDrives))
+
+	for i := range localDrives {
+		if localDrives[i] != nil {
+			res.Before.Drives[i].Endpoint = localDrives[i].String()
+			res.After.Drives[i].Endpoint = localDrives[i].String()
+		}
+	}
+
+	// Initialize sync waitgroup.
+	g := errgroup.WithNErrs(len(localDrives))
+
+	// Make a volume entry on all underlying storage disks.
+	for index := range localDrives {
+		index := index
+		g.Go(func() error {
+			var state string
+			defer func() {
+				res.Before.Drives[index].State = state
+				res.After.Drives[index].State = state
+			}()
+			if localDrives[index] == nil {
+				state = madmin.DriveStateOffline
+				return errDiskNotFound
+			}
+			_, err := localDrives[index].StatVol(ctx, bucket)
+			switch {
+			case err == nil:
+				state = madmin.DriveStateOk
+			case errors.Is(err, errDiskNotFound):
+				state = madmin.DriveStateOffline
+			case errors.Is(err, errVolumeNotFound):
+				state = madmin.DriveStateMissing
+			default:
+				state = madmin.DriveStateUnknown
+			}
+			return err
+		}, index)
+	}
+
+	g.Wait()
+
+	// Make the after state same as the before state if mutation are not allowed
+	if opts.DryRun || stale && (!opts.Remove || isMinioMetaBucketName(bucket)) {
 		return res, nil
 	}
 
-	for i := range beforeState {
-		res.Before.Drives = append(res.Before.Drives, madmin.HealDriveInfo{
-			UUID:     "",
-			Endpoint: localDrives[i].String(),
-			State:    beforeState[i],
-		})
-	}
-
-	// check dangling and delete bucket only if its not a meta bucket
-	if !isMinioMetaBucketName(bucket) && !isAllBucketsNotFound(errs) && opts.Remove {
-		g := errgroup.WithNErrs(len(localDrives))
+	g = errgroup.WithNErrs(len(localDrives))
+	if stale {
 		for index := range localDrives {
 			index := index
 			g.Go(func() error {
 				if localDrives[index] == nil {
 					return errDiskNotFound
 				}
-				localDrives[index].DeleteVol(ctx, bucket, false)
-				return nil
+				return localDrives[index].DeleteVol(ctx, bucket, false)
 			}, index)
 		}
-
-		g.Wait()
-	}
-
-	// Create the lost volume only if its not marked for delete
-	if !opts.Remove {
-		// Initialize sync waitgroup.
-		g = errgroup.WithNErrs(len(localDrives))
-
+	} else {
 		// Make a volume entry on all underlying storage disks.
 		for index := range localDrives {
 			index := index
-			g.Go(func() error {
-				if beforeState[index] == madmin.DriveStateMissing {
-					err := localDrives[index].MakeVol(ctx, bucket)
-					if err == nil {
-						afterState[index] = madmin.DriveStateOk
-					}
-					return err
+			g.Go(func() (err error) {
+				if localDrives[index] == nil {
+					return errDiskNotFound
 				}
-				return errs[index]
+				return localDrives[index].MakeVol(ctx, bucket)
 			}, index)
 		}
-
-		errs = g.Wait()
 	}
 
-	for i := range afterState {
-		res.After.Drives = append(res.After.Drives, madmin.HealDriveInfo{
-			UUID:     "",
-			Endpoint: localDrives[i].String(),
-			State:    afterState[i],
-		})
+	errs := g.Wait()
+	for i, e := range errs {
+		switch {
+		case errors.Is(e, errDiskNotFound):
+			res.After.Drives[i].State = madmin.DriveStateOffline
+		case e == nil:
+			fallthrough
+		case errors.Is(e, errVolumeNotFound):
+			fallthrough
+		case errors.Is(e, errVolumeNotEmpty):
+			fallthrough
+		case errors.Is(e, errVolumeExists):
+			res.After.Drives[i].State = madmin.DriveStateOk
+		default:
+			res.After.Drives[i].State = madmin.DriveStateUnknown
+		}
 	}
+
 	return res, nil
 }
 

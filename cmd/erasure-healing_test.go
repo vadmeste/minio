@@ -463,6 +463,132 @@ func TestHealing(t *testing.T) {
 	}
 }
 
+func TestHealBucket(t *testing.T) {
+	// Use case: One pool with 4 drives
+	testCases := []struct {
+		doesBucketExist []bool
+		isBucketStale   bool
+	}{
+		{
+			[]bool{true, true, true, true, true},
+			false,
+		},
+		{
+			[]bool{true, true, true, true, false},
+			false,
+		},
+		{
+			[]bool{true, true, true, false, false},
+			false,
+		},
+		{
+			[]bool{true, true, false, false, false},
+			true,
+		},
+		{
+			[]bool{true, false, false, false, false},
+			true,
+		},
+		{
+			[]bool{false, false, false, false, false},
+			true,
+		},
+	}
+
+	testHealBucket(t, "OnePool", []int{5}, testCases)
+
+	testCases = []struct {
+		doesBucketExist []bool
+		isBucketStale   bool
+	}{
+		{
+			[]bool{
+				true, true, true, true,
+				true, true, true, true,
+			},
+			false,
+		},
+		{
+			[]bool{
+				true, true, true, true,
+				true, false, false, false,
+			},
+			false,
+		},
+		{
+			[]bool{
+				false, false, true, false,
+				true, false, false, false,
+			},
+			true,
+		},
+		{
+			[]bool{
+				false, false, false, false,
+				false, false, false, false,
+			},
+			true,
+		},
+	}
+
+	testHealBucket(t, "TwoPools", []int{4, 4}, testCases)
+}
+
+func testHealBucket(t *testing.T, testName string, poolsDist []int,
+	testCases []struct {
+		doesBucketExist []bool
+		isBucketStale   bool
+	},
+) {
+	const bucketName = "testbucket"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eps, dirs, err := prepareFormattedDisks(poolsDist...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removeRoots(dirs)
+
+	// Everything is fine, should return nil
+	obj, _, err := initObjectLayer(ctx, eps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer obj.Shutdown(context.Background())
+
+	for testIdx, testCase := range testCases {
+		err = obj.MakeBucket(ctx, bucketName, MakeBucketOptions{ForceCreate: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, yes := range testCase.doesBucketExist {
+			if yes {
+				continue
+			}
+			err := os.Remove(path.Join(dirs[i], bucketName))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err := obj.HealBucket(ctx, bucketName, madmin.HealOpts{Remove: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range dirs {
+			_, err := os.Stat(path.Join(dirs[i], bucketName))
+			if testCase.isBucketStale && !os.IsNotExist(err) {
+				t.Fatalf("Test/%s case %d: found a bucket in one drive which is unexpected", testName, testIdx+1)
+			}
+			if !testCase.isBucketStale && err != nil {
+				t.Fatalf("Test/%s case %d: did not found a bucket in one drive which is unexpected", testName, testIdx+1)
+			}
+		}
+	}
+}
+
 // Tests both object and bucket healing.
 func TestHealingVersioned(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
