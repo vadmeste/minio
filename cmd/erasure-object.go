@@ -1188,9 +1188,13 @@ func (er erasureObjects) putMetacacheObject(ctx context.Context, key string, r *
 	}
 
 	n, erasureErr := erasure.Encode(ctx, data, writers, buffer, writeQuorum)
-	closeBitrotWriters(writers)
+	closeErrs := closeBitrotWriters(writers)
 	if erasureErr != nil {
 		return ObjectInfo{}, toObjectErr(erasureErr, minioMetaBucket, key)
+	}
+
+	if closeErr := reduceWriteQuorumErrs(ctx, closeErrs, objectOpIgnoredErrs, writeQuorum); closeErr != nil {
+		return ObjectInfo{}, toObjectErr(closeErr, minioMetaBucket, key)
 	}
 
 	// Should return IncompleteBody{} error when reader has fewer bytes
@@ -1456,9 +1460,13 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 		bugLogIf(ctx, err)
 	}
 	n, erasureErr := erasure.Encode(ctx, toEncode, writers, buffer, writeQuorum)
-	closeBitrotWriters(writers)
+	closeErrs := closeBitrotWriters(writers)
 	if erasureErr != nil {
 		return ObjectInfo{}, toObjectErr(erasureErr, bucket, object)
+	}
+
+	if closeErr := reduceWriteQuorumErrs(ctx, closeErrs, objectOpIgnoredErrs, writeQuorum); closeErr != nil {
+		return ObjectInfo{}, toObjectErr(closeErr, bucket, object)
 	}
 
 	// Should return IncompleteBody{} error when reader has fewer bytes
