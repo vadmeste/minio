@@ -117,15 +117,19 @@ const (
 	// diskFillFraction is the fraction of a disk we allow to be filled.
 	diskFillFraction = 0.99
 
-	// diskReserveFraction is the fraction of a disk where we will fill other server pools first.
+	// diskSpaceReserveFraction is the fraction of a disk space where we will fill other server pools first.
 	// If all pools reach this, we will use all pools with regular placement.
-	diskReserveFraction = 0.15
+	diskSpaceReserveFraction = 0.15
+
+	// diskInodesReserveFraction is the fraction of a disk total inodes where we will fill other server pools first.
+	// If all pools reach this, we will use all pools with regular placement.
+	diskInodesReserveFraction = 0.05
 
 	// diskAssumeUnknownSize is the size to assume when an unknown size upload is requested.
 	diskAssumeUnknownSize = 1 << 30
 
 	// diskMinInodes is the minimum number of inodes we want free on a disk to perform writes.
-	diskMinInodes = 1000
+	diskMinInodes = 10000
 
 	// tlsClientSessionCacheSize is the cache size for client sessions.
 	tlsClientSessionCacheSize = 100
