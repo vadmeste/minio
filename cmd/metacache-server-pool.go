@@ -322,9 +322,9 @@ func (z *erasureServerPools) listMerged(ctx context.Context, o listPathOptions, 
 	return nil
 }
 
-// triggerExpiryAndRepl applies lifecycle and replication actions on the listing
-// It returns true if the listing is non-versioned and the given object is expired.
-func triggerExpiryAndRepl(ctx context.Context, o listPathOptions, obj metaCacheEntry) (skip bool) {
+// skipExpiryAndQueueRepl skips objects pending expiration. It also enqueues objects for replication.
+// It returns true if the listing is non-versioned and the given object has past expiry.
+func skipExpiryAndQueueRepl(ctx context.Context, o listPathOptions, obj metaCacheEntry) (skip bool) {
 	versioned := o.Versioning != nil && o.Versioning.Versioned(obj.name)
 
 	// skip latest object from listing only for regular
@@ -332,16 +332,14 @@ func triggerExpiryAndRepl(ctx context.Context, o listPathOptions, obj metaCacheE
 	// filter out between versions 'obj' cannot be truncated
 	// in such a manner, so look for skipping an object only
 	// for regular ListObjects() call only.
-	if !o.Versioned && !o.V1 {
+	if !o.Versioned && !o.V1 && o.Lifecycle != nil {
 		fi, err := obj.fileInfo(o.Bucket)
 		if err != nil {
 			return
 		}
 		objInfo := fi.ToObjectInfo(o.Bucket, obj.name, versioned)
-		if o.Lifecycle != nil {
-			act := evalActionFromLifecycle(ctx, *o.Lifecycle, o.Retention, o.Replication.Config, objInfo).Action
-			skip = act.Delete() && !act.DeleteRestored()
-		}
+		act := evalActionFromLifecycle(ctx, *o.Lifecycle, o.Retention, o.Replication.Config, objInfo).Action
+		skip = act.Delete() && !act.DeleteRestored()
 	}
 
 	fiv, err := obj.fileInfoVersions(o.Bucket)
@@ -349,20 +347,17 @@ func triggerExpiryAndRepl(ctx context.Context, o listPathOptions, obj metaCacheE
 		return
 	}
 
-	// Expire all versions if needed, if not attempt to queue for replication.
+	// Queue for replication.
 	for _, version := range fiv.Versions {
 		objInfo := version.ToObjectInfo(o.Bucket, obj.name, versioned)
-
 		if o.Lifecycle != nil {
 			evt := evalActionFromLifecycle(ctx, *o.Lifecycle, o.Retention, o.Replication.Config, objInfo)
 			if evt.Action.Delete() {
-				globalExpiryState.enqueueByDays(objInfo, evt, lcEventSrc_s3ListObjects)
 				if !evt.Action.DeleteRestored() {
 					continue
 				} // queue version for replication upon expired restored copies if needed.
 			}
 		}
-
 		queueReplicationHeal(ctx, o.Bucket, objInfo, o.Replication, 0)
 	}
 	return

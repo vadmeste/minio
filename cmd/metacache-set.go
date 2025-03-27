@@ -217,7 +217,7 @@ func (o *listPathOptions) gatherResults(ctx context.Context, in <-chan metaCache
 				continue
 			}
 			if o.Lifecycle != nil || o.Replication.Config != nil {
-				if skipped := triggerExpiryAndRepl(ctx, *o, entry); skipped == true {
+				if skipped := skipExpiryAndQueueRepl(ctx, *o, entry); skipped == true {
 					results.lastSkippedEntry = entry.name
 					continue
 				}
