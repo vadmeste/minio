@@ -334,10 +334,6 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 			disks[i], disks[j] = disks[j], disks[i]
 		})
 
-		expectedDisks := len(disks)/2 + 1
-		fallbackDisks := disks[expectedDisks:]
-		disks = disks[:expectedDisks]
-
 		filterLifecycle := func(bucket, object string, fi FileInfo) bool {
 			if lc == nil {
 				return false
@@ -498,7 +494,6 @@ func (er *erasureObjects) healErasureSet(ctx context.Context, buckets []string, 
 
 		err = listPathRaw(ctx, listPathRawOptions{
 			disks:          disks,
-			fallbackDisks:  fallbackDisks,
 			bucket:         bucket,
 			recursive:      true,
 			forwardTo:      forwardTo,
