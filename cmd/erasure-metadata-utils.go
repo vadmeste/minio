@@ -74,22 +74,22 @@ func reduceCommonVersions(diskVersions [][]byte, writeQuorum int) (versions []by
 // figure out the most commonVersions across disk that satisfies
 // the 'writeQuorum' this function returns '0' if quorum cannot
 // be achieved and disks have too many inconsistent versions.
-func reduceCommonDataDir(dataDirs []string, writeQuorum int) (dataDir string) {
-	dataDirsCount := make(map[string]int)
-	for _, ddir := range dataDirs {
-		dataDirsCount[ddir]++
+func reduceCommonStr(strs []string, writeQuorum int) (str string) {
+	strsCount := make(map[string]int)
+	for _, ddir := range strs {
+		strsCount[ddir]++
 	}
 
 	max := 0
-	for ddir, count := range dataDirsCount {
+	for ddir, count := range strsCount {
 		if max < count {
 			max = count
-			dataDir = ddir
+			str = ddir
 		}
 	}
 
 	if max >= writeQuorum {
-		return dataDir
+		return str
 	}
 
 	return ""

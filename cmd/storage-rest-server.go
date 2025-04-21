@@ -74,6 +74,8 @@ var (
 	storageUpdateMetadataRPC   = grid.NewSingleHandler[*MetadataHandlerParams, grid.NoPayload](grid.HandlerUpdateMetadata, func() *MetadataHandlerParams { return &MetadataHandlerParams{} }, grid.NewNoPayload)
 	storageWriteMetadataRPC    = grid.NewSingleHandler[*MetadataHandlerParams, grid.NoPayload](grid.HandlerWriteMetadata, func() *MetadataHandlerParams { return &MetadataHandlerParams{} }, grid.NewNoPayload)
 	storageListDirRPC          = grid.NewStream[*grid.MSS, grid.NoPayload, *ListDirResult](grid.HandlerListDir, grid.NewMSS, nil, func() *ListDirResult { return &ListDirResult{} }).WithOutCapacity(1)
+	storageHealRPC             = grid.NewSingleHandler[*HealHandlerParams, *HealResp](grid.HandlerHeal, func() *HealHandlerParams { return &HealHandlerParams{} }, func() *HealResp { return &HealResp{} })
+	storageCommitXLRPC         = grid.NewSingleHandler[*CommitXLHandlerParams, grid.NoPayload](grid.HandlerCommitXL, func() *CommitXLHandlerParams { return &CommitXLHandlerParams{} }, grid.NewNoPayload).AllowCallRequestPool(true)
 )
 
 func getStorageViaEndpoint(endpoint Endpoint) StorageAPI {
@@ -711,6 +713,24 @@ func (s *storageRESTServer) DeleteVersionsHandler(w http.ResponseWriter, r *http
 	encoder.Encode(dErrsResp)
 }
 
+// CommitXL - commits xl.meta to its final location at FilePath
+func (s *storageRESTServer) CommitXLHandler(p *CommitXLHandlerParams) (grid.NoPayload, *grid.RemoteErr) {
+	if !s.checkID(p.DiskID) {
+		return grid.NewNPErr(errDiskNotFound)
+	}
+	return grid.NewNPErr(s.getStorage().CommitXL(context.Background(), p.CommitVolume, p.Volume, p.FilePath, p.Opts))
+}
+
+// HealHandler - renames a meta object and data dir to destination.
+func (s *storageRESTServer) HealHandler(p *HealHandlerParams) (*HealResp, *grid.RemoteErr) {
+	if !s.checkID(p.DiskID) {
+		return nil, grid.NewRemoteErr(errDiskNotFound)
+	}
+
+	resp, err := s.getStorage().Heal(context.Background(), p.SrcVolume, p.SrcPath, p.FI, p.DstVolume, p.DstPath, p.Opts)
+	return &resp, grid.NewRemoteErr(err)
+}
+
 // RenameDataHandler - renames a meta object and data dir to destination.
 func (s *storageRESTServer) RenameDataHandler(p *RenameDataHandlerParams) (*RenameDataResp, *grid.RemoteErr) {
 	if !s.checkID(p.DiskID) {
@@ -1196,6 +1216,8 @@ func checkDiskFatalErrs(errs []error) error {
 // Do not like it :-(
 func logFatalErrs(err error, endpoint Endpoint, exit bool) {
 	switch {
+	case errors.Is(err, errUnsupportedBackend):
+		logger.Fatal(config.ErrUnexpectedBackendVersion(err), "Unable to initialize backend")
 	case errors.Is(err, errXLBackend):
 		logger.Fatal(config.ErrInvalidXLValue(err), "Unable to initialize backend")
 	case errors.Is(err, errUnsupportedDisk):
@@ -1380,6 +1402,9 @@ func registerStorageRESTHandlers(router *mux.Router, endpointServerPools Endpoin
 			logger.FatalIf(storageNSScannerRPC.RegisterNoInput(gm, server.NSScannerHandler, endpoint.Path), "unable to register handler")
 			logger.FatalIf(storageDiskInfoRPC.Register(gm, server.DiskInfoHandler, endpoint.Path), "unable to register handler")
 			logger.FatalIf(storageStatVolRPC.Register(gm, server.StatVolHandler, endpoint.Path), "unable to register handler")
+			logger.FatalIf(storageCommitXLRPC.Register(gm, server.CommitXLHandler, endpoint.Path), "unable to register handler")
+			logger.FatalIf(storageHealRPC.Register(gm, server.HealHandler, endpoint.Path), "unable to register handler")
+
 			logger.FatalIf(gm.RegisterStreamingHandler(grid.HandlerWalkDir, grid.StreamHandler{
 				Subroute:    endpoint.Path,
 				Handle:      server.WalkDirHandler,

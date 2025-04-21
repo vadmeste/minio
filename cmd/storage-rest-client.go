@@ -467,6 +467,71 @@ func (client *storageRESTClient) CheckParts(ctx context.Context, volume string, 
 	return resp, toStorageErr(err)
 }
 
+// RenameData2 - rename source path to destination path atomically, metadata and data file.
+func (client *storageRESTClient) RenameData2(ctx context.Context, srcVolume, srcPath string, fi FileInfo,
+	dstVolume, dstPath string, opts RenameOptions,
+) (res RenameDataResp, err error) {
+	params := RenameDataHandlerParams{
+		DiskID:    *client.diskID.Load(),
+		SrcVolume: srcVolume,
+		SrcPath:   srcPath,
+		DstPath:   dstPath,
+		DstVolume: dstVolume,
+		FI:        fi,
+		Opts:      opts,
+	}
+	var resp *RenameDataResp
+	if fi.Data == nil {
+		resp, err = storageRenameDataRPC.Call(ctx, client.gridConn, &params)
+	} else {
+		resp, err = storageRenameDataInlineRPC.Call(ctx, client.gridConn, &RenameDataInlineHandlerParams{params})
+	}
+	if err != nil {
+		return res, toStorageErr(err)
+	}
+
+	defer storageRenameDataRPC.PutResponse(resp)
+	return *resp, nil
+}
+
+func (client *storageRESTClient) CommitXL(ctx context.Context, commitVolume, volume, path string, opts CommitOptions) error {
+	ctx, cancel := context.WithTimeout(ctx, globalDriveConfig.GetMaxTimeout())
+	defer cancel()
+
+	params := CommitXLHandlerParams{
+		DiskID:       *client.diskID.Load(),
+		CommitVolume: commitVolume,
+		Volume:       volume,
+		FilePath:     path,
+		Opts:         opts,
+	}
+	_, err := storageCommitXLRPC.Call(ctx, client.gridConn, &params)
+	return toStorageErr(err)
+}
+
+// Heal - rename source path to destination path atomically, metadata and data file.
+// This call is similar to RenameData() but only used for Healing()
+func (client *storageRESTClient) Heal(ctx context.Context, srcVolume, srcPath string, fi FileInfo,
+	dstVolume, dstPath string, opts HealOptions,
+) (res HealResp, err error) {
+	params := HealHandlerParams{
+		DiskID:    *client.diskID.Load(),
+		SrcVolume: srcVolume,
+		SrcPath:   srcPath,
+		DstPath:   dstPath,
+		DstVolume: dstVolume,
+		FI:        fi,
+		Opts:      opts,
+	}
+	resp, err := storageHealRPC.Call(ctx, client.gridConn, &params)
+	if err != nil {
+		return res, toStorageErr(err)
+	}
+
+	defer storageHealRPC.PutResponse(resp)
+	return *resp, nil
+}
+
 // RenameData - rename source path to destination path atomically, metadata and data file.
 func (client *storageRESTClient) RenameData(ctx context.Context, srcVolume, srcPath string, fi FileInfo,
 	dstVolume, dstPath string, opts RenameOptions,

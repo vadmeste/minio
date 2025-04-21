@@ -86,6 +86,8 @@ type StorageAPI interface {
 	ReadVersion(ctx context.Context, origvolume, volume, path, versionID string, opts ReadOptions) (FileInfo, error)
 	ReadXL(ctx context.Context, volume, path string, readData bool) (RawFileInfo, error)
 	RenameData(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string, opts RenameOptions) (RenameDataResp, error)
+	Heal(ctx context.Context, srcVolume, srcPath string, f FileInfo, dstVolume, dstPath string, opts HealOptions) (HealResp, error)
+	CommitXL(ctx context.Context, commitVolume, volume, path string, opts CommitOptions) error
 
 	// File operations.
 	ListDir(ctx context.Context, origvolume, volume, dirPath string, count int) ([]string, error)

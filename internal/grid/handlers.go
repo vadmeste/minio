@@ -116,6 +116,8 @@ const (
 	HandlerRenamePart
 	HandlerClearUploadID
 	HandlerCheckParts3
+	HandlerCommitXL
+	HandlerHeal
 
 	// Add more above here ^^^
 	// If all handlers are used, the type of Handler can be changed.

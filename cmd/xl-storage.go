@@ -1338,6 +1338,14 @@ func (s *xlStorage) DeleteVersion(ctx context.Context, volume, path string, fi F
 	}
 
 	var legacyJSON bool
+	if opts.UndoWrite {
+		if opts.OldDataDir == "" {
+			// data dir not set, this call is a no-op.
+			// there is nothing to undo.
+			return nil
+		}
+		return renameAll(pathJoin(filePath, opts.OldDataDir, xlStorageFormatFileBackup), pathJoin(filePath, xlStorageFormatFile), filePath)
+	}
 	buf, _, err := s.readAllData(ctx, volume, volumeDir, pathJoin(filePath, xlStorageFormatFile), true)
 	if err != nil {
 		if !errors.Is(err, errFileNotFound) {
@@ -1420,10 +1428,6 @@ func (s *xlStorage) DeleteVersion(ctx context.Context, volume, path string, fi F
 		}
 
 		return s.WriteAll(ctx, volume, pathJoin(path, xlStorageFormatFile), buf)
-	}
-
-	if opts.UndoWrite && opts.OldDataDir != "" {
-		return renameAll(pathJoin(filePath, opts.OldDataDir, xlStorageFormatFileBackup), pathJoin(filePath, xlStorageFormatFile), filePath)
 	}
 
 	return s.deleteFile(volumeDir, pathJoin(volumeDir, path, xlStorageFormatFile), true, false)
@@ -2507,6 +2511,198 @@ func (s *xlStorage) Delete(ctx context.Context, volume string, path string, dele
 func skipAccessChecks(volume string) (ok bool) {
 	return strings.HasPrefix(volume, minioMetaBucket)
 }
+func (s *xlStorage) CommitXL(ctx context.Context, commitVolume, volume, path string, opts CommitOptions) (err error) {
+	volumeDir, err := s.getVolDir(volume)
+	if err != nil {
+		return err
+	}
+
+	if !skipAccessChecks(volume) {
+		// Stat a volume entry.
+		if err = Access(volumeDir); err != nil {
+			return convertAccessError(err, errVolumeAccessDenied)
+		}
+	}
+
+	// Following code is needed so that we retain SlashSeparator suffix if any in
+	// path argument.
+	filePath := pathJoin(volumeDir, path)
+	if err = checkPathLength(filePath); err != nil {
+		return err
+	}
+
+	// FIXME: specify the direct filePath as parent for existing objects add this later.
+	skipParent := volumeDir
+
+	commitVolDir, err := s.getVolDir(commitVolume)
+	if err != nil {
+		return err
+	}
+
+	xlMetaPath := pathJoin(filePath, xlStorageFormatFile)
+	commitPath := pathJoin(commitVolDir, opts.CommitPath)
+	if err := renameAll(commitPath, xlMetaPath, skipParent); err != nil {
+		if isSysErrNotEmpty(err) || isSysErrNotDir(err) {
+			return errFileAccessDenied
+		}
+		return osErrToFileErr(err)
+	}
+
+	if commitVolume != minioMetaMultipartBucket {
+		// commitPath is some-times minioMetaTmpBucket, an attempt to
+		// remove the temporary folder is enough since at this point
+		// ideally all transaction should be complete.
+		Remove(pathutil.Dir(commitPath))
+	} else {
+		s.deleteFile(commitVolDir, pathutil.Dir(commitPath), true, false)
+	}
+
+	return nil
+}
+
+// Heal heal the dstPath healed().
+func (s *xlStorage) Heal(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string, opts HealOptions) (res HealResp, err error) {
+	defer func() {
+		ignoredErrs := []error{
+			errFileNotFound,
+			errVolumeNotFound,
+			errFileVersionNotFound,
+			errDiskNotFound,
+			errUnformattedDisk,
+			errMaxVersionsExceeded,
+			errFileAccessDenied,
+		}
+		if err != nil && !IsErr(err, ignoredErrs...) && !contextCanceled(ctx) {
+			// Only log these errors if context is not yet canceled.
+			storageLogOnceIf(ctx, fmt.Errorf("drive:%s, srcVolume: %s, srcPath: %s, dstVolume: %s:, dstPath: %s - error %v",
+				s.drivePath,
+				srcVolume, srcPath,
+				dstVolume, dstPath,
+				err), "xl-storage-rename-data-"+dstVolume)
+		}
+		if s.globalSync {
+			globalSync()
+		}
+	}()
+
+	srcVolumeDir, err := s.getVolDir(srcVolume)
+	if err != nil {
+		return res, err
+	}
+
+	dstVolumeDir, err := s.getVolDir(dstVolume)
+	if err != nil {
+		return res, err
+	}
+
+	if !skipAccessChecks(srcVolume) {
+		// Stat a volume entry.
+		if err = Access(srcVolumeDir); err != nil {
+			return res, convertAccessError(err, errVolumeAccessDenied)
+		}
+	}
+
+	if !skipAccessChecks(dstVolume) {
+		if err = Access(dstVolumeDir); err != nil {
+			return res, convertAccessError(err, errVolumeAccessDenied)
+		}
+	}
+
+	srcFilePath := pathutil.Join(srcVolumeDir, pathJoin(srcPath, xlStorageFormatFile))
+	dstFilePath := pathutil.Join(dstVolumeDir, pathJoin(dstPath, xlStorageFormatFile))
+
+	var srcDataPath string
+	var dstDataPath string
+	var dataDir string
+	if !fi.IsRemote() {
+		dataDir = retainSlash(fi.DataDir)
+	}
+	if dataDir != "" {
+		srcDataPath = retainSlash(pathJoin(srcVolumeDir, srcPath, dataDir))
+		// make sure to always use path.Join here, do not use pathJoin as
+		// it would additionally add `/` at the end and it comes in the
+		// way of renameAll(), parentDir creation.
+		dstDataPath = pathutil.Join(dstVolumeDir, dstPath, dataDir)
+	}
+
+	if err = checkPathLength(srcFilePath); err != nil {
+		return res, err
+	}
+
+	if err = checkPathLength(dstFilePath); err != nil {
+		return res, err
+	}
+
+	dstBuf, err := xioutil.ReadFile(dstFilePath)
+	if err != nil {
+		// handle situations when dstFilePath is 'file'
+		// for example such as someone is trying to
+		// upload an object such as `prefix/object/xl.meta`
+		// where `prefix/object` is already an object
+		if isSysErrNotDir(err) && runtime.GOOS != globalWindowsOSName {
+			// NOTE: On windows the error happens at
+			// next line and returns appropriate error.
+			return res, errFileAccessDenied
+		}
+		if !osIsNotExist(err) {
+			return res, osErrToFileErr(err)
+		}
+	}
+
+	var xlMeta xlMetaV2
+	if len(dstBuf) > 0 {
+		if err = xlMeta.Load(dstBuf); err != nil {
+			// Data appears corrupt. Drop data.
+			xlMeta = xlMetaV2{}
+		}
+	}
+
+	if err = xlMeta.AddVersion(fi); err != nil {
+		return res, err
+	}
+
+	newDstBuf, err := xlMeta.AppendTo(metaDataPoolGet())
+	defer metaDataPoolPut(newDstBuf)
+	if err != nil {
+		return res, errFileCorrupt
+	}
+
+	if err = s.WriteAll(ctx, srcVolume, pathJoin(srcPath, xlStorageFormatFile), newDstBuf); err != nil {
+		return res, osErrToFileErr(err)
+	}
+	diskHealthCheckOK(ctx, err)
+
+	// Set skipParent to skip mkdirAll() calls for deeply nested objects
+	// - if its an overwrite
+	// - if its a versioned object
+	//
+	// This can potentiall reduce syscalls by strings.Split(path, "/")
+	// times relative to the object name.
+	skipParent := dstVolumeDir
+	if len(dstBuf) > 0 {
+		skipParent = pathutil.Dir(dstFilePath)
+	}
+
+	notInline := srcDataPath != "" && len(fi.Data) == 0 && fi.Size > 0
+	if notInline {
+		// renameAll only for objects that have xl.meta not saved inline.
+		// this must be done in healing only, otherwise it is expected
+		// that for fresh PutObject() call dstDataPath can never exist.
+		// if its an overwrite then the caller deletes the DataDir
+		// in a separate RPC call.
+		s.moveToTrash(dstDataPath, true, false)
+
+		if err = renameAll(srcDataPath, dstDataPath, skipParent); err != nil {
+			// if its a partial rename() do not attempt to delete recursively.
+			s.deleteFile(dstVolumeDir, dstDataPath, false, false)
+			return res, osErrToFileErr(err)
+		}
+		diskHealthCheckOK(ctx, err)
+	}
+
+	res.CommitPath = pathJoin(srcPath, xlStorageFormatFile)
+	return res, nil
+}
 
 // RenameData - rename source path to destination path atomically, metadata and data directory.
 func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string, opts RenameOptions) (res RenameDataResp, err error) {
@@ -2581,10 +2777,6 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 		return res, err
 	}
 
-	s.RLock()
-	formatLegacy := s.formatLegacy
-	s.RUnlock()
-
 	dstBuf, err := xioutil.ReadFile(dstFilePath)
 	if err != nil {
 		// handle situations when dstFilePath is 'file'
@@ -2599,103 +2791,12 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 		if !osIsNotExist(err) {
 			return res, osErrToFileErr(err)
 		}
-		if formatLegacy {
-			// errFileNotFound comes here.
-			err = s.renameLegacyMetadata(dstVolumeDir, dstPath)
-			if err != nil && err != errFileNotFound {
-				return res, err
-			}
-			if err == nil {
-				dstBuf, err = xioutil.ReadFile(dstFilePath)
-				if err != nil && !osIsNotExist(err) {
-					return res, osErrToFileErr(err)
-				}
-			}
-		}
 	}
-
-	// Preserve all the legacy data, could be slow, but at max there can be 10,000 parts.
-	currentDataPath := pathJoin(dstVolumeDir, dstPath)
-
 	var xlMeta xlMetaV2
-	var legacyPreserved bool
-	var legacyEntries []string
 	if len(dstBuf) > 0 {
-		if isXL2V1Format(dstBuf) {
-			if err = xlMeta.Load(dstBuf); err != nil {
-				// Data appears corrupt. Drop data.
-				xlMeta = xlMetaV2{}
-			}
-		} else {
-			// This code-path is to preserve the legacy data.
-			xlMetaLegacy := &xlMetaV1Object{}
-			json := jsoniter.ConfigCompatibleWithStandardLibrary
-			if err := json.Unmarshal(dstBuf, xlMetaLegacy); err != nil {
-				storageLogOnceIf(ctx, err, "read-data-unmarshal-"+dstFilePath)
-				// Data appears corrupt. Drop data.
-			} else {
-				xlMetaLegacy.DataDir = legacyDataDir
-				if err = xlMeta.AddLegacy(xlMetaLegacy); err != nil {
-					storageLogOnceIf(ctx, err, "read-data-add-legacy-"+dstFilePath)
-				}
-				legacyPreserved = true
-			}
-		}
-	} else {
-		// It is possible that some drives may not have `xl.meta` file
-		// in such scenarios verify if at least `part.1` files exist
-		// to verify for legacy version.
-		if formatLegacy {
-			// We only need this code if we are moving
-			// from `xl.json` to `xl.meta`, we can avoid
-			// one extra readdir operation here for all
-			// new deployments.
-			entries, err := readDir(currentDataPath)
-			if err != nil && err != errFileNotFound {
-				return res, osErrToFileErr(err)
-			}
-			for _, entry := range entries {
-				if entry == xlStorageFormatFile || strings.HasSuffix(entry, slashSeparator) {
-					continue
-				}
-				if strings.HasPrefix(entry, "part.") {
-					legacyPreserved = true
-					legacyEntries = entries
-					break
-				}
-			}
-		}
-	}
-
-	var legacyDataPath string
-	if formatLegacy {
-		legacyDataPath = pathJoin(dstVolumeDir, dstPath, legacyDataDir)
-		if legacyPreserved {
-			if contextCanceled(ctx) {
-				return res, ctx.Err()
-			}
-
-			if len(legacyEntries) > 0 {
-				// legacy data dir means its old content, honor system umask.
-				if err = mkdirAll(legacyDataPath, 0o777, dstVolumeDir); err != nil {
-					// any failed mkdir-calls delete them.
-					s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
-					return res, osErrToFileErr(err)
-				}
-				for _, entry := range legacyEntries {
-					// Skip xl.meta renames further, also ignore any directories such as `legacyDataDir`
-					if entry == xlStorageFormatFile || strings.HasSuffix(entry, slashSeparator) {
-						continue
-					}
-
-					if err = Rename(pathJoin(currentDataPath, entry), pathJoin(legacyDataPath, entry)); err != nil {
-						// Any failed rename calls un-roll previous transaction.
-						s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
-
-						return res, osErrToFileErr(err)
-					}
-				}
-			}
+		if err = xlMeta.Load(dstBuf); err != nil {
+			// Data appears corrupt. Drop data.
+			xlMeta = xlMetaV2{}
 		}
 	}
 
@@ -2756,10 +2857,6 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 	}
 
 	if err = xlMeta.AddVersion(fi); err != nil {
-		if legacyPreserved {
-			// Any failed rename calls un-roll previous transaction.
-			s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
-		}
 		return res, err
 	}
 
@@ -2778,9 +2875,6 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 	newDstBuf, err := xlMeta.AppendTo(metaDataPoolGet())
 	defer metaDataPoolPut(newDstBuf)
 	if err != nil {
-		if legacyPreserved {
-			s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
-		}
 		return res, errFileCorrupt
 	}
 
@@ -2789,36 +2883,16 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 	}
 
 	if err = s.WriteAll(ctx, srcVolume, pathJoin(srcPath, xlStorageFormatFile), newDstBuf); err != nil {
-		if legacyPreserved {
-			s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
-		}
 		return res, osErrToFileErr(err)
 	}
 	diskHealthCheckOK(ctx, err)
 
 	notInline := srcDataPath != "" && len(fi.Data) == 0 && fi.Size > 0
 	if notInline {
-		if healing {
-			// renameAll only for objects that have xl.meta not saved inline.
-			// this must be done in healing only, otherwise it is expected
-			// that for fresh PutObject() call dstDataPath can never exist.
-			// if its an overwrite then the caller deletes the DataDir
-			// in a separate RPC call.
-			s.moveToTrash(dstDataPath, true, false)
-
-			// If we are healing we should purge any legacyDataPath content,
-			// that was previously preserved during PutObject() call
-			// on a versioned bucket.
-			s.moveToTrash(legacyDataPath, true, false)
-		}
 		if contextCanceled(ctx) {
 			return res, ctx.Err()
 		}
 		if err = renameAll(srcDataPath, dstDataPath, skipParent); err != nil {
-			if legacyPreserved {
-				// Any failed rename calls un-roll previous transaction.
-				s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
-			}
 			// if its a partial rename() do not attempt to delete recursively.
 			s.deleteFile(dstVolumeDir, dstDataPath, false, false)
 			return res, osErrToFileErr(err)
@@ -2835,38 +2909,33 @@ func (s *xlStorage) RenameData(ctx context.Context, srcVolume, srcPath string, f
 
 		// preserve current xl.meta inside the oldDataDir.
 		if err = s.writeAll(ctx, dstVolume, pathJoin(dstPath, res.OldDataDir, xlStorageFormatFileBackup), dstBuf, true, skipParent); err != nil {
-			if legacyPreserved {
-				s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
-			}
 			return res, osErrToFileErr(err)
 		}
 		diskHealthCheckOK(ctx, err)
 	}
+	res.CommitPath = pathJoin(srcPath, xlStorageFormatFile)
 
 	if contextCanceled(ctx) {
 		return res, ctx.Err()
 	}
-
-	// Commit meta-file
-	if err = renameAll(srcFilePath, dstFilePath, skipParent); err != nil {
-		if legacyPreserved {
-			// Any failed rename calls un-roll previous transaction.
-			s.deleteFile(dstVolumeDir, legacyDataPath, true, false)
+	/*
+		// Commit meta-file
+		if err = renameAll(srcFilePath, dstFilePath, skipParent); err != nil {
+			// if its a partial rename() do not attempt to delete recursively.
+			// this can be healed since all parts are available.
+			s.deleteFile(dstVolumeDir, dstDataPath, false, false)
+			return res, osErrToFileErr(err)
 		}
-		// if its a partial rename() do not attempt to delete recursively.
-		// this can be healed since all parts are available.
-		s.deleteFile(dstVolumeDir, dstDataPath, false, false)
-		return res, osErrToFileErr(err)
-	}
 
-	if srcVolume != minioMetaMultipartBucket {
-		// srcFilePath is some-times minioMetaTmpBucket, an attempt to
-		// remove the temporary folder is enough since at this point
-		// ideally all transaction should be complete.
-		Remove(pathutil.Dir(srcFilePath))
-	} else {
-		s.deleteFile(srcVolumeDir, pathutil.Dir(srcFilePath), true, false)
-	}
+		if srcVolume != minioMetaMultipartBucket {
+			// srcFilePath is some-times minioMetaTmpBucket, an attempt to
+			// remove the temporary folder is enough since at this point
+			// ideally all transaction should be complete.
+			Remove(pathutil.Dir(srcFilePath))
+		} else {
+			s.deleteFile(srcVolumeDir, pathutil.Dir(srcFilePath), true, false)
+		}
+	*/
 	return res, nil
 }
 

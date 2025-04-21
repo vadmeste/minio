@@ -26,6 +26,8 @@ import (
 
 	"github.com/minio/minio/internal/grid"
 	xioutil "github.com/minio/minio/internal/ioutil"
+	xpath "github.com/minio/minio/internal/path"
+
 	"github.com/valyala/bytebufferpool"
 )
 
@@ -75,7 +77,6 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 	s.RLock()
 	legacy := s.formatLegacy
 	s.RUnlock()
-
 	// Verify if volume is valid and it exists.
 	volumeDir, err := s.getVolDir(opts.Bucket)
 	if err != nil {
@@ -261,7 +262,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 			// Check legacy.
 			if HasSuffix(entry, xlStorageFormatFileV1) && legacy {
 				var meta metaCacheEntry
-				meta.metadata, err = xioutil.ReadFile(pathJoinBuf(sb, volumeDir, current, entry))
+				meta.metadata, err = xioutil.ReadFile(xpath.JoinBuf(sb, volumeDir, current, entry))
 				diskHealthCheckOK(ctx, err)
 				if err != nil {
 					if !IsErrIgnored(err, io.EOF, io.ErrUnexpectedEOF) {
@@ -271,10 +272,11 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 				}
 				meta.name = strings.TrimSuffix(entry, xlStorageFormatFileV1)
 				meta.name = strings.TrimSuffix(meta.name, SlashSeparator)
-				meta.name = pathJoinBuf(sb, current, meta.name)
+				meta.name = xpath.JoinBuf(sb, current, meta.name)
 
 				return send(meta)
 			}
+
 			// Skip all other files.
 		}
 
@@ -349,7 +351,7 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 				}
 			case osIsNotExist(err), isSysErrIsDir(err):
 				if legacy {
-					meta.metadata, err = xioutil.ReadFile(pathJoinBuf(sb, volumeDir, meta.name, xlStorageFormatFileV1))
+					meta.metadata, err = xioutil.ReadFile(xpath.JoinBuf(sb, volumeDir, meta.name, xlStorageFormatFileV1))
 					diskHealthCheckOK(ctx, err)
 					if err == nil {
 						// It was an object
@@ -359,7 +361,6 @@ func (s *xlStorage) WalkDir(ctx context.Context, opts WalkDirOptions, wr io.Writ
 						continue
 					}
 				}
-
 				// NOT an object, append to stack (with slash)
 				// If dirObject, but no metadata (which is unexpected) we skip it.
 				if !isDirObj {

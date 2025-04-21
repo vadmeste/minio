@@ -105,90 +105,138 @@ func (z *CondCheck) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *CondCheck) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 7
-	// write "ObjectInfo"
-	err = en.Append(0x87, 0xaa, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x49, 0x6e, 0x66, 0x6f)
-	if err != nil {
-		return
+	// check for omitted fields
+	zb0001Len := uint32(7)
+	var zb0001Mask uint8 /* 7 bits */
+	_ = zb0001Mask
+	if z.IfMatch == "" {
+		zb0001Len--
+		zb0001Mask |= 0x2
 	}
-	err = z.ObjectInfo.EncodeMsg(en)
-	if err != nil {
-		err = msgp.WrapError(err, "ObjectInfo")
-		return
-	}
-	// write "IfMatch"
-	err = en.Append(0xa7, 0x49, 0x66, 0x4d, 0x61, 0x74, 0x63, 0x68)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.IfMatch)
-	if err != nil {
-		err = msgp.WrapError(err, "IfMatch")
-		return
-	}
-	// write "IfNoneMatch"
-	err = en.Append(0xab, 0x49, 0x66, 0x4e, 0x6f, 0x6e, 0x65, 0x4d, 0x61, 0x74, 0x63, 0x68)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.IfNoneMatch)
-	if err != nil {
-		err = msgp.WrapError(err, "IfNoneMatch")
-		return
-	}
-	// write "IfModifiedSince"
-	err = en.Append(0xaf, 0x49, 0x66, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x69, 0x6e, 0x63, 0x65)
-	if err != nil {
-		return
+	if z.IfNoneMatch == "" {
+		zb0001Len--
+		zb0001Mask |= 0x4
 	}
 	if z.IfModifiedSince == nil {
-		err = en.WriteNil()
-		if err != nil {
-			return
-		}
-	} else {
-		err = en.WriteTime(*z.IfModifiedSince)
-		if err != nil {
-			err = msgp.WrapError(err, "IfModifiedSince")
-			return
-		}
-	}
-	// write "IfUnModifiedSince"
-	err = en.Append(0xb1, 0x49, 0x66, 0x55, 0x6e, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x69, 0x6e, 0x63, 0x65)
-	if err != nil {
-		return
+		zb0001Len--
+		zb0001Mask |= 0x8
 	}
 	if z.IfUnModifiedSince == nil {
-		err = en.WriteNil()
+		zb0001Len--
+		zb0001Mask |= 0x10
+	}
+	if z.IfRange == "" {
+		zb0001Len--
+		zb0001Mask |= 0x20
+	}
+	if z.IfPartNumber == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x40
+	}
+	// variable map header, size zb0001Len
+	err = en.Append(0x80 | uint8(zb0001Len))
+	if err != nil {
+		return
+	}
+
+	// skip if no fields are to be emitted
+	if zb0001Len != 0 {
+		// write "ObjectInfo"
+		err = en.Append(0xaa, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x49, 0x6e, 0x66, 0x6f)
 		if err != nil {
 			return
 		}
-	} else {
-		err = en.WriteTime(*z.IfUnModifiedSince)
+		err = z.ObjectInfo.EncodeMsg(en)
 		if err != nil {
-			err = msgp.WrapError(err, "IfUnModifiedSince")
+			err = msgp.WrapError(err, "ObjectInfo")
 			return
 		}
-	}
-	// write "IfRange"
-	err = en.Append(0xa7, 0x49, 0x66, 0x52, 0x61, 0x6e, 0x67, 0x65)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.IfRange)
-	if err != nil {
-		err = msgp.WrapError(err, "IfRange")
-		return
-	}
-	// write "IfPartNumber"
-	err = en.Append(0xac, 0x49, 0x66, 0x50, 0x61, 0x72, 0x74, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
-	if err != nil {
-		return
-	}
-	err = en.WriteInt(z.IfPartNumber)
-	if err != nil {
-		err = msgp.WrapError(err, "IfPartNumber")
-		return
+		if (zb0001Mask & 0x2) == 0 { // if not omitted
+			// write "IfMatch"
+			err = en.Append(0xa7, 0x49, 0x66, 0x4d, 0x61, 0x74, 0x63, 0x68)
+			if err != nil {
+				return
+			}
+			err = en.WriteString(z.IfMatch)
+			if err != nil {
+				err = msgp.WrapError(err, "IfMatch")
+				return
+			}
+		}
+		if (zb0001Mask & 0x4) == 0 { // if not omitted
+			// write "IfNoneMatch"
+			err = en.Append(0xab, 0x49, 0x66, 0x4e, 0x6f, 0x6e, 0x65, 0x4d, 0x61, 0x74, 0x63, 0x68)
+			if err != nil {
+				return
+			}
+			err = en.WriteString(z.IfNoneMatch)
+			if err != nil {
+				err = msgp.WrapError(err, "IfNoneMatch")
+				return
+			}
+		}
+		if (zb0001Mask & 0x8) == 0 { // if not omitted
+			// write "IfModifiedSince"
+			err = en.Append(0xaf, 0x49, 0x66, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x69, 0x6e, 0x63, 0x65)
+			if err != nil {
+				return
+			}
+			if z.IfModifiedSince == nil {
+				err = en.WriteNil()
+				if err != nil {
+					return
+				}
+			} else {
+				err = en.WriteTime(*z.IfModifiedSince)
+				if err != nil {
+					err = msgp.WrapError(err, "IfModifiedSince")
+					return
+				}
+			}
+		}
+		if (zb0001Mask & 0x10) == 0 { // if not omitted
+			// write "IfUnModifiedSince"
+			err = en.Append(0xb1, 0x49, 0x66, 0x55, 0x6e, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x69, 0x6e, 0x63, 0x65)
+			if err != nil {
+				return
+			}
+			if z.IfUnModifiedSince == nil {
+				err = en.WriteNil()
+				if err != nil {
+					return
+				}
+			} else {
+				err = en.WriteTime(*z.IfUnModifiedSince)
+				if err != nil {
+					err = msgp.WrapError(err, "IfUnModifiedSince")
+					return
+				}
+			}
+		}
+		if (zb0001Mask & 0x20) == 0 { // if not omitted
+			// write "IfRange"
+			err = en.Append(0xa7, 0x49, 0x66, 0x52, 0x61, 0x6e, 0x67, 0x65)
+			if err != nil {
+				return
+			}
+			err = en.WriteString(z.IfRange)
+			if err != nil {
+				err = msgp.WrapError(err, "IfRange")
+				return
+			}
+		}
+		if (zb0001Mask & 0x40) == 0 { // if not omitted
+			// write "IfPartNumber"
+			err = en.Append(0xac, 0x49, 0x66, 0x50, 0x61, 0x72, 0x74, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
+			if err != nil {
+				return
+			}
+			err = en.WriteInt(z.IfPartNumber)
+			if err != nil {
+				err = msgp.WrapError(err, "IfPartNumber")
+				return
+			}
+		}
 	}
 	return
 }
@@ -196,40 +244,85 @@ func (z *CondCheck) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *CondCheck) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 7
-	// string "ObjectInfo"
-	o = append(o, 0x87, 0xaa, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x49, 0x6e, 0x66, 0x6f)
-	o, err = z.ObjectInfo.MarshalMsg(o)
-	if err != nil {
-		err = msgp.WrapError(err, "ObjectInfo")
-		return
+	// check for omitted fields
+	zb0001Len := uint32(7)
+	var zb0001Mask uint8 /* 7 bits */
+	_ = zb0001Mask
+	if z.IfMatch == "" {
+		zb0001Len--
+		zb0001Mask |= 0x2
 	}
-	// string "IfMatch"
-	o = append(o, 0xa7, 0x49, 0x66, 0x4d, 0x61, 0x74, 0x63, 0x68)
-	o = msgp.AppendString(o, z.IfMatch)
-	// string "IfNoneMatch"
-	o = append(o, 0xab, 0x49, 0x66, 0x4e, 0x6f, 0x6e, 0x65, 0x4d, 0x61, 0x74, 0x63, 0x68)
-	o = msgp.AppendString(o, z.IfNoneMatch)
-	// string "IfModifiedSince"
-	o = append(o, 0xaf, 0x49, 0x66, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x69, 0x6e, 0x63, 0x65)
+	if z.IfNoneMatch == "" {
+		zb0001Len--
+		zb0001Mask |= 0x4
+	}
 	if z.IfModifiedSince == nil {
-		o = msgp.AppendNil(o)
-	} else {
-		o = msgp.AppendTime(o, *z.IfModifiedSince)
+		zb0001Len--
+		zb0001Mask |= 0x8
 	}
-	// string "IfUnModifiedSince"
-	o = append(o, 0xb1, 0x49, 0x66, 0x55, 0x6e, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x69, 0x6e, 0x63, 0x65)
 	if z.IfUnModifiedSince == nil {
-		o = msgp.AppendNil(o)
-	} else {
-		o = msgp.AppendTime(o, *z.IfUnModifiedSince)
+		zb0001Len--
+		zb0001Mask |= 0x10
 	}
-	// string "IfRange"
-	o = append(o, 0xa7, 0x49, 0x66, 0x52, 0x61, 0x6e, 0x67, 0x65)
-	o = msgp.AppendString(o, z.IfRange)
-	// string "IfPartNumber"
-	o = append(o, 0xac, 0x49, 0x66, 0x50, 0x61, 0x72, 0x74, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
-	o = msgp.AppendInt(o, z.IfPartNumber)
+	if z.IfRange == "" {
+		zb0001Len--
+		zb0001Mask |= 0x20
+	}
+	if z.IfPartNumber == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x40
+	}
+	// variable map header, size zb0001Len
+	o = append(o, 0x80|uint8(zb0001Len))
+
+	// skip if no fields are to be emitted
+	if zb0001Len != 0 {
+		// string "ObjectInfo"
+		o = append(o, 0xaa, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x49, 0x6e, 0x66, 0x6f)
+		o, err = z.ObjectInfo.MarshalMsg(o)
+		if err != nil {
+			err = msgp.WrapError(err, "ObjectInfo")
+			return
+		}
+		if (zb0001Mask & 0x2) == 0 { // if not omitted
+			// string "IfMatch"
+			o = append(o, 0xa7, 0x49, 0x66, 0x4d, 0x61, 0x74, 0x63, 0x68)
+			o = msgp.AppendString(o, z.IfMatch)
+		}
+		if (zb0001Mask & 0x4) == 0 { // if not omitted
+			// string "IfNoneMatch"
+			o = append(o, 0xab, 0x49, 0x66, 0x4e, 0x6f, 0x6e, 0x65, 0x4d, 0x61, 0x74, 0x63, 0x68)
+			o = msgp.AppendString(o, z.IfNoneMatch)
+		}
+		if (zb0001Mask & 0x8) == 0 { // if not omitted
+			// string "IfModifiedSince"
+			o = append(o, 0xaf, 0x49, 0x66, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x69, 0x6e, 0x63, 0x65)
+			if z.IfModifiedSince == nil {
+				o = msgp.AppendNil(o)
+			} else {
+				o = msgp.AppendTime(o, *z.IfModifiedSince)
+			}
+		}
+		if (zb0001Mask & 0x10) == 0 { // if not omitted
+			// string "IfUnModifiedSince"
+			o = append(o, 0xb1, 0x49, 0x66, 0x55, 0x6e, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x53, 0x69, 0x6e, 0x63, 0x65)
+			if z.IfUnModifiedSince == nil {
+				o = msgp.AppendNil(o)
+			} else {
+				o = msgp.AppendTime(o, *z.IfUnModifiedSince)
+			}
+		}
+		if (zb0001Mask & 0x20) == 0 { // if not omitted
+			// string "IfRange"
+			o = append(o, 0xa7, 0x49, 0x66, 0x52, 0x61, 0x6e, 0x67, 0x65)
+			o = msgp.AppendString(o, z.IfRange)
+		}
+		if (zb0001Mask & 0x40) == 0 { // if not omitted
+			// string "IfPartNumber"
+			o = append(o, 0xac, 0x49, 0x66, 0x50, 0x61, 0x72, 0x74, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
+			o = msgp.AppendInt(o, z.IfPartNumber)
+		}
+	}
 	return
 }
 
@@ -472,138 +565,192 @@ func (z *ObjectInfo) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *ObjectInfo) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 12
-	// write "Key"
-	err = en.Append(0x8c, 0xa3, 0x4b, 0x65, 0x79)
+	// check for omitted fields
+	zb0001Len := uint32(12)
+	var zb0001Mask uint16 /* 12 bits */
+	_ = zb0001Mask
+	if z.CacheControl == "" {
+		zb0001Len--
+		zb0001Mask |= 0x20
+	}
+	if z.Expires == "" {
+		zb0001Len--
+		zb0001Mask |= 0x40
+	}
+	if z.Metadata == nil {
+		zb0001Len--
+		zb0001Mask |= 0x80
+	}
+	if z.Range == "" {
+		zb0001Len--
+		zb0001Mask |= 0x100
+	}
+	if z.PartNumber == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x200
+	}
+	if z.Size == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x400
+	}
+	if z.Data == nil {
+		zb0001Len--
+		zb0001Mask |= 0x800
+	}
+	// variable map header, size zb0001Len
+	err = en.Append(0x80 | uint8(zb0001Len))
 	if err != nil {
 		return
 	}
-	err = en.WriteString(z.Key)
-	if err != nil {
-		err = msgp.WrapError(err, "Key")
-		return
-	}
-	// write "Bucket"
-	err = en.Append(0xa6, 0x42, 0x75, 0x63, 0x6b, 0x65, 0x74)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.Bucket)
-	if err != nil {
-		err = msgp.WrapError(err, "Bucket")
-		return
-	}
-	// write "ETag"
-	err = en.Append(0xa4, 0x45, 0x54, 0x61, 0x67)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.ETag)
-	if err != nil {
-		err = msgp.WrapError(err, "ETag")
-		return
-	}
-	// write "ModTime"
-	err = en.Append(0xa7, 0x4d, 0x6f, 0x64, 0x54, 0x69, 0x6d, 0x65)
-	if err != nil {
-		return
-	}
-	err = en.WriteTime(z.ModTime)
-	if err != nil {
-		err = msgp.WrapError(err, "ModTime")
-		return
-	}
-	// write "StatusCode"
-	err = en.Append(0xaa, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x43, 0x6f, 0x64, 0x65)
-	if err != nil {
-		return
-	}
-	err = en.WriteInt(z.StatusCode)
-	if err != nil {
-		err = msgp.WrapError(err, "StatusCode")
-		return
-	}
-	// write "CacheControl"
-	err = en.Append(0xac, 0x43, 0x61, 0x63, 0x68, 0x65, 0x43, 0x6f, 0x6e, 0x74, 0x72, 0x6f, 0x6c)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.CacheControl)
-	if err != nil {
-		err = msgp.WrapError(err, "CacheControl")
-		return
-	}
-	// write "Expires"
-	err = en.Append(0xa7, 0x45, 0x78, 0x70, 0x69, 0x72, 0x65, 0x73)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.Expires)
-	if err != nil {
-		err = msgp.WrapError(err, "Expires")
-		return
-	}
-	// write "Metadata"
-	err = en.Append(0xa8, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61)
-	if err != nil {
-		return
-	}
-	err = en.WriteMapHeader(uint32(len(z.Metadata)))
-	if err != nil {
-		err = msgp.WrapError(err, "Metadata")
-		return
-	}
-	for za0001, za0002 := range z.Metadata {
-		err = en.WriteString(za0001)
+
+	// skip if no fields are to be emitted
+	if zb0001Len != 0 {
+		// write "Key"
+		err = en.Append(0xa3, 0x4b, 0x65, 0x79)
 		if err != nil {
-			err = msgp.WrapError(err, "Metadata")
 			return
 		}
-		err = en.WriteString(za0002)
+		err = en.WriteString(z.Key)
 		if err != nil {
-			err = msgp.WrapError(err, "Metadata", za0001)
+			err = msgp.WrapError(err, "Key")
 			return
 		}
-	}
-	// write "Range"
-	err = en.Append(0xa5, 0x52, 0x61, 0x6e, 0x67, 0x65)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.Range)
-	if err != nil {
-		err = msgp.WrapError(err, "Range")
-		return
-	}
-	// write "PartNumber"
-	err = en.Append(0xaa, 0x50, 0x61, 0x72, 0x74, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
-	if err != nil {
-		return
-	}
-	err = en.WriteInt(z.PartNumber)
-	if err != nil {
-		err = msgp.WrapError(err, "PartNumber")
-		return
-	}
-	// write "Size"
-	err = en.Append(0xa4, 0x53, 0x69, 0x7a, 0x65)
-	if err != nil {
-		return
-	}
-	err = en.WriteInt64(z.Size)
-	if err != nil {
-		err = msgp.WrapError(err, "Size")
-		return
-	}
-	// write "Data"
-	err = en.Append(0xa4, 0x44, 0x61, 0x74, 0x61)
-	if err != nil {
-		return
-	}
-	err = en.WriteBytes(z.Data)
-	if err != nil {
-		err = msgp.WrapError(err, "Data")
-		return
+		// write "Bucket"
+		err = en.Append(0xa6, 0x42, 0x75, 0x63, 0x6b, 0x65, 0x74)
+		if err != nil {
+			return
+		}
+		err = en.WriteString(z.Bucket)
+		if err != nil {
+			err = msgp.WrapError(err, "Bucket")
+			return
+		}
+		// write "ETag"
+		err = en.Append(0xa4, 0x45, 0x54, 0x61, 0x67)
+		if err != nil {
+			return
+		}
+		err = en.WriteString(z.ETag)
+		if err != nil {
+			err = msgp.WrapError(err, "ETag")
+			return
+		}
+		// write "ModTime"
+		err = en.Append(0xa7, 0x4d, 0x6f, 0x64, 0x54, 0x69, 0x6d, 0x65)
+		if err != nil {
+			return
+		}
+		err = en.WriteTime(z.ModTime)
+		if err != nil {
+			err = msgp.WrapError(err, "ModTime")
+			return
+		}
+		// write "StatusCode"
+		err = en.Append(0xaa, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x43, 0x6f, 0x64, 0x65)
+		if err != nil {
+			return
+		}
+		err = en.WriteInt(z.StatusCode)
+		if err != nil {
+			err = msgp.WrapError(err, "StatusCode")
+			return
+		}
+		if (zb0001Mask & 0x20) == 0 { // if not omitted
+			// write "CacheControl"
+			err = en.Append(0xac, 0x43, 0x61, 0x63, 0x68, 0x65, 0x43, 0x6f, 0x6e, 0x74, 0x72, 0x6f, 0x6c)
+			if err != nil {
+				return
+			}
+			err = en.WriteString(z.CacheControl)
+			if err != nil {
+				err = msgp.WrapError(err, "CacheControl")
+				return
+			}
+		}
+		if (zb0001Mask & 0x40) == 0 { // if not omitted
+			// write "Expires"
+			err = en.Append(0xa7, 0x45, 0x78, 0x70, 0x69, 0x72, 0x65, 0x73)
+			if err != nil {
+				return
+			}
+			err = en.WriteString(z.Expires)
+			if err != nil {
+				err = msgp.WrapError(err, "Expires")
+				return
+			}
+		}
+		if (zb0001Mask & 0x80) == 0 { // if not omitted
+			// write "Metadata"
+			err = en.Append(0xa8, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61)
+			if err != nil {
+				return
+			}
+			err = en.WriteMapHeader(uint32(len(z.Metadata)))
+			if err != nil {
+				err = msgp.WrapError(err, "Metadata")
+				return
+			}
+			for za0001, za0002 := range z.Metadata {
+				err = en.WriteString(za0001)
+				if err != nil {
+					err = msgp.WrapError(err, "Metadata")
+					return
+				}
+				err = en.WriteString(za0002)
+				if err != nil {
+					err = msgp.WrapError(err, "Metadata", za0001)
+					return
+				}
+			}
+		}
+		if (zb0001Mask & 0x100) == 0 { // if not omitted
+			// write "Range"
+			err = en.Append(0xa5, 0x52, 0x61, 0x6e, 0x67, 0x65)
+			if err != nil {
+				return
+			}
+			err = en.WriteString(z.Range)
+			if err != nil {
+				err = msgp.WrapError(err, "Range")
+				return
+			}
+		}
+		if (zb0001Mask & 0x200) == 0 { // if not omitted
+			// write "PartNumber"
+			err = en.Append(0xaa, 0x50, 0x61, 0x72, 0x74, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
+			if err != nil {
+				return
+			}
+			err = en.WriteInt(z.PartNumber)
+			if err != nil {
+				err = msgp.WrapError(err, "PartNumber")
+				return
+			}
+		}
+		if (zb0001Mask & 0x400) == 0 { // if not omitted
+			// write "Size"
+			err = en.Append(0xa4, 0x53, 0x69, 0x7a, 0x65)
+			if err != nil {
+				return
+			}
+			err = en.WriteInt64(z.Size)
+			if err != nil {
+				err = msgp.WrapError(err, "Size")
+				return
+			}
+		}
+		if (zb0001Mask & 0x800) == 0 { // if not omitted
+			// write "Data"
+			err = en.Append(0xa4, 0x44, 0x61, 0x74, 0x61)
+			if err != nil {
+				return
+			}
+			err = en.WriteBytes(z.Data)
+			if err != nil {
+				err = msgp.WrapError(err, "Data")
+				return
+			}
+		}
 	}
 	return
 }
@@ -611,47 +758,98 @@ func (z *ObjectInfo) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ObjectInfo) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 12
-	// string "Key"
-	o = append(o, 0x8c, 0xa3, 0x4b, 0x65, 0x79)
-	o = msgp.AppendString(o, z.Key)
-	// string "Bucket"
-	o = append(o, 0xa6, 0x42, 0x75, 0x63, 0x6b, 0x65, 0x74)
-	o = msgp.AppendString(o, z.Bucket)
-	// string "ETag"
-	o = append(o, 0xa4, 0x45, 0x54, 0x61, 0x67)
-	o = msgp.AppendString(o, z.ETag)
-	// string "ModTime"
-	o = append(o, 0xa7, 0x4d, 0x6f, 0x64, 0x54, 0x69, 0x6d, 0x65)
-	o = msgp.AppendTime(o, z.ModTime)
-	// string "StatusCode"
-	o = append(o, 0xaa, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x43, 0x6f, 0x64, 0x65)
-	o = msgp.AppendInt(o, z.StatusCode)
-	// string "CacheControl"
-	o = append(o, 0xac, 0x43, 0x61, 0x63, 0x68, 0x65, 0x43, 0x6f, 0x6e, 0x74, 0x72, 0x6f, 0x6c)
-	o = msgp.AppendString(o, z.CacheControl)
-	// string "Expires"
-	o = append(o, 0xa7, 0x45, 0x78, 0x70, 0x69, 0x72, 0x65, 0x73)
-	o = msgp.AppendString(o, z.Expires)
-	// string "Metadata"
-	o = append(o, 0xa8, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61)
-	o = msgp.AppendMapHeader(o, uint32(len(z.Metadata)))
-	for za0001, za0002 := range z.Metadata {
-		o = msgp.AppendString(o, za0001)
-		o = msgp.AppendString(o, za0002)
+	// check for omitted fields
+	zb0001Len := uint32(12)
+	var zb0001Mask uint16 /* 12 bits */
+	_ = zb0001Mask
+	if z.CacheControl == "" {
+		zb0001Len--
+		zb0001Mask |= 0x20
 	}
-	// string "Range"
-	o = append(o, 0xa5, 0x52, 0x61, 0x6e, 0x67, 0x65)
-	o = msgp.AppendString(o, z.Range)
-	// string "PartNumber"
-	o = append(o, 0xaa, 0x50, 0x61, 0x72, 0x74, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
-	o = msgp.AppendInt(o, z.PartNumber)
-	// string "Size"
-	o = append(o, 0xa4, 0x53, 0x69, 0x7a, 0x65)
-	o = msgp.AppendInt64(o, z.Size)
-	// string "Data"
-	o = append(o, 0xa4, 0x44, 0x61, 0x74, 0x61)
-	o = msgp.AppendBytes(o, z.Data)
+	if z.Expires == "" {
+		zb0001Len--
+		zb0001Mask |= 0x40
+	}
+	if z.Metadata == nil {
+		zb0001Len--
+		zb0001Mask |= 0x80
+	}
+	if z.Range == "" {
+		zb0001Len--
+		zb0001Mask |= 0x100
+	}
+	if z.PartNumber == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x200
+	}
+	if z.Size == 0 {
+		zb0001Len--
+		zb0001Mask |= 0x400
+	}
+	if z.Data == nil {
+		zb0001Len--
+		zb0001Mask |= 0x800
+	}
+	// variable map header, size zb0001Len
+	o = append(o, 0x80|uint8(zb0001Len))
+
+	// skip if no fields are to be emitted
+	if zb0001Len != 0 {
+		// string "Key"
+		o = append(o, 0xa3, 0x4b, 0x65, 0x79)
+		o = msgp.AppendString(o, z.Key)
+		// string "Bucket"
+		o = append(o, 0xa6, 0x42, 0x75, 0x63, 0x6b, 0x65, 0x74)
+		o = msgp.AppendString(o, z.Bucket)
+		// string "ETag"
+		o = append(o, 0xa4, 0x45, 0x54, 0x61, 0x67)
+		o = msgp.AppendString(o, z.ETag)
+		// string "ModTime"
+		o = append(o, 0xa7, 0x4d, 0x6f, 0x64, 0x54, 0x69, 0x6d, 0x65)
+		o = msgp.AppendTime(o, z.ModTime)
+		// string "StatusCode"
+		o = append(o, 0xaa, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x43, 0x6f, 0x64, 0x65)
+		o = msgp.AppendInt(o, z.StatusCode)
+		if (zb0001Mask & 0x20) == 0 { // if not omitted
+			// string "CacheControl"
+			o = append(o, 0xac, 0x43, 0x61, 0x63, 0x68, 0x65, 0x43, 0x6f, 0x6e, 0x74, 0x72, 0x6f, 0x6c)
+			o = msgp.AppendString(o, z.CacheControl)
+		}
+		if (zb0001Mask & 0x40) == 0 { // if not omitted
+			// string "Expires"
+			o = append(o, 0xa7, 0x45, 0x78, 0x70, 0x69, 0x72, 0x65, 0x73)
+			o = msgp.AppendString(o, z.Expires)
+		}
+		if (zb0001Mask & 0x80) == 0 { // if not omitted
+			// string "Metadata"
+			o = append(o, 0xa8, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61)
+			o = msgp.AppendMapHeader(o, uint32(len(z.Metadata)))
+			for za0001, za0002 := range z.Metadata {
+				o = msgp.AppendString(o, za0001)
+				o = msgp.AppendString(o, za0002)
+			}
+		}
+		if (zb0001Mask & 0x100) == 0 { // if not omitted
+			// string "Range"
+			o = append(o, 0xa5, 0x52, 0x61, 0x6e, 0x67, 0x65)
+			o = msgp.AppendString(o, z.Range)
+		}
+		if (zb0001Mask & 0x200) == 0 { // if not omitted
+			// string "PartNumber"
+			o = append(o, 0xaa, 0x50, 0x61, 0x72, 0x74, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
+			o = msgp.AppendInt(o, z.PartNumber)
+		}
+		if (zb0001Mask & 0x400) == 0 { // if not omitted
+			// string "Size"
+			o = append(o, 0xa4, 0x53, 0x69, 0x7a, 0x65)
+			o = msgp.AppendInt64(o, z.Size)
+		}
+		if (zb0001Mask & 0x800) == 0 { // if not omitted
+			// string "Data"
+			o = append(o, 0xa4, 0x44, 0x61, 0x74, 0x61)
+			o = msgp.AppendBytes(o, z.Data)
+		}
+	}
 	return
 }
 

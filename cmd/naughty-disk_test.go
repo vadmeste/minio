@@ -200,12 +200,23 @@ func (d *naughtyDisk) AppendFile(ctx context.Context, volume string, path string
 	}
 	return d.disk.AppendFile(ctx, volume, path, buf)
 }
-
+func (d *naughtyDisk) CommitXL(ctx context.Context, commitVolume, volume, path string, opts CommitOptions) error {
+	if err := d.calcError(); err != nil {
+		return err
+	}
+	return d.disk.CommitXL(ctx, commitVolume, volume, path, opts)
+}
 func (d *naughtyDisk) RenameData(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string, opts RenameOptions) (RenameDataResp, error) {
 	if err := d.calcError(); err != nil {
 		return RenameDataResp{}, err
 	}
 	return d.disk.RenameData(ctx, srcVolume, srcPath, fi, dstVolume, dstPath, opts)
+}
+func (d *naughtyDisk) Heal(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string, opts HealOptions) (HealResp, error) {
+	if err := d.calcError(); err != nil {
+		return HealResp{}, err
+	}
+	return d.disk.Heal(ctx, srcVolume, srcPath, fi, dstVolume, dstPath, opts)
 }
 
 func (d *naughtyDisk) RenameFile(ctx context.Context, srcVolume, srcPath, dstVolume, dstPath string) error {

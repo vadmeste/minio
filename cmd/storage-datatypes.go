@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/minio/minio/internal/crypto"
@@ -42,6 +43,11 @@ type BaseOptions struct{}
 
 // RenameOptions represents rename API options, currently its same as BaseOptions
 type RenameOptions struct {
+	BaseOptions
+}
+
+// HealOptions represents heal API options, currently its same as BaseOptions
+type HealOptions struct {
 	BaseOptions
 }
 
@@ -404,6 +410,12 @@ type DeleteVersionHandlerParams struct {
 	FI             FileInfo      `msg:"fi"`
 }
 
+// Params returns printable parameters for tracing.
+func (d *DeleteVersionHandlerParams) Params() string {
+	return fmt.Sprintf("disk=%s&path=%s&force=%v&r=%v&i=%v&u=%v&od=%s", d.DiskID, pathJoin(d.Volume, d.FilePath), d.ForceDelMarker,
+		d.Opts.Recursive, d.Opts.Immediate, d.Opts.UndoWrite, d.Opts.OldDataDir)
+}
+
 // MetadataHandlerParams is request info for UpdateMetadataHandle and WriteMetadataHandler.
 type MetadataHandlerParams struct {
 	DiskID     string             `msg:"id"`
@@ -435,6 +447,26 @@ type DeleteFileHandlerParams struct {
 	Opts     DeleteOptions `msg:"do"`
 }
 
+// CommitXLHandlerParams are parameters for CommitXLHandler
+type CommitXLHandlerParams struct {
+	DiskID       string        `msg:"id"`
+	CommitVolume string        `msg:"cv"`
+	Volume       string        `msg:"v"`
+	FilePath     string        `msg:"fp"`
+	Opts         CommitOptions `msg:"do"`
+}
+
+// Params returns printable parameters for tracing.
+func (d *CommitXLHandlerParams) Params() string {
+	return fmt.Sprintf("disk=%s&path=%s&cp=%v", d.DiskID, pathJoin(d.Volume, d.FilePath), pathJoin(d.CommitVolume, d.Opts.CommitPath))
+}
+
+// CommitOptions represents the disk level commit options available.
+type CommitOptions struct {
+	BaseOptions
+	CommitPath string `msg:"cp,omitempty"` // final commit path of xl.meta, that must be preserved on the namespace.
+}
+
 // RenameDataHandlerParams are parameters for RenameDataHandler.
 type RenameDataHandlerParams struct {
 	DiskID    string        `msg:"id"`
@@ -444,6 +476,22 @@ type RenameDataHandlerParams struct {
 	DstPath   string        `msg:"dp"`
 	FI        FileInfo      `msg:"fi"`
 	Opts      RenameOptions `msg:"ro"`
+}
+
+// HealHandlerParams are parameters for HealHandler.
+type HealHandlerParams struct {
+	DiskID    string      `msg:"id"`
+	SrcVolume string      `msg:"sv"`
+	SrcPath   string      `msg:"sp"`
+	DstVolume string      `msg:"dv"`
+	DstPath   string      `msg:"dp"`
+	FI        FileInfo    `msg:"fi"`
+	Opts      HealOptions `msg:"ho"`
+}
+
+// Params returns printable parameters for tracing.
+func (r *HealHandlerParams) Params() string {
+	return fmt.Sprintf("disk=%s&src=%s&dst=%s", r.DiskID, pathJoin(r.SrcVolume, r.SrcPath), pathJoin(r.DstVolume, r.DstPath))
 }
 
 // RenameDataInlineHandlerParams are parameters for RenameDataHandler with a buffer for inline data.
@@ -497,9 +545,17 @@ type WriteAllHandlerParams struct {
 //   - on rewrite dataDir on disk that must be additionally purged
 //     only after as a 2-phase call, allowing the older dataDir to
 //     hang-around in-case we need some form of recovery.
+//   - commit path for final xl.meta that must be called for commit
+//     the xl.meta to the namespace with expected changes.
 type RenameDataResp struct {
-	Sign       []byte
-	OldDataDir string // contains '<uuid>', it is designed to be passed as value to Delete(bucket, pathJoin(object, dataDir))
+	Sign       []byte `msg:"s"`
+	OldDataDir string `msg:"od"` // contains '<uuid>', it is designed to be passed as value to Delete(bucket, pathJoin(object, dataDir))
+	CommitPath string `msg:"cp"` // contains the srcPath of latest xl.meta, that needs to be "committed" to drive at dstPath.
+}
+
+// HealResp - Heal()'s response.
+type HealResp struct {
+	CommitPath string `msg:"cp"`
 }
 
 const (

@@ -70,6 +70,8 @@ const (
 	storageMetricReadMultiple
 	storageMetricDeleteAbandonedParts
 	storageMetricDiskInfo
+	storageMetricCommitXL
+	storageMetricHeal
 
 	// .... add more
 
@@ -461,6 +463,49 @@ func (p *xlStorageDiskIDCheck) RenameFile(ctx context.Context, srcVolume, srcPat
 
 	w := xioutil.NewDeadlineWorker(globalDriveConfig.GetMaxTimeout())
 	return w.Run(func() error { return p.storage.RenameFile(ctx, srcVolume, srcPath, dstVolume, dstPath) })
+}
+
+func (p *xlStorageDiskIDCheck) CommitXL(ctx context.Context, commitVolume, volume, path string, opts CommitOptions) error {
+	ctx, done, err := p.TrackDiskHealth(ctx, storageMetricCommitXL, opts.CommitPath, "", volume, path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil && !skipAccessChecks(volume) {
+			p.storage.setWriteAttribute(p.totalWrites.Add(1))
+		}
+		done(0, &err)
+	}()
+
+	w := xioutil.NewDeadlineWorker(globalDriveConfig.GetMaxTimeout())
+	return w.Run(func() error {
+		return p.storage.CommitXL(ctx, commitVolume, volume, path, opts)
+	})
+}
+
+func (p *xlStorageDiskIDCheck) Heal(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string, opts HealOptions) (res HealResp, err error) {
+	ctx, done, err := p.TrackDiskHealth(ctx, storageMetricHeal, srcPath, fi.DataDir, dstVolume, dstPath)
+	if err != nil {
+		return res, err
+	}
+	defer func() {
+		if err == nil && !skipAccessChecks(dstVolume) {
+			p.storage.setWriteAttribute(p.totalWrites.Add(1))
+		}
+		done(0, &err)
+	}()
+
+	// Copy inline data to a new buffer to function with deadlines.
+	if len(fi.Data) > 0 {
+		fi.Data = append(grid.GetByteBufferCap(len(fi.Data))[:0], fi.Data...)
+	}
+
+	return xioutil.WithDeadline[HealResp](ctx, globalDriveConfig.GetMaxTimeout(), func(ctx context.Context) (res HealResp, err error) {
+		if len(fi.Data) > 0 {
+			defer grid.PutByteBuffer(fi.Data)
+		}
+		return p.storage.Heal(ctx, srcVolume, srcPath, fi, dstVolume, dstPath, opts)
+	})
 }
 
 func (p *xlStorageDiskIDCheck) RenameData(ctx context.Context, srcVolume, srcPath string, fi FileInfo, dstVolume, dstPath string, opts RenameOptions) (res RenameDataResp, err error) {

@@ -665,92 +665,93 @@ func (z *ObjectPartInfo) EncodeMsg(en *msgp.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	if zb0001Len == 0 {
-		return
-	}
-	// write "ETag"
-	err = en.Append(0xa4, 0x45, 0x54, 0x61, 0x67)
-	if err != nil {
-		return
-	}
-	err = en.WriteString(z.ETag)
-	if err != nil {
-		err = msgp.WrapError(err, "ETag")
-		return
-	}
-	// write "Number"
-	err = en.Append(0xa6, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
-	if err != nil {
-		return
-	}
-	err = en.WriteInt(z.Number)
-	if err != nil {
-		err = msgp.WrapError(err, "Number")
-		return
-	}
-	// write "Size"
-	err = en.Append(0xa4, 0x53, 0x69, 0x7a, 0x65)
-	if err != nil {
-		return
-	}
-	err = en.WriteInt64(z.Size)
-	if err != nil {
-		err = msgp.WrapError(err, "Size")
-		return
-	}
-	// write "ActualSize"
-	err = en.Append(0xaa, 0x41, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x53, 0x69, 0x7a, 0x65)
-	if err != nil {
-		return
-	}
-	err = en.WriteInt64(z.ActualSize)
-	if err != nil {
-		err = msgp.WrapError(err, "ActualSize")
-		return
-	}
-	// write "ModTime"
-	err = en.Append(0xa7, 0x4d, 0x6f, 0x64, 0x54, 0x69, 0x6d, 0x65)
-	if err != nil {
-		return
-	}
-	err = en.WriteTime(z.ModTime)
-	if err != nil {
-		err = msgp.WrapError(err, "ModTime")
-		return
-	}
-	if (zb0001Mask & 0x20) == 0 { // if not omitted
-		// write "index"
-		err = en.Append(0xa5, 0x69, 0x6e, 0x64, 0x65, 0x78)
+
+	// skip if no fields are to be emitted
+	if zb0001Len != 0 {
+		// write "ETag"
+		err = en.Append(0xa4, 0x45, 0x54, 0x61, 0x67)
 		if err != nil {
 			return
 		}
-		err = en.WriteBytes(z.Index)
+		err = en.WriteString(z.ETag)
 		if err != nil {
-			err = msgp.WrapError(err, "Index")
+			err = msgp.WrapError(err, "ETag")
 			return
 		}
-	}
-	if (zb0001Mask & 0x40) == 0 { // if not omitted
-		// write "crc"
-		err = en.Append(0xa3, 0x63, 0x72, 0x63)
+		// write "Number"
+		err = en.Append(0xa6, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
 		if err != nil {
 			return
 		}
-		err = en.WriteMapHeader(uint32(len(z.Checksums)))
+		err = en.WriteInt(z.Number)
 		if err != nil {
-			err = msgp.WrapError(err, "Checksums")
+			err = msgp.WrapError(err, "Number")
 			return
 		}
-		for za0001, za0002 := range z.Checksums {
-			err = en.WriteString(za0001)
+		// write "Size"
+		err = en.Append(0xa4, 0x53, 0x69, 0x7a, 0x65)
+		if err != nil {
+			return
+		}
+		err = en.WriteInt64(z.Size)
+		if err != nil {
+			err = msgp.WrapError(err, "Size")
+			return
+		}
+		// write "ActualSize"
+		err = en.Append(0xaa, 0x41, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x53, 0x69, 0x7a, 0x65)
+		if err != nil {
+			return
+		}
+		err = en.WriteInt64(z.ActualSize)
+		if err != nil {
+			err = msgp.WrapError(err, "ActualSize")
+			return
+		}
+		// write "ModTime"
+		err = en.Append(0xa7, 0x4d, 0x6f, 0x64, 0x54, 0x69, 0x6d, 0x65)
+		if err != nil {
+			return
+		}
+		err = en.WriteTime(z.ModTime)
+		if err != nil {
+			err = msgp.WrapError(err, "ModTime")
+			return
+		}
+		if (zb0001Mask & 0x20) == 0 { // if not omitted
+			// write "index"
+			err = en.Append(0xa5, 0x69, 0x6e, 0x64, 0x65, 0x78)
+			if err != nil {
+				return
+			}
+			err = en.WriteBytes(z.Index)
+			if err != nil {
+				err = msgp.WrapError(err, "Index")
+				return
+			}
+		}
+		if (zb0001Mask & 0x40) == 0 { // if not omitted
+			// write "crc"
+			err = en.Append(0xa3, 0x63, 0x72, 0x63)
+			if err != nil {
+				return
+			}
+			err = en.WriteMapHeader(uint32(len(z.Checksums)))
 			if err != nil {
 				err = msgp.WrapError(err, "Checksums")
 				return
 			}
-			err = en.WriteString(za0002)
-			if err != nil {
-				err = msgp.WrapError(err, "Checksums", za0001)
-				return
+			for za0001, za0002 := range z.Checksums {
+				err = en.WriteString(za0001)
+				if err != nil {
+					err = msgp.WrapError(err, "Checksums")
+					return
+				}
+				err = en.WriteString(za0002)
+				if err != nil {
+					err = msgp.WrapError(err, "Checksums", za0001)
+					return
+				}
 			}
 		}
 	}
@@ -774,36 +775,37 @@ func (z *ObjectPartInfo) MarshalMsg(b []byte) (o []byte, err error) {
 	}
 	// variable map header, size zb0001Len
 	o = append(o, 0x80|uint8(zb0001Len))
-	if zb0001Len == 0 {
-		return
-	}
-	// string "ETag"
-	o = append(o, 0xa4, 0x45, 0x54, 0x61, 0x67)
-	o = msgp.AppendString(o, z.ETag)
-	// string "Number"
-	o = append(o, 0xa6, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
-	o = msgp.AppendInt(o, z.Number)
-	// string "Size"
-	o = append(o, 0xa4, 0x53, 0x69, 0x7a, 0x65)
-	o = msgp.AppendInt64(o, z.Size)
-	// string "ActualSize"
-	o = append(o, 0xaa, 0x41, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x53, 0x69, 0x7a, 0x65)
-	o = msgp.AppendInt64(o, z.ActualSize)
-	// string "ModTime"
-	o = append(o, 0xa7, 0x4d, 0x6f, 0x64, 0x54, 0x69, 0x6d, 0x65)
-	o = msgp.AppendTime(o, z.ModTime)
-	if (zb0001Mask & 0x20) == 0 { // if not omitted
-		// string "index"
-		o = append(o, 0xa5, 0x69, 0x6e, 0x64, 0x65, 0x78)
-		o = msgp.AppendBytes(o, z.Index)
-	}
-	if (zb0001Mask & 0x40) == 0 { // if not omitted
-		// string "crc"
-		o = append(o, 0xa3, 0x63, 0x72, 0x63)
-		o = msgp.AppendMapHeader(o, uint32(len(z.Checksums)))
-		for za0001, za0002 := range z.Checksums {
-			o = msgp.AppendString(o, za0001)
-			o = msgp.AppendString(o, za0002)
+
+	// skip if no fields are to be emitted
+	if zb0001Len != 0 {
+		// string "ETag"
+		o = append(o, 0xa4, 0x45, 0x54, 0x61, 0x67)
+		o = msgp.AppendString(o, z.ETag)
+		// string "Number"
+		o = append(o, 0xa6, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72)
+		o = msgp.AppendInt(o, z.Number)
+		// string "Size"
+		o = append(o, 0xa4, 0x53, 0x69, 0x7a, 0x65)
+		o = msgp.AppendInt64(o, z.Size)
+		// string "ActualSize"
+		o = append(o, 0xaa, 0x41, 0x63, 0x74, 0x75, 0x61, 0x6c, 0x53, 0x69, 0x7a, 0x65)
+		o = msgp.AppendInt64(o, z.ActualSize)
+		// string "ModTime"
+		o = append(o, 0xa7, 0x4d, 0x6f, 0x64, 0x54, 0x69, 0x6d, 0x65)
+		o = msgp.AppendTime(o, z.ModTime)
+		if (zb0001Mask & 0x20) == 0 { // if not omitted
+			// string "index"
+			o = append(o, 0xa5, 0x69, 0x6e, 0x64, 0x65, 0x78)
+			o = msgp.AppendBytes(o, z.Index)
+		}
+		if (zb0001Mask & 0x40) == 0 { // if not omitted
+			// string "crc"
+			o = append(o, 0xa3, 0x63, 0x72, 0x63)
+			o = msgp.AppendMapHeader(o, uint32(len(z.Checksums)))
+			for za0001, za0002 := range z.Checksums {
+				o = msgp.AppendString(o, za0001)
+				o = msgp.AppendString(o, za0002)
+			}
 		}
 	}
 	return

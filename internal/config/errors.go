@@ -118,8 +118,8 @@ Refer to the link https://github.com/minio/minio/tree/master/docs/erasure/storag
 	)
 
 	ErrUnexpectedBackendVersion = newErrFn(
-		"Backend version seems to be too recent",
-		"Please update to the latest MinIO version",
+		"Backend version seems to be too old",
+		"Migrate via 'mc mirror' to a new setup",
 		"",
 	)
 

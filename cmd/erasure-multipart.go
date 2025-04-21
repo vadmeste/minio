@@ -1381,36 +1381,13 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 	}()
 
 	// Rename the multipart object to final location.
-	onlineDisks, versions, oldDataDir, err := renameData(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath,
+	resp, err := renameDataDir(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath,
 		partsMetadata, bucket, object, writeQuorum)
 	if err != nil {
 		return oi, toObjectErr(err, bucket, object, uploadID)
 	}
-
-	if err = er.commitRenameDataDir(ctx, bucket, object, oldDataDir, onlineDisks, writeQuorum); err != nil {
+	if err = er.commitRenameDataDir(ctx, minioMetaMultipartBucket, bucket, object, resp, writeQuorum); err != nil {
 		return ObjectInfo{}, toObjectErr(err, bucket, object, uploadID)
-	}
-
-	if !opts.Speedtest && len(versions) > 0 {
-		globalMRFState.addPartialOp(partialOperation{
-			bucket:    bucket,
-			object:    object,
-			queued:    time.Now(),
-			versions:  versions,
-			setIndex:  er.setIndex,
-			poolIndex: er.poolIndex,
-		})
-	}
-
-	if !opts.Speedtest && len(versions) == 0 {
-		// Check if there is any offline disk and add it to the MRF list
-		for _, disk := range onlineDisks {
-			if disk != nil && disk.IsOnline() {
-				continue
-			}
-			er.addPartial(bucket, object, fi.VersionID)
-			break
-		}
 	}
 
 	for i := 0; i < len(onlineDisks); i++ {
@@ -1421,6 +1398,35 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 			break
 		}
 	}
+	// For speedtest objects do not attempt to heal them.
+	if !opts.Speedtest {
+		// When there is versions disparity we are healing
+		// the content implicitly for all versions, we can
+		// avoid triggering another MRF heal for offline drives.
+		if len(resp.Versions) == 0 {
+			// Whether a disk was initially or becomes offline
+			// during this upload, send it to the MRF list.
+			for i := 0; i < len(onlineDisks); i++ {
+				if onlineDisks[i] != nil && onlineDisks[i].IsOnline() {
+					continue
+				}
+
+				er.addPartial(bucket, object, fi.VersionID)
+				break
+			}
+		} else {
+			globalMRFState.addPartialOp(partialOperation{
+				bucket:    bucket,
+				object:    object,
+				queued:    time.Now(),
+				versions:  resp.Versions,
+				setIndex:  er.setIndex,
+				poolIndex: er.poolIndex,
+			})
+		}
+	}
+
+	fi.ReplicationState = opts.PutReplicationState()
 
 	// we are adding a new version to this object under the namespace lock, so this is the latest version.
 	fi.IsLatest = true

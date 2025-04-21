@@ -613,11 +613,17 @@ func (er *erasureObjects) healObject(ctx context.Context, bucket string, object 
 
 		// record the index of the updated disks
 		partsMetadata[i].Erasure.Index = i + 1
+		meta := partsMetadata[i]
 
 		// Attempt a rename now from healed data to final location.
-		partsMetadata[i].SetHealing()
+		resp, err := disk.Heal(ctx, minioMetaTmpBucket, tmpID, meta, bucket, object, HealOptions{})
+		if err != nil {
+			return result, err
+		}
 
-		if _, err = disk.RenameData(ctx, minioMetaTmpBucket, tmpID, partsMetadata[i], bucket, object, RenameOptions{}); err != nil {
+		if err := disk.CommitXL(ctx, minioMetaTmpBucket, bucket, object, CommitOptions{
+			CommitPath: resp.CommitPath,
+		}); err != nil {
 			return result, err
 		}
 
