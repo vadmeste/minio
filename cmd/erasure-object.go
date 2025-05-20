@@ -49,6 +49,8 @@ import (
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/v3/mimedb"
 	"github.com/minio/pkg/v3/sync/errgroup"
+	"github.com/minio/sio"
+
 )
 
 // list all errors which can be ignored in object operations.
@@ -1538,8 +1540,8 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 		partsMetadata[i].Checksum = fi.Checksum
 	}
 
+
 	userDefined["etag"] = r.MD5CurrentHexString()
-	kind, _ := crypto.IsEncrypted(userDefined)
 	if opts.PreserveETag != "" {
 		if !opts.ReplicationRequest {
 			userDefined["etag"] = opts.PreserveETag
