@@ -776,7 +776,7 @@ func TestCommonParities(t *testing.T) {
 		}
 
 		parities := listObjectParities(metaArr, make([]error, len(metaArr)))
-		parity := commonParity(parities, 5)
+		parity, _ := commonParity(parities, 5)
 		var match int
 		for _, fi := range metaArr {
 			if fi.Erasure.ParityBlocks == parity {

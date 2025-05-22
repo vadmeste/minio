@@ -416,7 +416,8 @@ func writeUniqueFileInfo(ctx context.Context, disks []StorageAPI, origbucket, bu
 	return evalDisks(disks, mErrs), err
 }
 
-func commonParity(parities []int, defaultParityCount int) int {
+func commonParity(parities []int, defaultParityCount int) (int, int) {
+	quorumParity, commonParity := -1, -1
 	N := len(parities)
 
 	occMap := make(map[int]int)
@@ -424,35 +425,39 @@ func commonParity(parities []int, defaultParityCount int) int {
 		occMap[p]++
 	}
 
-	var maxOcc, cparity int
+	var quorumMaxOcc, commonMaxOcc int
 	for parity, occ := range occMap {
 		if parity == -1 {
-			// Ignore non defined parity
-			continue
+			continue // Ignore non defined parity
 		}
-
+		// 1. Look for the most common parity
+		if occ > commonMaxOcc {
+			commonMaxOcc = occ
+			commonParity = parity
+		}
+		// 2. Look for the most common parity that also has quorum
 		readQuorum := N - parity
 		if defaultParityCount > 0 && parity == 0 {
-			// In this case, parity == 0 implies that this object version is a
-			// delete marker
-			readQuorum = N/2 + 1
+			readQuorum = N/2 + 1 // parity == 0 implies that this is a delete marker
 		}
 		if occ < readQuorum {
-			// Ignore this parity since we don't have enough shards for read quorum
-			continue
+			continue // Ignore since we don't have enough shards for read quorum
 		}
-
-		if occ > maxOcc {
-			maxOcc = occ
-			cparity = parity
+		if occ > quorumMaxOcc {
+			quorumMaxOcc = occ
+			quorumParity = parity
 		}
 	}
 
-	if maxOcc == 0 {
-		// Did not found anything useful
-		return -1
+	if quorumMaxOcc == 0 {
+		quorumParity = -1 // Did not found anything useful
 	}
-	return cparity
+
+	if commonMaxOcc == 0 {
+		commonParity = -1 // Did not found anything useful
+	}
+
+	return quorumParity, commonParity
 }
 
 func listObjectParities(partsMetadata []FileInfo, errs []error) (parities []int) {
@@ -498,8 +503,11 @@ func objectQuorumFromMeta(ctx context.Context, partsMetaData []FileInfo, errs []
 	}
 
 	parities := listObjectParities(partsMetaData, errs)
-	parityBlocks := commonParity(parities, defaultParityCount)
+	parityBlocks, commonParity := commonParity(parities, defaultParityCount)
 	if parityBlocks < 0 {
+		if countErrs(errs, nil, errFileNotFound, errFileVersionNotFound) >= len(partsMetaData)-commonParity {
+			return -1, -1, InsufficientReadQuorum{Err: errErasureReadQuorum, Type: RQInconsistentMeta}
+		}
 		return -1, -1, InsufficientReadQuorum{Err: errErasureReadQuorum, Type: RQInsufficientOnlineDrives}
 	}
 

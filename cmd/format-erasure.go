@@ -293,12 +293,14 @@ func formatErasureMigrateV2ToV3(data []byte, export, version string) ([]byte, er
 	return json.Marshal(formatV3)
 }
 
-// countErrs - count a specific error.
-func countErrs(errs []error, err error) int {
+// countErrs - count the total occurrence of a set of errors, with nil included
+func countErrs(errs []error, countedErrs ...error) int {
 	i := 0
-	for _, err1 := range errs {
-		if err1 == err || errors.Is(err1, err) {
-			i++
+	for _, e := range errs {
+		for _, ce := range countedErrs {
+			if errors.Is(e, ce) {
+				i++
+			}
 		}
 	}
 	return i
