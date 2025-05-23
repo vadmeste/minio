@@ -20,6 +20,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"net/url"
@@ -1004,26 +1005,86 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 		}
 	}
 
+	whitespaceStarted := make(chan bool)
+	whitespaceDone := make(chan struct{})
+
+	go func() {
+		defer close(whitespaceStarted)
+
+		ticker := time.NewTicker(time.Second * 10)
+		defer ticker.Stop()
+
+		started := false
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				if !started {
+					started = true
+					// Start writing response to client
+					setCommonHeaders(w)
+					setEventStreamHeaders(w)
+					w.Header().Set("Content-Type", string(mimeXML))
+
+					w.WriteHeader(200)
+					w.Write([]byte(xml.Header))
+				}
+				// Send whitespace and keep connection open
+				if _, err := w.Write([]byte(" ")); err != nil {
+					return
+				}
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
+			case <-whitespaceDone:
+				whitespaceStarted <- started
+				return
+			}
+		}
+	}()
+
 	objInfo, err := completeMultiPartUpload(ctx, bucket, object, uploadID, complMultipartUpload.Parts, opts)
+
+	// Stop whitespace sending
+	close(whitespaceDone)
+	whitespaced := <-whitespaceStarted
+
+	writeErr := func(err error) {
+		// Generate and send error response.
+		apiErr := toAPIError(ctx, err)
+		if whitespaced {
+			errorResponse := getAPIErrorResponse(ctx, apiErr, r.URL.Path,
+				w.Header().Get(xhttp.AmzRequestID), w.Header().Get(xhttp.AmzRequestHostID))
+			xml.NewEncoder(w).Encode(errorResponse)
+		} else {
+			writeErrorResponse(ctx, w, apiErr, r.URL)
+		}
+	}
+
 	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		writeErr(err)
 		return
 	}
 
 	opts.EncryptFn, err = objInfo.metadataEncryptFn(r.Header)
 	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+		writeErr(err)
 		return
 	}
+
 	if r.Header.Get(xMinIOExtract) == "true" && HasSuffix(object, archiveExt) {
 		opts := ObjectOptions{VersionID: objInfo.VersionID, MTime: objInfo.ModTime}
 		if _, err := updateObjectMetadataWithZipInfo(ctx, objectAPI, bucket, object, opts); err != nil {
-			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
+			writeErr(err)
 			return
 		}
 	}
 
-	setPutObjHeaders(w, objInfo, false, r.Header)
+	if !whitespaced {
+		setPutObjHeaders(w, objInfo, false, r.Header)
+	}
+
 	if dsc := mustReplicate(ctx, bucket, object, objInfo.getMustReplicateOptions(replication.ObjectReplicationType, opts)); dsc.ReplicateAny() {
 		scheduleReplication(ctx, objInfo, objectAPI, dsc, replication.ObjectReplicationType)
 	}
@@ -1036,10 +1097,13 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	location := getObjectLocation(r, globalDomainNames, bucket, object)
 	// Generate complete multipart response.
 	response := generateCompleteMultipartUploadResponse(bucket, object, location, objInfo, r.Header)
-	encodedSuccessResponse := encodeResponse(response)
 
 	// Write success response.
-	writeSuccessResponseXML(w, encodedSuccessResponse)
+	if whitespaced {
+		xml.NewEncoder(w).Encode(response)
+	} else {
+		writeSuccessResponseXML(w, encodeResponse(response))
+	}
 
 	// Notify object created event.
 	evt := eventArgs{
