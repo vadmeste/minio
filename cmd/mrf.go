@@ -40,6 +40,7 @@ type partialOperation struct {
 	setIndex, poolIndex int
 	queued              time.Time
 	scanMode            madmin.HealScanMode
+	checkAbandoned      bool
 }
 
 // mrfState sncapsulates all the information
@@ -116,11 +117,11 @@ func (m *mrfState) healRoutine(z *erasureServerPools) {
 					vers := len(u.versions) / 16
 					if vers > 0 {
 						for i := 0; i < vers; i++ {
-							healObject(u.bucket, u.object, uuid.UUID(u.versions[16*i:]).String(), scan)
+							healObject(u.bucket, u.object, uuid.UUID(u.versions[16*i:]).String(), scan, u.checkAbandoned)
 						}
 					}
 				} else {
-					healObject(u.bucket, u.object, u.versionID, scan)
+					healObject(u.bucket, u.object, u.versionID, scan, u.checkAbandoned)
 				}
 			}
 

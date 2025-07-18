@@ -27,6 +27,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -534,6 +535,24 @@ func TestHealBucket(t *testing.T) {
 	testHealBucket(t, "TwoPools", []int{4, 4}, testCases)
 }
 
+func prepareDisks(nDisks ...int) (EndpointServerPools, []string, error) {
+	var eps EndpointServerPools
+	var fsDirses [][]string
+	for i, nDisk := range nDisks {
+		fsDirs, err := getRandomDisks(nDisk)
+		if err != nil {
+			for _, toDelDirs := range fsDirses[:i] {
+				removeRoots(toDelDirs)
+			}
+			return nil, nil, err
+		}
+		eps = append(eps, mustGetPoolEndpoints(i, fsDirs...)...)
+		fsDirses = append(fsDirses, fsDirs)
+
+	}
+	return eps, slices.Concat(fsDirses...), nil
+}
+
 func testHealBucket(t *testing.T, testName string, poolsDist []int,
 	testCases []struct {
 		doesBucketExist []bool
@@ -545,7 +564,7 @@ func testHealBucket(t *testing.T, testName string, poolsDist []int,
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	eps, dirs, err := prepareFormattedDisks(poolsDist...)
+	eps, dirs, err := prepareDisks(poolsDist...)
 	if err != nil {
 		t.Fatal(err)
 	}

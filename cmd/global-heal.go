@@ -567,11 +567,11 @@ func healBucket(bucket string, scan madmin.HealScanMode) error {
 }
 
 // healObject sends the given object/version to the background healing workers
-func healObject(bucket, object, versionID string, scan madmin.HealScanMode) error {
+func healObject(bucket, object, versionID string, scan madmin.HealScanMode, checkAbandoned bool) error {
 	// Get background heal sequence to send elements to heal
 	bgSeq, ok := globalBackgroundHealState.getHealSequenceByToken(bgHealingUUID)
 	if ok {
-		return bgSeq.healObject(bucket, object, versionID, scan)
+		return bgSeq.healObject(bucket, object, versionID, scan, checkAbandoned)
 	}
 	return nil
 }

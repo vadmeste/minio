@@ -1386,7 +1386,8 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 	if err != nil {
 		return oi, toObjectErr(err, bucket, object, uploadID)
 	}
-	if err = er.commitRenameDataDir(ctx, minioMetaMultipartBucket, bucket, object, resp, writeQuorum); err != nil {
+	dataLeftOver, err := er.commitRenameDataDir(ctx, minioMetaMultipartBucket, bucket, object, resp, writeQuorum)
+	if err != nil {
 		return ObjectInfo{}, toObjectErr(err, bucket, object, uploadID)
 	}
 
@@ -1404,15 +1405,18 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 		// the content implicitly for all versions, we can
 		// avoid triggering another MRF heal for offline drives.
 		if len(resp.Versions) == 0 {
+			var partial bool
 			// Whether a disk was initially or becomes offline
 			// during this upload, send it to the MRF list.
 			for i := 0; i < len(onlineDisks); i++ {
 				if onlineDisks[i] != nil && onlineDisks[i].IsOnline() {
 					continue
 				}
-
-				er.addPartial(bucket, object, fi.VersionID)
+				partial = true
 				break
+			}
+			if partial || dataLeftOver {
+				er.addPartial(bucket, object, fi.VersionID, dataLeftOver)
 			}
 		} else {
 			globalMRFState.addPartialOp(partialOperation{

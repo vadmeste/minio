@@ -1212,7 +1212,7 @@ func (s *xlStorage) deleteVersions(ctx context.Context, volume, path string, fis
 		return s.WriteAll(ctx, volume, pathJoin(path, xlStorageFormatFile), buf)
 	}
 
-	return s.deleteFile(volumeDir, pathJoin(volumeDir, path, xlStorageFormatFile), true, false)
+	return s.deleteFile(volumeDir, pathJoin(volumeDir, path), true, false)
 }
 
 // DeleteVersions deletes slice of versions, it can be same object
@@ -1430,7 +1430,7 @@ func (s *xlStorage) DeleteVersion(ctx context.Context, volume, path string, fi F
 		return s.WriteAll(ctx, volume, pathJoin(path, xlStorageFormatFile), buf)
 	}
 
-	return s.deleteFile(volumeDir, pathJoin(volumeDir, path, xlStorageFormatFile), true, false)
+	return s.deleteFile(volumeDir, pathJoin(volumeDir, path), true, false)
 }
 
 // Updates only metadata for a given version.

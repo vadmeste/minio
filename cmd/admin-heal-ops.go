@@ -405,11 +405,12 @@ func (ahs *allHealState) PopHealStatusJSON(hpath string,
 
 // healSource denotes single entity and heal option.
 type healSource struct {
-	bucket    string
-	object    string
-	versionID string
-	noWait    bool             // a non blocking call, if task queue is full return right away.
-	opts      *madmin.HealOpts // optional heal option overrides default setting
+	bucket         string
+	object         string
+	versionID      string
+	noWait         bool // a non blocking call, if task queue is full return right away.
+	checkAbandoned bool
+	opts           *madmin.HealOpts // optional heal option overrides default setting
 }
 
 // healSequence - state for each heal sequence initiated on the
@@ -721,10 +722,11 @@ func (h *healSequence) healSequenceStart(objAPI ObjectLayer) {
 func (h *healSequence) queueHealTask(source healSource, healType madmin.HealItemType) error {
 	// Send heal request
 	task := healTask{
-		bucket:    source.bucket,
-		object:    source.object,
-		versionID: source.versionID,
-		opts:      h.settings,
+		bucket:         source.bucket,
+		object:         source.object,
+		versionID:      source.versionID,
+		checkAbandoned: source.checkAbandoned,
+		opts:           h.settings,
 	}
 	if source.opts != nil {
 		task.opts = *source.opts
@@ -883,7 +885,7 @@ func (h *healSequence) healBucket(objAPI ObjectLayer, bucket string, bucketsOnly
 
 	if !h.settings.Recursive {
 		if h.object != "" {
-			if err := h.healObject(bucket, h.object, "", h.settings.ScanMode); err != nil {
+			if err := h.healObject(bucket, h.object, "", h.settings.ScanMode, false); err != nil {
 				return err
 			}
 		}
@@ -891,23 +893,28 @@ func (h *healSequence) healBucket(objAPI ObjectLayer, bucket string, bucketsOnly
 		return nil
 	}
 
-	if err := objAPI.HealObjects(h.ctx, bucket, h.object, h.settings, h.healObject); err != nil {
+	healFn := func(bucket, object, versionID string, scanMode madmin.HealScanMode) error {
+		return h.healObject(bucket, object, versionID, scanMode, false)
+	}
+
+	if err := objAPI.HealObjects(h.ctx, bucket, h.object, h.settings, healFn); err != nil {
 		return errFnHealFromAPIErr(h.ctx, err)
 	}
 	return nil
 }
 
 // healObject - heal the given object and record result
-func (h *healSequence) healObject(bucket, object, versionID string, scanMode madmin.HealScanMode) error {
+func (h *healSequence) healObject(bucket, object, versionID string, scanMode madmin.HealScanMode, checkAbandoned bool) error {
 	if h.isQuitting() {
 		return errHealStopSignalled
 	}
 
 	err := h.queueHealTask(healSource{
-		bucket:    bucket,
-		object:    object,
-		versionID: versionID,
-		opts:      &h.settings,
+		bucket:         bucket,
+		object:         object,
+		versionID:      versionID,
+		opts:           &h.settings,
+		checkAbandoned: checkAbandoned,
 	}, madmin.HealItemObject)
 
 	// Wait and proceed if there are active requests

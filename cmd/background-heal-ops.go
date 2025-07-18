@@ -34,10 +34,11 @@ import (
 //	path: 'bucket/' or '/bucket/' => Heal bucket
 //	path: 'bucket/object' => Heal object
 type healTask struct {
-	bucket    string
-	object    string
-	versionID string
-	opts      madmin.HealOpts
+	bucket         string
+	object         string
+	versionID      string
+	opts           madmin.HealOpts
+	checkAbandoned bool
 	// Healing response will be sent here
 	respCh chan healResult
 }
@@ -130,6 +131,9 @@ func (h *healRoutine) AddWorker(ctx context.Context, objAPI ObjectLayer, bgSeq *
 					res, err = objAPI.HealBucket(ctx, task.bucket, task.opts)
 				} else {
 					res, err = objAPI.HealObject(ctx, task.bucket, task.object, task.versionID, task.opts)
+					if err == nil && task.checkAbandoned {
+						objAPI.CheckAbandonedParts(ctx, task.bucket, task.object, task.opts)
+					}
 				}
 			}
 

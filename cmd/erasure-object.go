@@ -1592,7 +1592,8 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 		}
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
 	}
-	if err = er.commitRenameDataDir(ctx, minioMetaTmpBucket, bucket, object, resp, writeQuorum); err != nil {
+	dataLeftOver, err := er.commitRenameDataDir(ctx, minioMetaTmpBucket, bucket, object, resp, writeQuorum)
+	if err != nil {
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
 	}
 
@@ -1613,13 +1614,16 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 		if len(resp.Versions) == 0 {
 			// Whether a disk was initially or becomes offline
 			// during this upload, send it to the MRF list.
+			var partial bool
 			for i := 0; i < len(onlineDisks); i++ {
 				if onlineDisks[i] != nil && onlineDisks[i].IsOnline() {
 					continue
 				}
-
-				er.addPartial(bucket, object, fi.VersionID)
+				partial = true
 				break
+			}
+			if partial || dataLeftOver {
+				er.addPartial(bucket, object, fi.VersionID, dataLeftOver)
 			}
 		} else {
 			globalMRFState.addPartialOp(partialOperation{
@@ -1817,7 +1821,7 @@ func (er erasureObjects) DeleteObjects(ctx context.Context, bucket string, objec
 		if errs[i] != nil && !isErrVersionNotFound(errs[i]) && !isErrObjectNotFound(errs[i]) {
 			// all other direct versionId references we should
 			// ensure no dangling file is left over.
-			er.addPartial(bucket, dobj.ObjectName, dobj.VersionID)
+			er.addPartial(bucket, dobj.ObjectName, dobj.VersionID, false)
 			continue
 		}
 
@@ -1830,14 +1834,14 @@ func (er erasureObjects) DeleteObjects(ctx context.Context, bucket string, objec
 
 			// all other direct versionId references we should
 			// ensure no dangling file is left over.
-			er.addPartial(bucket, dobj.ObjectName, dobj.VersionID)
+			er.addPartial(bucket, dobj.ObjectName, dobj.VersionID, false)
 			break
 		}
 	}
 
 	return dobjects, errs
 }
-func (er erasureObjects) commitRenameDataDir(ctx context.Context, commitBucket, bucket, object string, resp renameDataDirResp, writeQuorum int) error {
+func (er erasureObjects) commitRenameDataDir(ctx context.Context, commitBucket, bucket, object string, resp renameDataDirResp, writeQuorum int) (bool, error) {
 	g := errgroup.WithNErrs(len(resp.Disks))
 	for index := range resp.Disks {
 		index := index
@@ -1873,8 +1877,9 @@ func (er erasureObjects) commitRenameDataDir(ctx context.Context, commitBucket, 
 				})
 			}, index)
 		}
-		g.Wait()
-		return nil
+		successOldDDir := countErrs(g.Wait(), nil)
+		successCommit := countErrs(errs, nil)
+		return successOldDDir != successCommit, nil
 	} // if we couldn't commit xl.meta, we leave the old-data-dir as is, however we attempt a revert of xl.meta.bkp
 
 	for index := range errs {
@@ -1897,7 +1902,7 @@ func (er erasureObjects) commitRenameDataDir(ctx context.Context, commitBucket, 
 	}
 	g.Wait()
 
-	return err
+	return false, err
 }
 
 func (er erasureObjects) deletePrefix(ctx context.Context, bucket, prefix string) error {
@@ -1981,7 +1986,7 @@ func (er erasureObjects) DeleteObject(ctx context.Context, bucket, object string
 			if gerr != nil && goi.Name == "" {
 				if _, ok := gerr.(InsufficientReadQuorum); ok {
 					// Add an MRF heal for next time.
-					er.addPartial(bucket, object, opts.VersionID)
+					er.addPartial(bucket, object, opts.VersionID, false)
 
 					return objInfo, InsufficientWriteQuorum{}
 				}
@@ -2029,7 +2034,7 @@ func (er erasureObjects) DeleteObject(ctx context.Context, bucket, object string
 		if _, ok := gerr.(InsufficientReadQuorum); ok {
 			if opts.Versioned || opts.VersionSuspended || countOnlineDisks(storageDisks) < len(storageDisks)/2+1 {
 				// Add an MRF heal for next time.
-				er.addPartial(bucket, object, opts.VersionID)
+				er.addPartial(bucket, object, opts.VersionID, false)
 				return objInfo, InsufficientWriteQuorum{}
 			}
 			tryDel = true // only for unversioned objects if there is write quorum
@@ -2133,7 +2138,7 @@ func (er erasureObjects) DeleteObject(ctx context.Context, bucket, object string
 			if disk != nil && disk.IsOnline() {
 				continue
 			}
-			er.addPartial(bucket, object, opts.VersionID)
+			er.addPartial(bucket, object, opts.VersionID, false)
 			break
 		}
 	}()
@@ -2198,12 +2203,13 @@ func (er erasureObjects) DeleteObject(ctx context.Context, bucket, object string
 
 // Send the successful but partial upload/delete, however ignore
 // if the channel is blocked by other items.
-func (er erasureObjects) addPartial(bucket, object, versionID string) {
+func (er erasureObjects) addPartial(bucket, object, versionID string, partialPurge bool) {
 	globalMRFState.addPartialOp(partialOperation{
-		bucket:    bucket,
-		object:    object,
-		versionID: versionID,
-		queued:    time.Now(),
+		bucket:         bucket,
+		object:         object,
+		versionID:      versionID,
+		queued:         time.Now(),
+		checkAbandoned: partialPurge,
 	})
 }
 
@@ -2481,7 +2487,7 @@ func (er erasureObjects) TransitionObject(ctx context.Context, bucket, object st
 		if disk != nil && disk.IsOnline() {
 			continue
 		}
-		er.addPartial(bucket, object, opts.VersionID)
+		er.addPartial(bucket, object, opts.VersionID, false)
 		break
 	}
 
