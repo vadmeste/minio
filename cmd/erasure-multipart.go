@@ -1380,6 +1380,13 @@ func (er erasureObjects) CompleteMultipartUpload(ctx context.Context, bucket str
 		}
 	}()
 
+	if contextCanceled(ctx) {
+		return oi, toObjectErr(ctx.Err(), bucket, object, uploadID)
+	}
+
+	ctx, cancel := WithDelayedCancel(ctx, time.Minute)
+	defer cancel()
+
 	// Rename the multipart object to final location.
 	resp, err := renameDataDir(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath,
 		partsMetadata, bucket, object, writeQuorum)

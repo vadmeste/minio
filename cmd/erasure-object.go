@@ -1579,6 +1579,14 @@ func (er erasureObjects) putObject(ctx context.Context, bucket string, object st
 		ctx = lkctx.Context()
 		defer lk.Unlock(lkctx)
 	}
+
+	if contextCanceled(ctx) {
+		return ObjectInfo{}, toObjectErr(ctx.Err(), bucket, object)
+	}
+
+	ctx, cancel := WithDelayedCancel(ctx, time.Minute)
+	defer cancel()
+
 	// Rename the successfully written temporary object to final location.
 	resp, err := renameDataDir(ctx, onlineDisks, minioMetaTmpBucket, tempObj, partsMetadata, bucket, object, writeQuorum)
 	if err != nil {
