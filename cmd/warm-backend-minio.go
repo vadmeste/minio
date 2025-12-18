@@ -122,7 +122,7 @@ func newWarmBackendMinIO(conf madmin.TierMinIO, tier string) (*warmBackendMinIO,
 	if err != nil {
 		return nil, err
 	}
-	client.SetAppInfo(fmt.Sprintf("minio-tier-%s", tier), ReleaseTag)
+	client.SetAppInfo(fmt.Sprintf("minio-tiering-minio-%s", tier), ReleaseTag)
 
 	core := &minio.Core{Client: client}
 	return &warmBackendMinIO{

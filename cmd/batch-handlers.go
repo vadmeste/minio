@@ -391,7 +391,7 @@ func (r *BatchJobReplicateV1) StartFromSource(ctx context.Context, api ObjectLay
 		return err
 	}
 
-	c.SetAppInfo("minio-"+batchJobPrefix, r.APIVersion+" "+job.ID)
+	c.SetAppInfo("minio-batch-replication", r.APIVersion+" "+job.ID)
 	core := &minio.Core{Client: c}
 
 	workerSize, err := strconv.Atoi(env.Get("_MINIO_BATCH_REPLICATION_WORKERS", strconv.Itoa(runtime.GOMAXPROCS(0)/2)))
@@ -1155,7 +1155,7 @@ func (r *BatchJobReplicateV1) Start(ctx context.Context, api ObjectLayer, job Ba
 		return err
 	}
 
-	c.SetAppInfo("minio-"+batchJobPrefix, r.APIVersion+" "+job.ID)
+	c.SetAppInfo("minio-batch-replication", r.APIVersion+" "+job.ID)
 
 	retry := false
 	for attempts := 1; attempts <= retryAttempts; attempts++ {
@@ -1477,7 +1477,7 @@ func (r *BatchJobReplicateV1) Validate(ctx context.Context, job BatchJobRequest,
 	if err != nil {
 		return err
 	}
-	c.SetAppInfo("minio-"+batchJobPrefix, r.APIVersion+" "+job.ID)
+	c.SetAppInfo("minio-batch-replication", r.APIVersion+" "+job.ID)
 
 	vcfg, err := c.GetBucketVersioning(ctx, remoteBkt)
 	if err != nil {
