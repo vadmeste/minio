@@ -763,6 +763,8 @@ func (er *erasureObjects) listPath(ctx context.Context, o listPathOptions, resul
 		forwardTo:     o.Marker,
 		perDiskLimit:  limit,
 		agreed: func(entry metaCacheEntry) {
+			entry.poolID = er.poolIndex
+			entry.setID = er.setIndex
 			select {
 			case <-ctxDone:
 			case results <- entry:
@@ -772,6 +774,8 @@ func (er *erasureObjects) listPath(ctx context.Context, o listPathOptions, resul
 			// Results Disagree :-(
 			entry, ok := entries.resolve(&resolver)
 			if ok {
+				entry.poolID = er.poolIndex
+				entry.setID = er.setIndex
 				select {
 				case <-ctxDone:
 				case results <- *entry:

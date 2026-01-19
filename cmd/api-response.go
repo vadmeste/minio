@@ -348,8 +348,10 @@ func (s *Metadata) MarshalXML(e *xxml.Encoder, start xxml.StartElement) error {
 // ObjectInternalInfo contains some internal information about a given
 // object, it will printed in listing calls with enabled metadata.
 type ObjectInternalInfo struct {
-	K int // Data blocks
-	M int // Parity blocks
+	K    int // Data blocks
+	M    int // Parity blocks
+	Pool int // Pool index
+	Set  int // Erasure set index
 }
 
 // Object container for object metadata
@@ -596,8 +598,10 @@ func generateListVersionsResponse(ctx context.Context, bucket, prefix, marker, v
 
 			content.UserMetadata.Set("expires", object.Expires.Format(http.TimeFormat))
 			content.Internal = &ObjectInternalInfo{
-				K: object.DataBlocks,
-				M: object.ParityBlocks,
+				K:    object.DataBlocks,
+				M:    object.ParityBlocks,
+				Pool: object.PoolID,
+				Set:  object.SetID,
 			}
 		}
 		content.Owner = owner

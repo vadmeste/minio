@@ -220,6 +220,11 @@ type ObjectInfo struct {
 
 	DataBlocks   int
 	ParityBlocks int
+
+	// PoolID is the pool index where this object is stored
+	PoolID int
+	// SetID is the erasure set index where this object is stored
+	SetID int
 }
 
 // ExpiresStr returns a stringified version of Expires header in http.TimeFormat

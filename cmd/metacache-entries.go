@@ -42,6 +42,11 @@ type metaCacheEntry struct {
 
 	// Indicates the entry can be reused and only one reference to metadata is expected.
 	reusable bool
+
+	// poolID is the pool index where this entry was found.
+	poolID int
+	// setID is the erasure set index where this entry was found.
+	setID int
 }
 
 // isDir returns if the entry is representing a prefix directory.
@@ -536,7 +541,10 @@ func (m *metaCacheEntriesSorted) fileInfoVersions(bucket, prefix, delimiter, aft
 					continue
 				}
 				versioned := vcfg != nil && vcfg.Versioned(entry.name)
-				versions = append(versions, version.ToObjectInfo(bucket, entry.name, versioned))
+				objInfo := version.ToObjectInfo(bucket, entry.name, versioned)
+				objInfo.PoolID = entry.poolID
+				objInfo.SetID = entry.setID
+				versions = append(versions, objInfo)
 			}
 
 			continue

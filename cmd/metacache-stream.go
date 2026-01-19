@@ -52,7 +52,7 @@ import (
 // Streams can be assumed to be sorted in ascending order.
 // If the stream ends before a false boolean it can be assumed it was truncated.
 
-const metacacheStreamVersion = 2
+const metacacheStreamVersion = 3
 
 // metacacheWriter provides a serializer of metacache objects.
 type metacacheWriter struct {
@@ -141,6 +141,14 @@ func (w *metacacheWriter) write(objs ...metaCacheEntry) error {
 		if err != nil {
 			return err
 		}
+		err = w.mw.WriteInt(o.poolID)
+		if err != nil {
+			return err
+		}
+		err = w.mw.WriteInt(o.setID)
+		if err != nil {
+			return err
+		}
 		if w.reuseBlocks || o.reusable {
 			metaDataPoolPut(o.metadata)
 		}
@@ -187,6 +195,16 @@ func (w *metacacheWriter) stream() (chan<- metaCacheEntry, error) {
 			if w.reuseBlocks || o.reusable {
 				metaDataPoolPut(o.metadata)
 			}
+			if err != nil {
+				w.streamErr = err
+				continue
+			}
+			err = w.mw.WriteInt(o.poolID)
+			if err != nil {
+				w.streamErr = err
+				continue
+			}
+			err = w.mw.WriteInt(o.setID)
 			if err != nil {
 				w.streamErr = err
 				continue
@@ -248,6 +266,7 @@ type metacacheReader struct {
 	err     error // stateful error
 	closer  func()
 	creator func() error
+	version int // stream version (2 or 3)
 }
 
 // newMetacacheReader creates a new cache reader.
@@ -256,26 +275,28 @@ func newMetacacheReader(r io.Reader) *metacacheReader {
 	dec := s2DecPool.Get().(*s2.Reader)
 	dec.Reset(r)
 	mr := msgpNewReader(dec)
-	return &metacacheReader{
+	ret := &metacacheReader{
 		mr: mr,
 		closer: func() {
 			dec.Reset(nil)
 			s2DecPool.Put(dec)
 			readMsgpReaderPoolPut(mr)
 		},
-		creator: func() error {
-			v, err := mr.ReadByte()
-			if err != nil {
-				return err
-			}
-			switch v {
-			case 1, 2:
-			default:
-				return fmt.Errorf("metacacheReader: Unknown version: %d", v)
-			}
-			return nil
-		},
 	}
+	ret.creator = func() error {
+		v, err := mr.ReadByte()
+		if err != nil {
+			return err
+		}
+		switch v {
+		case 1, 2, 3:
+			ret.version = int(v)
+		default:
+			return fmt.Errorf("metacacheReader: Unknown version: %d", v)
+		}
+		return nil
+	}
+	return ret
 }
 
 func (r *metacacheReader) checkInit() {
@@ -319,11 +340,33 @@ func (r *metacacheReader) peek() (metaCacheEntry, error) {
 		return metaCacheEntry{}, err
 	}
 	r.current.metadata, err = r.mr.ReadBytes(r.current.metadata[:0])
-	if err == io.EOF {
-		err = io.ErrUnexpectedEOF
+	if err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		r.err = err
+		return metaCacheEntry{}, err
 	}
-	r.err = err
-	return r.current, err
+	// Version 3 includes poolID and setID
+	if r.version >= 3 {
+		r.current.poolID, err = r.mr.ReadInt()
+		if err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			r.err = err
+			return metaCacheEntry{}, err
+		}
+		r.current.setID, err = r.mr.ReadInt()
+		if err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			r.err = err
+			return metaCacheEntry{}, err
+		}
+	}
+	return r.current, nil
 }
 
 // next will read one entry from the stream.
@@ -338,8 +381,12 @@ func (r *metacacheReader) next() (metaCacheEntry, error) {
 	if r.current.name != "" {
 		m.name = r.current.name
 		m.metadata = r.current.metadata
+		m.poolID = r.current.poolID
+		m.setID = r.current.setID
 		r.current.name = ""
 		r.current.metadata = nil
+		r.current.poolID = 0
+		r.current.setID = 0
 		return m, nil
 	}
 	if more, err := r.mr.ReadBool(); !more {
@@ -362,15 +409,40 @@ func (r *metacacheReader) next() (metaCacheEntry, error) {
 		return m, err
 	}
 	m.metadata, err = r.mr.ReadBytes(metaDataPoolGet())
-	if err == io.EOF {
-		err = io.ErrUnexpectedEOF
+	if err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
+		r.err = err
+		if len(m.metadata) == 0 && cap(m.metadata) >= metaDataReadDefault {
+			metaDataPoolPut(m.metadata)
+		}
+		return m, err
 	}
 	if len(m.metadata) == 0 && cap(m.metadata) >= metaDataReadDefault {
 		metaDataPoolPut(m.metadata)
 		m.metadata = nil
 	}
-	r.err = err
-	return m, err
+	// Version 3 includes poolID and setID
+	if r.version >= 3 {
+		m.poolID, err = r.mr.ReadInt()
+		if err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			r.err = err
+			return m, err
+		}
+		m.setID, err = r.mr.ReadInt()
+		if err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			r.err = err
+			return m, err
+		}
+	}
+	return m, nil
 }
 
 // next will read one entry from the stream.
@@ -408,6 +480,8 @@ func (r *metacacheReader) forwardTo(s string) error {
 		}
 		r.current.name = ""
 		r.current.metadata = nil
+		r.current.poolID = 0
+		r.current.setID = 0
 	}
 	// temporary name buffer.
 	tmp := make([]byte, 0, 256)
@@ -442,6 +516,17 @@ func (r *metacacheReader) forwardTo(s string) error {
 		if string(tmp) >= s {
 			r.current.name = string(tmp)
 			r.current.metadata, r.err = r.mr.ReadBytes(nil)
+			if r.err != nil {
+				return r.err
+			}
+			// Version 3 includes poolID and setID
+			if r.version >= 3 {
+				r.current.poolID, r.err = r.mr.ReadInt()
+				if r.err != nil {
+					return r.err
+				}
+				r.current.setID, r.err = r.mr.ReadInt()
+			}
 			return r.err
 		}
 		// Skip metadata
@@ -452,6 +537,23 @@ func (r *metacacheReader) forwardTo(s string) error {
 			}
 			r.err = err
 			return err
+		}
+		// Version 3 includes poolID and setID
+		if r.version >= 3 {
+			if err = r.mr.Skip(); err != nil { // skip poolID
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
+			}
+			if err = r.mr.Skip(); err != nil { // skip setID
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
+			}
 		}
 	}
 }
@@ -493,6 +595,8 @@ func (r *metacacheReader) readN(n int, inclDeleted, inclDirs, inclVersions bool,
 		}
 		r.current.name = ""
 		r.current.metadata = nil
+		r.current.poolID = 0
+		r.current.setID = 0
 	}
 
 	for n < 0 || len(res) < n {
@@ -532,6 +636,23 @@ func (r *metacacheReader) readN(n int, inclDeleted, inclDirs, inclVersions bool,
 			metaDataPoolPut(meta.metadata)
 			meta.metadata = nil
 		}
+		// Version 3 includes poolID and setID
+		if r.version >= 3 {
+			if meta.poolID, err = r.mr.ReadInt(); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return metaCacheEntriesSorted{o: res}, err
+			}
+			if meta.setID, err = r.mr.ReadInt(); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return metaCacheEntriesSorted{o: res}, err
+			}
+		}
 		if !inclDirs && (meta.isDir() || (!inclVersions && meta.isObjectDir() && meta.isLatestDeletemarker())) {
 			continue
 		}
@@ -560,6 +681,8 @@ func (r *metacacheReader) readAll(ctx context.Context, dst chan<- metaCacheEntry
 		}
 		r.current.name = ""
 		r.current.metadata = nil
+		r.current.poolID = 0
+		r.current.setID = 0
 	}
 	for {
 		if more, err := r.mr.ReadBool(); !more {
@@ -590,6 +713,23 @@ func (r *metacacheReader) readAll(ctx context.Context, dst chan<- metaCacheEntry
 			metaDataPoolPut(meta.metadata)
 			meta.metadata = nil
 		}
+		// Version 3 includes poolID and setID
+		if r.version >= 3 {
+			if meta.poolID, err = r.mr.ReadInt(); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
+			}
+			if meta.setID, err = r.mr.ReadInt(); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
+			}
+		}
 		select {
 		case <-ctx.Done():
 			r.err = ctx.Err()
@@ -611,6 +751,8 @@ func (r *metacacheReader) readFn(fn func(entry metaCacheEntry) bool) error {
 		fn(r.current)
 		r.current.name = ""
 		r.current.metadata = nil
+		r.current.poolID = 0
+		r.current.setID = 0
 	}
 	for {
 		if more, err := r.mr.ReadBool(); !more {
@@ -640,6 +782,23 @@ func (r *metacacheReader) readFn(fn func(entry metaCacheEntry) bool) error {
 			}
 			r.err = err
 			return err
+		}
+		// Version 3 includes poolID and setID
+		if r.version >= 3 {
+			if meta.poolID, err = r.mr.ReadInt(); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
+			}
+			if meta.setID, err = r.mr.ReadInt(); err != nil {
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
+			}
 		}
 		// Send it!
 		if !fn(meta) {
@@ -694,6 +853,23 @@ func (r *metacacheReader) readNames(n int) ([]string, error) {
 			r.err = err
 			return res, err
 		}
+		// Version 3 includes poolID and setID
+		if r.version >= 3 {
+			if err = r.mr.Skip(); err != nil { // skip poolID
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return res, err
+			}
+			if err = r.mr.Skip(); err != nil { // skip setID
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return res, err
+			}
+		}
 		res = append(res, name)
 	}
 	return res, nil
@@ -713,6 +889,8 @@ func (r *metacacheReader) skip(n int) error {
 		n--
 		r.current.name = ""
 		r.current.metadata = nil
+		r.current.poolID = 0
+		r.current.setID = 0
 	}
 	for n > 0 {
 		if more, err := r.mr.ReadBool(); !more {
@@ -727,19 +905,36 @@ func (r *metacacheReader) skip(n int) error {
 			return err
 		}
 
-		if err := r.mr.Skip(); err != nil {
+		if err := r.mr.Skip(); err != nil { // skip name
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
 			r.err = err
 			return err
 		}
-		if err := r.mr.Skip(); err != nil {
+		if err := r.mr.Skip(); err != nil { // skip metadata
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
 			r.err = err
 			return err
+		}
+		// Version 3 includes poolID and setID
+		if r.version >= 3 {
+			if err := r.mr.Skip(); err != nil { // skip poolID
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
+			}
+			if err := r.mr.Skip(); err != nil { // skip setID
+				if err == io.EOF {
+					err = io.ErrUnexpectedEOF
+				}
+				r.err = err
+				return err
+			}
 		}
 		n--
 	}
